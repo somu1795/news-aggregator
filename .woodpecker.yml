@@ -49,3 +49,4 @@ steps:
       - "docker tag ${COMPOSE_IMAGE_CADDY}:latest ${REGISTRY}/${COMPOSE_IMAGE_CADDY}:latest"
       - "docker push ${REGISTRY}/${COMPOSE_IMAGE_CADDY}:${IMAGE_TAG}"
       - "docker push ${REGISTRY}/${COMPOSE_IMAGE_CADDY}:latest"
+
