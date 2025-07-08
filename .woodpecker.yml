@@ -17,12 +17,12 @@ steps:
     image: alpine/git
     environment:
       GITHUB_TOKEN:
-        from_secret: GITHUB_TOKEN
+        from_secret: github_token
       GITHUB_REPO_URL:
-        from_secret: GITHUB_REPO_URL
+        from_secret: github_repo_url
     commands:
       - git remote rm github 2>/dev/null || true
-      - git remote add github "https://${GITHUB_TOKEN}@${GITHUB_REPO_URL}"
+      - git remote add github "https://${GITHUB_TOKEN}@${GITHUB_REPO_URL#https://}"
       - git remote -v
       - git push github --all
       - git push github --tags
@@ -49,4 +49,3 @@ steps:
       - "docker tag ${COMPOSE_IMAGE_CADDY}:latest ${REGISTRY}/${COMPOSE_IMAGE_CADDY}:latest"
       - "docker push ${REGISTRY}/${COMPOSE_IMAGE_CADDY}:${IMAGE_TAG}"
       - "docker push ${REGISTRY}/${COMPOSE_IMAGE_CADDY}:latest"
-
