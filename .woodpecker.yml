@@ -21,13 +21,21 @@ steps:
       GITHUB_REPO_URL:
         from_secret: github_repo_url
     commands:
-      - '[ -z "$GITHUB_TOKEN" ] && echo "Error: GITHUB_TOKEN secret is not set." && exit 1'
-      - '[ -z "$GITHUB_REPO_URL" ] && echo "Error: GITHUB_REPO_URL secret is not set." && exit 1'
-      - git remote rm github 2>/dev/null || true
-      - git remote add github "https://${GITHUB_TOKEN}@${GITHUB_REPO_URL#https://}"
-      - git remote -v
-      - git push github --all
-      - git push github --tags
+      - |
+        set -e
+        if [ -z "$GITHUB_TOKEN" ]; then
+          echo "Error: The 'github_token' secret is missing or empty." >&2
+          exit 1
+        fi
+        if [ -z "$GITHUB_REPO_URL" ]; then
+          echo "Error: The 'github_repo_url' secret is missing or empty." >&2
+          exit 1
+        fi
+        echo "Secrets loaded successfully. Proceeding with git mirror."
+        git remote rm github 2>/dev/null || true
+        git remote add github "https://${GITHUB_TOKEN}@${GITHUB_REPO_URL#https://}"
+        git push github --all
+        git push github --tags
 
   - name: build-images-with-compose
     image: docker/compose:1.29.2
