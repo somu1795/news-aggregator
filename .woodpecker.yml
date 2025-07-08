@@ -3,7 +3,7 @@ workspace:
   path: src/GITEA_HOST_REDACTED/${CI_REPO_OWNER}/${CI_REPO_NAME}
 
 when:
-  branch: main
+  branch: test-woodpecker
   event: push
 
 variables:
@@ -15,15 +15,17 @@ variables:
 steps:
   - name: sync-to-github
     image: alpine/git
+    environment:
+      GITHUB_TOKEN:
+        from_secret: GITHUB_TOKEN
+      GITHUB_REPO_URL:
+        from_secret: GITHUB_REPO_URL
     commands:
-    - git remote rm github 2>/dev/null || true
-    - git remote add github "https://<your-token>@<github-username>/<repo>.git"
-    - git config --global core.compression 0
-    - git fetch --unshallow || true
-    - git fetch --all
-    - git remote -v
-    - git push github --all
-    - git push github --tags
+      - git remote rm github 2>/dev/null || true
+      - git remote add github "https://${GITHUB_TOKEN}@${GITHUB_REPO_URL}"
+      - git remote -v
+      - git push github --all
+      - git push github --tags
 
   - name: build-images-with-compose
     image: docker/compose:1.29.2
