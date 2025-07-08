@@ -22,20 +22,25 @@ steps:
         from_secret: github_repo_url
     commands:
       - |
-        set -e
-        if [ -z "$GITHUB_TOKEN" ]; then
-          echo "Error: The 'github_token' secret is missing or empty." >&2
-          exit 1
-        fi
-        if [ -z "$GITHUB_REPO_URL" ]; then
-          echo "Error: The 'github_repo_url' secret is missing or empty." >&2
-          exit 1
-        fi
-        echo "Secrets loaded successfully. Proceeding with git mirror."
+        set -e # Exit immediately if a command exits with a non-zero status.
+
+        # Trim whitespace from secrets to prevent issues from copy-pasting.
+        CLEAN_GITHUB_TOKEN=$(echo "$GITHUB_TOKEN" | tr -d '[:space:]')
+        CLEAN_GITHUB_REPO_URL=$(echo "$GITHUB_REPO_URL" | tr -d '[:space:]')
+
+        # Re-run validation on the cleaned variables.
+        [ -z "$CLEAN_GITHUB_TOKEN" ] && echo "Error: The 'github_token' secret is empty after trimming." >&2 && exit 1
+        [ -z "$CLEAN_GITHUB_REPO_URL" ] && echo "Error: The 'github_repo_url' secret is empty after trimming." >&2 && exit 1
+
+        # Construct the URL, stripping the protocol from the repo URL secret.
+        REMOTE_URL="https://${CLEAN_GITHUB_TOKEN}@${CLEAN_GITHUB_REPO_URL#https://}"
+
+        echo "Mirroring repository..."
         git remote rm github 2>/dev/null || true
-        git remote add github "https://${GITHUB_TOKEN}@${GITHUB_REPO_URL#https://}"
+        git remote add github "${REMOTE_URL}"
         git push github --all
         git push github --tags
+        echo "Mirroring successful."
 
   - name: build-images-with-compose
     image: docker/compose:1.29.2
