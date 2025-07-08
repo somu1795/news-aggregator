@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>News Aggregator</title>
+    <style>
+        :root {
+            --bg-color: #ffffff;
+            --text-color: #333333;
+            --item-bg: #f8f9fa;
+            --source-bg: #e9ecef;
+            --link-color: #1a0dab;
+        }
+
+        .dark-mode {
+            --bg-color: #121212;
+            --text-color: #e0e0e0;
+            --item-bg: #1e1e1e;
+            --source-bg: #2d2d2d;
+            --link-color: #80b3ff;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            transition: background-color 0.3s, color 0.3s;
+        }
+
+        h1 {
+            margin-bottom: 30px;
+            text-align: center;
+        }
+
+        #headlines {
+            list-style-type: none;
+            padding: 0;
+            margin: 0 auto;
+            max-width: 700px;
+        }
+
+        .news-item {
+            margin-bottom: 15px;
+            padding: 15px;
+            background-color: var(--item-bg);
+            border-radius: 8px;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            min-height: 60px;
+        }
+
+        .headline-container {
+            flex: 1;
+            display: flex;
+            align-items: center;
+        }
+
+        a.headline {
+            color: var(--link-color);
+            text-decoration: none;
+            flex: 1;
+        }
+
+        a.headline:hover {
+            text-decoration: underline;
+        }
+
+        /* Style for the lock icon on bypassed links */
+        .bypassed::after {
+            content: " 🔒";
+            font-size: 0.8em;
+            vertical-align: super;
+        }
+
+        .source {
+            background: var(--source-bg);
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8em;
+            font-weight: bold;
+            margin-left: 15px;
+            white-space: nowrap;
+        }
+
+        .error {
+            color: #d32f2f;
+            text-align: center;
+        }
+
+        #loading {
+            color: var(--text-color);
+            font-style: italic;
+            margin: 20px 0;
+            text-align: center;
+        }
+
+        .controls {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            display: flex;
+            gap: 10px;
+            z-index: 100;
+        }
+
+        .toggle-btn {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            border: none;
+            background-color: var(--source-bg);
+            color: var(--text-color);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2em;
+            transition: all 0.3s;
+        }
+
+        .toggle-btn.active {
+            background-color: var(--link-color);
+            color: var(--bg-color);
+        }
+
+        .toggle-btn:hover {
+            transform: scale(1.1);
+        }
+
+        .control-select {
+            height: 40px;
+            border-radius: 20px;
+            border: 1px solid var(--source-bg);
+            background-color: var(--item-bg);
+            color: var(--text-color);
+            padding: 0 10px;
+            cursor: pointer;
+            font-size: 0.9em;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            appearance: none;
+            background-image: url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%2523888%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E');
+            background-repeat: no-repeat;
+            background-position: right 10px top 50%;
+            background-size: .65em auto;
+            padding-right: 30px;
+        }
+
+    </style>
+</head>
+<body>
+    <div class="controls">
+        <button class="toggle-btn" id="darkModeToggle" title="Toggle Dark Mode">🌙</button>
+        <select id="bypassSelector" class="control-select" title="Select Paywall Bypass Service"></select>
+    </div>
+    <h1>Latest News</h1>
+    <div id="loading">Loading headlines...</div>
+    <ul id="headlines"></ul>
+
+    <script>
+        // --- Global State ---
+        let headlinesData = [];
+        let selectedBypass = 'none';
+
+        // --- DOM Elements ---
+        const darkModeToggle = document.getElementById('darkModeToggle');
+        const bypassSelector = document.getElementById('bypassSelector');
+        const body = document.body;
+        const headlinesContainer = document.getElementById('headlines');
+        const loadingIndicator = document.getElementById('loading');
+
+        // --- Configuration ---
+        const bypassServices = [
+            { id: 'none', name: 'No Bypass', prefix: null },
+            { id: '12ft', name: '12ft.io', prefix: 'https://12ft.io/' },
+            { id: 'archive', name: 'archive.today', prefix: 'https://archive.today/' }
+        ];
+
+        const premiumDomains = [
+            'nytimes.com', 'wsj.com', 'bloomberg.com', 'economist.com',
+            'washingtonpost.com', 'ft.com', 'businessinsider.com', 'theathletic.com',
+            'reuters.com', 'thetimes.co.uk', 'theatlantic.com'
+        ];
+
+        function isPremiumDomain(url) {
+            try {
+                const hostname = new URL(url).hostname;
+                // Check if the hostname or a subdomain (e.g., www.wsj.com) matches.
+                return premiumDomains.some(domain => hostname.endsWith(domain));
+            } catch (e) {
+                return false; // Invalid URL
+            }
+        }
+
+        // --- Dark Mode ---
+        // Check for saved dark mode preference
+        if (localStorage.getItem('darkMode') === 'enabled') {
+            body.classList.add('dark-mode');
+            darkModeToggle.textContent = '☀️';
+        }
+
+        function toggleDarkMode() {
+            body.classList.toggle('dark-mode');
+            const isDark = body.classList.contains('dark-mode');
+            darkModeToggle.textContent = isDark ? '☀️' : '🌙';
+            localStorage.setItem('darkMode', isDark ? 'enabled' : 'disabled');
+        }
+        darkModeToggle.addEventListener('click', toggleDarkMode);
+
+        // --- Bypass Service Selector ---
+        function initializeBypassSelector() {
+            bypassSelector.innerHTML = bypassServices
+                .map(service => `<option value="${service.id}">${service.name}</option>`)
+                .join('');
+
+            const savedService = localStorage.getItem('bypassService') || 'none';
+            bypassSelector.value = savedService;
+            selectedBypass = savedService;
+        }
+
+        function handleBypassChange() {
+            selectedBypass = bypassSelector.value;
+            localStorage.setItem('bypassService', selectedBypass);
+            renderHeadlines();
+        }
+        bypassSelector.addEventListener('change', handleBypassChange);
+
+        // --- Data Handling ---
+        function renderHeadlines() {
+            if (!headlinesData || headlinesData.length === 0) {
+                headlinesContainer.innerHTML = '<li class="error">No headlines available</li>';
+                return;
+            }
+
+            headlinesContainer.innerHTML = headlinesData.map(item => {                
+                const isPremium = isPremiumDomain(item.link);
+                const currentService = bypassServices.find(s => s.id === selectedBypass);
+                const shouldBypass = currentService && currentService.prefix && isPremium;
+
+                const finalLink = shouldBypass ? `${currentService.prefix}${item.link}` : item.link;
+                const linkClass = shouldBypass ? 'headline bypassed' : 'headline';
+
+                return `
+                    <li class="news-item">
+                        <div class="headline-container">
+                            <a href="${finalLink}" target="_blank" rel="noopener noreferrer" class="${linkClass}">${item.title}</a>
+                            <span class="source">${item.source}</span>
+                        </div>
+                    </li>`;
+            }).join('');
+        }
+
+        async function loadHeadlines() {
+            try {
+                const response = await fetch('/api/headlines');
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                const apiResponse = await response.json();
+
+                headlinesData = apiResponse.data; // Store data globally
+                loadingIndicator.style.display = 'none';
+                renderHeadlines(); // Render the data
+
+            } catch (error) {
+                loadingIndicator.style.display = 'none';
+                headlinesContainer.innerHTML = `
+                    <li class="error">Error loading headlines: ${error.message}</li>
+                `;
+                console.error('Error:', error);
+            }
+        }
+
+        // Initial load
+        initializeBypassSelector();
+        loadHeadlines();
+        // Refresh every minute
+        setInterval(loadHeadlines, 60000);
+    </script>
+</body>
+</html>

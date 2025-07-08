@@ -1,0 +1,40 @@
+{
+	# Global options block to disable automatic HTTPS certificate management.
+	# This is crucial as SSL is handled externally by a different reverse proxy.
+	auto_https off
+	
+	# Initialize the cache-handler module with its default in-memory storage.
+	# This is required for the 'cache' directive to work below.
+	cache
+}
+
+# Define a server that listens only on HTTP port 7001.
+:7001 {
+	# Enable access logging to see incoming requests from the proxy.
+	log
+
+	# Route requests to the appropriate handler.
+	route {
+		# Cache the static homepage for 5 minutes to reduce load on the backend.
+		# This matcher identifies requests for the root path.
+		@home path /
+		cache @home {
+			ttl 5m
+		}
+
+		# Reverse proxy all other requests to the 'app' service.
+		# Caddy automatically discovers and load-balances across all scaled 'app' containers.
+		reverse_proxy app:8989 {
+			# Use a round-robin load balancing strategy for even distribution.
+			lb_policy round_robin
+
+			# Actively check the health of backend containers and stop sending
+			# traffic to unhealthy ones.
+			health_uri      /health
+			health_interval 10s
+			health_headers {
+				Host "localhost"
+			}
+		}
+	}
+}

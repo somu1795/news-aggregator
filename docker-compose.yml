@@ -1,0 +1,78 @@
+services:
+  app:
+    init: true
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      # API_RATE_LIMIT: Controls requests per IP. Default is "100/minute".
+      - API_RATE_LIMIT=${API_RATE_LIMIT:-100/minute}
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS?You must set ALLOWED_HOSTS in your .env file}
+      - ADMIN_API_KEY=${ADMIN_API_KEY?You must set ADMIN_API_KEY in your .env file}
+      # For production, a good starting point for workers is (2 x number of CPUs) + 1.
+      # With the default APP_CPUS=4, a value of 9 is recommended.
+      - UVICORN_WORKERS=${UVICORN_WORKERS:-9}
+      - LOG_LEVEL=INFO
+    volumes:
+      # The code is already baked into the image via the Dockerfile's COPY command.
+      # For production and fast startup, we use the internal copy.
+      # For development, you can uncomment the line below to live-mount your local code.
+      # - ./app:/app:ro
+      - app_logs:/var/log/app
+    deploy:
+      resources:
+        # These are resource limits per container. To handle very high traffic (10k+ users),
+        # you should scale horizontally by running more containers (e.g., `docker-compose up --scale app=3`).
+        limits:
+          cpus: '${APP_CPUS:-4}'
+          memory: ${APP_MEM_LIMIT:-2G}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8989/health"]
+      interval: 10s   # Check every 10 seconds
+      timeout: 5s
+      retries: 3
+      start_period: 10s # Grace period for startup before retries are counted
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  caddy:
+    init: true
+    build: ./caddy
+    ports:
+      # Expose Caddy's HTTP port on all network interfaces so it can be accessed
+      # from other machines on the network (e.g., your browser or Nginx Proxy Manager).
+      - "${CADDY_HTTP_PORT:-7001}:7001"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.0-alpine
+    volumes:
+      - redis_data:/data
+    command: redis-server --save 60 1000 --maxmemory ${REDIS_MAX_MEMORY:-256mb} --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 300M # Set a hard limit slightly above Redis's maxmemory
+
+volumes:
+  redis_data:
+  caddy_data:
+  caddy_config:
+  app_logs:

@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>News Aggregator</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .news-item {
+            margin-bottom: 15px;
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+        }
+        .source {
+            display: inline-block;
+            background: #f0f0f0;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.8em;
+            margin-right: 10px;
+        }
+        .error {
+            color: #d32f2f;
+        }
+        #loading {
+            color: #666;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <h1>Latest News</h1>
+    <div id="loading">Loading headlines...</div>
+    <ul id="headlines"></ul>
+
+    <script>
+        async function loadHeadlines() {
+            try {
+                const response = await fetch('/api/headlines');
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                const headlines = await response.json();
+                
+                const container = document.getElementById('headlines');
+                document.getElementById('loading').style.display = 'none';
+                
+                if (headlines.length === 0) {
+                    container.innerHTML = '<li class="error">No headlines available</li>';
+                    return;
+                }
+                
+                container.innerHTML = headlines.map(item => `
+                    <li class="news-item">
+                        <span class="source">${item.source}</span>
+                        <a href="${item.link}" target="_blank">${item.title}</a>
+                    </li>
+                `).join('');
+            } catch (error) {
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('headlines').innerHTML = `
+                    <li class="error">Error loading headlines: ${error.message}</li>
+                `;
+                console.error('Error:', error);
+            }
+        }
+
+        // Initial load
+        loadHeadlines();
+        // Refresh every minute
+        setInterval(loadHeadlines, 60000);
+    </script>
+</body>
+</html>
