@@ -31,7 +31,7 @@ steps:
 
         echo "Mirroring repository..."
         git remote rm github 2>/dev/null || true
-        git remote add ${GITHUB_REPO_URL}
+        git remote add https://github.com/GITHUB_USER_REDACTED/news-aggregator.git
         git push github --all
         git push github --tags
         echo "Mirroring successful."
