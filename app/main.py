@@ -262,7 +262,7 @@ async def _wait_for_cache_or_fallback(redis_client: redis.Redis, http_client: ht
     FALLBACK_FETCHES.inc()
     return APIResponse(data=headlines, source="fallback_nolock", cached_until=None)
 
-@app.get("/", include_in_schema=False)
+@app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
 async def serve_frontend(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 

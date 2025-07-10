@@ -22,4 +22,5 @@ exec uvicorn main:app \
     --workers "$WORKERS" \
     --loop uvloop \
     --http httptools \
+    --proxy-headers \
     --log-config logging.conf

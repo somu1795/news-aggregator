@@ -2,7 +2,9 @@
 	# Global options block to disable automatic HTTPS certificate management.
 	# This is crucial as SSL is handled externally by a different reverse proxy.
 	auto_https off
-	
+	servers {
+		protocols h1 h2
+	}
 	# Initialize the cache-handler module with its default in-memory storage.
 	# This is required for the 'cache' directive to work below.
 	cache
@@ -18,7 +20,7 @@
 		# Cache the static homepage for 5 minutes to reduce load on the backend.
 		# This matcher identifies requests for the root path.
 		@home path /
-		cache @home {
+		cache @home not @non_head {
 			ttl 5m
 		}
 
