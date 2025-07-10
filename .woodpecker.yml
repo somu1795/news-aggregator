@@ -19,11 +19,10 @@ steps:
   - name: sync-to-github
     image: alpine/git
     commands:
-      - |
         REMOTE_URL="https://${GITHUB_TOKEN}@github.com/GITHUB_USER_REDACTED/news-aggregator.git"
-
         echo "Mirroring repository..."
         git remote rm github 2>/dev/null || true
+        echo $REMOTE_URL
         git remote add github ${REMOTE_URL}
         git push github --all
         git push github --tags
