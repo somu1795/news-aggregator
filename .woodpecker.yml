@@ -34,7 +34,25 @@ steps:
     privileged: true
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      ADMIN_API_KEY:
+        from_secret: ADMIN_API_KEY
+      API_RATE_LIMIT:
+        from_secret: API_RATE_LIMIT
+      UVICORN_WORKERS:
+        from_secret: UVICORN_WORKERS
+      REDIS_MAX_MEMORY:
+        from_secret: REDIS_MAX_MEMORY
+      ALLOWED_HOSTS:
+        from_secret: ALLOWED_HOSTS
     commands:
+      - cat <<EOF > .env
+        ALLOWED_HOSTS=${ALLOWED_HOSTS}
+        ADMIN_API_KEY=${ADMIN_API_KEY}
+        REDIS_MAX_MEMORY=${REDIS_MAX_MEMORY}
+        API_RATE_LIMIT=${API_RATE_LIMIT}
+        UVICORN_WORKERS=${UVICORN_WORKERS}
+        EOF
       - docker-compose build
 
   - name: tag-and-push-images
