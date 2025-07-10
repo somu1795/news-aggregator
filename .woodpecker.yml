@@ -18,8 +18,9 @@ variables:
 steps:
   - name: sync-to-github
     image: alpine/git
-    GITHUB_TOKEN:
-      from_secret: github_token
+    environment:
+      GITHUB_TOKEN:
+        from_secret: github_token
     commands:
       - |
         set -e # Exit immediately if a command exits with a non-zero status.
