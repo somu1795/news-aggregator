@@ -4,7 +4,10 @@ workspace:
 
 when:
   branch: test-woodpecker
-  event: push
+  event: [push, manual]
+
+labels:
+  build-machine: true
 
 variables:
   REGISTRY: REGISTRY_REDACTED
