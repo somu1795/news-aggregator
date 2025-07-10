@@ -16,19 +16,19 @@ variables:
   COMPOSE_IMAGE_CADDY: news-aggregator-caddy
 
 steps:
-  - name: sync-to-github
-    image: alpine/git
-    environment:
-      GITHUB_TOKEN:
-        from_secret: github_token
-    commands:
-      - |
-        REMOTE_URL="https://${GITHUB_TOKEN}@github.com/GITHUB_USER_REDACTED/news-aggregator.git"
-        echo "Using remote: ${REMOTE_URL#*@}"
-        git remote rm github 2>/dev/null || true
-        git remote add github "${REMOTE_URL}"
-        git push github --all
-        git push github --tags
+  # - name: sync-to-github
+  #   image: alpine/git
+  #   environment:
+  #     GITHUB_TOKEN:
+  #       from_secret: github_token
+  #   commands:
+  #     - |
+  #       REMOTE_URL="https://${GITHUB_TOKEN}@github.com/GITHUB_USER_REDACTED/news-aggregator.git"
+  #       echo "Using remote: ${REMOTE_URL#*@}"
+  #       git remote rm github 2>/dev/null || true
+  #       git remote add github "${REMOTE_URL}"
+  #       git push github --all
+  #       git push github --tags
 
   - name: build-images-with-compose
     image: docker/compose:1.29.2
