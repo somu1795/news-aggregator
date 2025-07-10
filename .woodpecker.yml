@@ -23,7 +23,6 @@ steps:
         from_secret: github_token
     commands:
       - |
-        set -e
         REMOTE_URL="https://${GITHUB_TOKEN}@github.com/GITHUB_USER_REDACTED/news-aggregator.git"
         echo "Using remote: ${REMOTE_URL#*@}"
         git remote rm github 2>/dev/null || true
