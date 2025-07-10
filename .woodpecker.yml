@@ -24,11 +24,11 @@ steps:
       - |
         set -e # Exit immediately if a command exits with a non-zero status.
 
-        REMOTE_URL="https://$${GITHUB_TOKEN}@https://github.com/GITHUB_USER_REDACTED/news-aggregator.git"
+        REMOTE_URL=https://${GITHUB_TOKEN}@https://github.com/GITHUB_USER_REDACTED/news-aggregator.git
 
         echo "Mirroring repository..."
         git remote rm github 2>/dev/null || true
-        git remote add github "${REMOTE_URL}"
+        git remote add github ${GITHUB_REPO_URL}
         git push github --all
         git push github --tags
         echo "Mirroring successful."
