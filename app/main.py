@@ -3,6 +3,7 @@ import logging
 import logging.config
 import re
 from fastapi import FastAPI, HTTPException, Request, Response, Security
+import random
 from fastapi.responses import JSONResponse
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.templating import Jinja2Templates
@@ -193,52 +194,94 @@ async def _resolve_redirect(client: httpx.AsyncClient, url: str) -> str:
         logger.warning(f"Failed to resolve redirect for {url}: {e}. Falling back to original link.")
         return url
 
-async def _get_fresh_headlines(client: httpx.AsyncClient) -> List[Dict]:
+async def _fetch_and_parse_feed(client: httpx.AsyncClient, source_name: str, url: str) -> List[Dict]:
+    """Fetches and parses a single RSS feed with retry logic."""
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
         "Accept": "application/xml,application/xhtml+xml,text/html;q=0.9, text/plain;q=0.8,*/*;q=0.5",
         "Accept-Language": "en-US,en;q=0.5",
     }
-    url = config.GOOGLE_NEWS_URL
-
     for attempt in range(config.FETCH_RETRIES):
         try:
             response = await client.get(url, headers=headers)
             response.raise_for_status()
             feed = feedparser.parse(response.content)
             if getattr(feed, 'bozo', False):
-                raise ValueError(f"Feed parse error: {feed.bozo_exception}")
-            logger.info(f"Successfully fetched and processed Google News feed from {url}")
-
-            preliminary_headlines = []
+                raise ValueError(f"Feed parse error for {source_name}: {feed.bozo_exception}")
+            
+            headlines = []
             for entry in feed.entries:
-                preliminary_headlines.append({
+                headlines.append({
                     "title": entry.title,
                     "link": entry.link,
-                    "source": getattr(entry, 'source', {}).get('title', 'Google News'),
+                    # Prioritize the source from the article entry, fallback to the feed's name from config
+                    "source": getattr(entry, 'source', {}).get('title') or source_name,
                     "published": time.mktime(entry.published_parsed) if hasattr(entry, 'published_parsed') else time.time()
                 })
-
-            preliminary_headlines.sort(key=lambda x: x["published"], reverse=True)
-            top_headlines = preliminary_headlines[:config.MAX_HEADLINES]
-
-            # Now, resolve redirects ONLY for the top headlines.
-            resolve_tasks = [_resolve_redirect(client, h['link']) for h in top_headlines]
-            resolved_links = await asyncio.gather(*resolve_tasks)
-
-            for i, headline in enumerate(top_headlines):
-                headline['link'] = resolved_links[i]
-
-            return top_headlines
-
+            logger.info(f"Successfully fetched {len(headlines)} headlines from {source_name} at {url}")
+            return headlines
         except Exception as e:
-            logger.warning(f"Attempt {attempt + 1} failed for Google News at {url}: {e}")
+            logger.warning(f"Attempt {attempt + 1} failed for {source_name} at {url}: {e}")
             if attempt < config.FETCH_RETRIES - 1:
-                await asyncio.sleep(1 * (attempt + 1))
+                await asyncio.sleep(config.BACKOFF_BASE ** attempt)
             else:
-                logger.error(f"Failed to fetch Google News from {url} after {config.FETCH_RETRIES} attempts.", exc_info=True)
+                logger.error(f"Failed to fetch from {source_name} at {url} after {config.FETCH_RETRIES} attempts.", exc_info=True)
                 return []
     return []
+
+async def _get_fresh_headlines(client: httpx.AsyncClient) -> List[Dict]:
+    """
+    Fetches headlines from all configured news sources concurrently, aggregates them
+    according to configured weights, shuffles them randomly, and resolves the
+    final links for the top articles.
+    """
+    # 1. Fetch from all sources concurrently
+    fetch_tasks = [
+        _fetch_and_parse_feed(client, name, url)
+        for name, url in config.NEWS_SOURCES.items()
+    ]
+    source_names = list(config.NEWS_SOURCES.keys())
+    results_by_source_list = await asyncio.gather(*fetch_tasks)
+    results_by_source = {name: headlines for name, headlines in zip(source_names, results_by_source_list)}
+
+    # 2. Sort each source's headlines individually by date
+    for name in results_by_source:
+        results_by_source[name].sort(key=lambda x: x["published"], reverse=True)
+
+    # 3. Allocate headlines based on weights from config
+    weighted_headlines = []
+    allocations = {name: round(config.MAX_HEADLINES * weight) for name, weight in config.SOURCE_WEIGHTS.items()}
+
+    # Adjust for rounding errors to ensure the total is exactly MAX_HEADLINES
+    total_allocated = sum(allocations.values())
+    if total_allocated != config.MAX_HEADLINES:
+        remainder = config.MAX_HEADLINES - total_allocated
+        # Give remainder to the source with the highest weight
+        primary_source = max(config.SOURCE_WEIGHTS, key=config.SOURCE_WEIGHTS.get)
+        if primary_source in allocations:
+            allocations[primary_source] += remainder
+
+    # 4. Gather headlines according to the calculated allocations
+    for source_name, num_to_take in allocations.items():
+        source_headlines = results_by_source.get(source_name, [])
+        weighted_headlines.extend(source_headlines[:num_to_take])
+
+    # 5. Shuffle the final combined list for a random mix.
+    random.shuffle(weighted_headlines)
+    top_headlines = weighted_headlines
+
+    if not top_headlines:
+        logger.error("Failed to fetch any headlines from any source.")
+        return []
+
+    logger.info(f"Aggregated {len(top_headlines)} headlines from {len(config.NEWS_SOURCES)} sources with weighting.")
+
+    # 6. Resolve redirects for the final list of headlines
+    resolve_tasks = [_resolve_redirect(client, h['link']) for h in top_headlines]
+    resolved_links = await asyncio.gather(*resolve_tasks)
+    for i, headline in enumerate(top_headlines):
+        headline['link'] = resolved_links[i]
+    return top_headlines
 
 async def _fetch_and_cache_headlines(redis_client: redis.Redis, http_client: httpx.AsyncClient) -> APIResponse:
     logger.info("Fetching live headlines.")
