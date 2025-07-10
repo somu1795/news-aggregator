@@ -61,11 +61,11 @@ steps:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       REGISTRY: REGISTRY_REDACTED
-      COMPOSE_IMAGE_APP: news-aggregator-app
-      COMPOSE_IMAGE_CADDY: news-aggregator-caddy
     commands:
       - |
         set -e
+        export COMPOSE_IMAGE_APP=news-aggregator-app
+        export COMPOSE_IMAGE_CADDY=news-aggregator-caddy
         SHORT_TAG=$(echo ${CI_COMMIT_SHA} | cut -c1-7)
         echo "Using IMAGE_TAG=$SHORT_TAG"
         echo "Registry: $REGISTRY"
