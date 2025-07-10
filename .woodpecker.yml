@@ -52,7 +52,7 @@ steps:
         API_RATE_LIMIT=${API_RATE_LIMIT}
         UVICORN_WORKERS=${UVICORN_WORKERS}
         EOF
-        docker-compose build docker-compose.portainer.yml
+        docker-compose build
 
   - name: tag-and-push-images
     image: docker:20.10
