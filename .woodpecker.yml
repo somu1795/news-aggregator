@@ -19,7 +19,11 @@ steps:
   - name: sync-to-github
     image: alpine/git
     commands:
+      - |
+        set -e # Exit immediately if a command exits with a non-zero status.
+
         REMOTE_URL="https://${GITHUB_TOKEN}@github.com/GITHUB_USER_REDACTED/news-aggregator.git"
+
         echo "Mirroring repository..."
         git remote rm github 2>/dev/null || true
         git remote add github ${REMOTE_URL}
