@@ -18,8 +18,7 @@ variables:
 steps:
   - name: sync-to-github
     image: alpine/git
-    secrets: github_token
-    environment:
+    settings:
       GITHUB_TOKEN:
         from_secret: github_token
     commands:
