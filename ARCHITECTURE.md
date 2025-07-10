@@ -107,27 +107,24 @@ This section describes the lifecycle of a request to the `/api/headlines` endpoi
 
 5.  **Cache Check (Cache Miss)**:
     - If the main cache key does not exist, the application implements a locking mechanism to prevent multiple workers from fetching the same data simultaneously (a "cache stampede").
-    - **Lock Acquisition**: The worker attempts to acquire a short-lived, exclusive lock in Redis.
-    - **If Lock is Acquired (The "Leader")**:
-        - This worker is now responsible for repopulating the cache.
-        - It proceeds to step 6 (External Fetching).
-        - After fetching and caching the data (step 7), it releases the lock.
-    - **If Lock is Not Acquired (A "Follower")**:
-        - Another worker is already fetching the data.
-        - This worker will wait for a brief period, periodically checking if the cache has been populated by the leader.
-        - If the cache is populated, it reads the new data and returns it.
-        - If it times out waiting, it performs a fallback fetch to ensure the user gets a response.
+    - **Lock Acquisition**: The worker attempts to acquire a short-lived, exclusive lock in Redis. If successful, it becomes the "leader" responsible for repopulating the cache.
+    - **If Lock is Acquired**: The worker proceeds to step 6. After fetching and caching, it releases the lock.
+    - **If Lock is Not Acquired**: Another worker is already fetching. This "follower" worker will wait briefly, periodically checking if the cache has been populated. If it times out, it performs its own fetch to ensure the user gets a response.
 
-6.  **External Fetching**:
-    - Each `_fetch_source_with_fallback` task uses `httpx` to make an HTTP GET request to the source's RSS feed URL. It includes retries and fallback URLs for resilience.
-    - The XML response is parsed into a list of headline objects using the `feedparser` library.
-    - Source-specific filters are applied (e.g., removing non-article links from the BBC feed).
+6.  **Concurrent External Fetching**:
+    - The leader worker initiates concurrent `httpx` requests to all RSS feed URLs defined in `config.NEWS_SOURCES`.
+    - Each feed is fetched and parsed into a separate list of articles using the `feedparser` library. This process includes built-in retries with exponential backoff for resilience.
 
-7.  **Aggregation & Caching**:
-    - The headlines from all successful fetches are combined into a single list.
-    - The list is sorted by publication date in descending order and truncated to `MAX_HEADLINES`.
-    - This final list is stored in Redis with a specific Time-To-Live (TTL), so it will automatically expire.
+7.  **Aggregation, Weighting, and Shuffling**:
+    - The articles from each source are first sorted by publication date.
+    - The application then calculates how many articles to take from each source based on the percentages in `config.SOURCE_WEIGHTS` and the total desired count in `config.MAX_HEADLINES`.
+    - The top N articles are taken from each source and combined into a single list.
+    - This combined list is then **shuffled randomly** to ensure a varied mix is presented to the user on each load.
 
-8.  **Response**: The newly fetched list is returned to the user with `source: "live"`.
+8.  **Link Resolution & Caching**:
+    - For the final, shuffled list of headlines, the app concurrently resolves each article's link using the `_resolve_redirect` function. This is a crucial step for Google News feeds, as it follows redirects and scrapes landing pages to find the final destination URL.
+    - The final list, now with fully resolved links, is stored in Redis with a specific Time-To-Live (TTL), so it will automatically expire.
+
+9.  **Response**: The newly fetched list is returned to the user with `source: "live"`.
 
 This architecture ensures the application is fast for most users (due to caching) while being robust enough to handle failures when fetching from external sources.

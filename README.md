@@ -8,12 +8,14 @@
 ---
 
 ## Features
-
 - **Fast & Asynchronous**: Built with FastAPI for high performance.
 - **Robust Caching**: Uses **Redis** to cache headlines, providing fast responses and reducing load on external news sources.
 - **High Concurrency Ready**: Implements a Redis-based distributed lock to prevent cache stampedes under high load.
-- **Resilient Fetching**: Automatically retries failed requests to RSS feeds and supports fallback URLs for each source.
+- **Multi-Source Aggregation**: Fetches from multiple RSS feeds concurrently, defined in a central configuration file.
+- **Configurable Source Weighting**: Control the mix of headlines from different sources (e.g., 70% world news, 30% science) via a simple configuration.
+- **Randomized Headline Mix**: Shuffles the final list of headlines for a more varied and engaging user experience on every page load.
 - **Containerized & Production-Ready**: Fully containerized with a multi-stage **Docker** build for a small, secure, and fast-starting image.
+- **Advanced Link Resolution**: Includes a sophisticated mechanism to resolve Google News's intermediate redirect links to get to the final article URL.
 - **Orchestrated with Docker Compose**: Services are managed with a single `docker-compose.yml` file for easy setup and deployment.
 - **Secure by Default**: Runs as a non-root user inside the container and uses an internal reverse proxy (**Caddy**) for load balancing.
 - **Monitoring**: Exposes Prometheus metrics for observability via `/metrics`.
@@ -65,13 +67,15 @@ The application will be available at `http://<your-host-ip>:7001` (or whichever 
 
 ## Configuration
 
-All configuration is managed via the `.env` file. See `.env.example` for a full list of available options and their descriptions.
+Most configuration is managed via the `.env` file. See `.env.example` for a full list of available options and their descriptions.
+
+For more advanced configuration, such as defining news sources and their weights, see `/home/pi/news-aggregator/app/config.py`.
 
 | Variable           | Description                                                              | Default      |
 | ------------------ | ------------------------------------------------------------------------ | ------------ |
 | `ALLOWED_HOSTS`    | Comma-separated list of allowed hostnames. **Required.**                 | `localhost`  |
-| `ENABLE_API_DOCS`  | Set to "true" to enable interactive API docs at `/docs`.                   | `false`      |
-| `ADMIN_API_KEY`    | A secret key to protect administrative endpoints. **Required.**            | `changeme`   |
+| `ENABLE_API_DOCS`  | Set to "true" to enable interactive API docs at `/docs`.                 | `false`      |
+| `ADMIN_API_KEY`    | A secret key to protect administrative endpoints. **Required.**          | `changeme`   |
 | `UVICORN_WORKERS`  | Number of Uvicorn worker processes per container.                        | `9`          |
 | `CADDY_HTTP_PORT`  | The external port Caddy will listen on.                                  | `7001`       |
 | `API_RATE_LIMIT`   | Rate limit for the /api/headlines endpoint per IP.                       | `100/minute` |
