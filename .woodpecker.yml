@@ -10,8 +10,8 @@ labels:
   build-machine: true
 
 variables:
+  IMAGE_TAG: ""  # Set dynamically during build step
   REGISTRY: REGISTRY_REDACTED
-  IMAGE_TAG: ${CI_COMMIT_SHA:0:7}
   COMPOSE_IMAGE_APP: news-aggregator-app
   COMPOSE_IMAGE_CADDY: news-aggregator-caddy
 
@@ -23,6 +23,7 @@ steps:
   #       from_secret: github_token
   #   commands:
   #     - |
+  #       set -e
   #       REMOTE_URL="https://${GITHUB_TOKEN}@github.com/GITHUB_USER_REDACTED/news-aggregator.git"
   #       echo "Using remote: ${REMOTE_URL#*@}"
   #       git remote rm github 2>/dev/null || true
@@ -49,7 +50,7 @@ steps:
     commands:
       - |
         set -e
-        echo "Writing .env file..."
+        echo "Generating .env file..."
         cat <<EOF > .env
         ALLOWED_HOSTS=${ALLOWED_HOSTS}
         ADMIN_API_KEY=${ADMIN_API_KEY}
@@ -57,7 +58,7 @@ steps:
         API_RATE_LIMIT=${API_RATE_LIMIT}
         UVICORN_WORKERS=${UVICORN_WORKERS}
         EOF
-      - docker-compose build
+        docker-compose build
 
   - name: tag-and-push-images
     image: docker:20.10
@@ -67,11 +68,16 @@ steps:
     commands:
       - |
         set -e
-        docker tag ${COMPOSE_IMAGE_APP}:latest ${REGISTRY}/${COMPOSE_IMAGE_APP}:${IMAGE_TAG}
+        SHORT_TAG=$(echo ${CI_COMMIT_SHA} | cut -c1-7)
+        echo "Using IMAGE_TAG=$SHORT_TAG"
+        echo "Registry: ${REGISTRY}"
+
+        docker tag ${COMPOSE_IMAGE_APP}:latest ${REGISTRY}/${COMPOSE_IMAGE_APP}:${SHORT_TAG}
         docker tag ${COMPOSE_IMAGE_APP}:latest ${REGISTRY}/${COMPOSE_IMAGE_APP}:latest
-        docker push ${REGISTRY}/${COMPOSE_IMAGE_APP}:${IMAGE_TAG}
+        docker push ${REGISTRY}/${COMPOSE_IMAGE_APP}:${SHORT_TAG}
         docker push ${REGISTRY}/${COMPOSE_IMAGE_APP}:latest
-        docker tag ${COMPOSE_IMAGE_CADDY}:latest ${REGISTRY}/${COMPOSE_IMAGE_CADDY}:${IMAGE_TAG}
+
+        docker tag ${COMPOSE_IMAGE_CADDY}:latest ${REGISTRY}/${COMPOSE_IMAGE_CADDY}:${SHORT_TAG}
         docker tag ${COMPOSE_IMAGE_CADDY}:latest ${REGISTRY}/${COMPOSE_IMAGE_CADDY}:latest
-        docker push ${REGISTRY}/${COMPOSE_IMAGE_CADDY}:${IMAGE_TAG}
+        docker push ${REGISTRY}/${COMPOSE_IMAGE_CADDY}:${SHORT_TAG}
         docker push ${REGISTRY}/${COMPOSE_IMAGE_CADDY}:latest
