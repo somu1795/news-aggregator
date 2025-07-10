@@ -21,13 +21,11 @@ steps:
     environment:
       GITHUB_TOKEN:
         from_secret: github_token
-      GITHUB_REPO_URL:
-        from_secret: github_repo_url
     commands:
       - |
         set -e # Exit immediately if a command exits with a non-zero status.
 
-        REMOTE_URL="https://${GITHUB_TOKEN}@https://github.com/GITHUB_USER_REDACTED/news-aggregator.git"
+        REMOTE_URL="https://${GITHUB_TOKEN}@github.com/GITHUB_USER_REDACTED/news-aggregator.git"
 
         echo "Mirroring repository..."
         git remote rm github 2>/dev/null || true
