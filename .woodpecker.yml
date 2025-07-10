@@ -18,9 +18,6 @@ variables:
 steps:
   - name: sync-to-github
     image: alpine/git
-    environment:
-      GITHUB_TOKEN:
-        from_secret: github_token
     commands:
       - |
         set -e # Exit immediately if a command exits with a non-zero status.
@@ -32,6 +29,9 @@ steps:
         git remote add github ${REMOTE_URL}
         git push github --all
         git push github --tags
+    environment:
+      GITHUB_TOKEN:
+        from_secret: github_token
 
   - name: build-images-with-compose
     image: docker/compose:1.29.2
