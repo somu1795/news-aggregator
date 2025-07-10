@@ -257,21 +257,43 @@
         }
 
         async function loadHeadlines() {
+            const isInitialLoad = headlinesData.length === 0;
+
             try {
                 const response = await fetch('/api/headlines');
-                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                if (!response.ok) {
+                    // Try to parse a detailed error message from the API
+                    let errorDetail = `HTTP error! status: ${response.status}`;
+                    try {
+                        const errorJson = await response.json();
+                        // The backend sends errors in a { "detail": "..." } format
+                        if (errorJson && errorJson.detail) {
+                            errorDetail = errorJson.detail;
+                        }
+                    } catch (e) {
+                        // Response was not JSON, stick with the HTTP status error.
+                    }
+                    throw new Error(errorDetail);
+                }
                 const apiResponse = await response.json();
 
                 headlinesData = apiResponse.data; // Store data globally
-                loadingIndicator.style.display = 'none';
+                if (isInitialLoad) {
+                    loadingIndicator.style.display = 'none';
+                }
                 renderHeadlines(); // Render the data
 
             } catch (error) {
-                loadingIndicator.style.display = 'none';
-                headlinesContainer.innerHTML = `
-                    <li class="error">Error loading headlines: ${error.message}</li>
-                `;
-                console.error('Error:', error);
+                console.error('Error loading headlines:', error);
+                // If it's the first load and it fails, show an error.
+                // Otherwise (if it's a background refresh that fails),
+                // we just log the error and keep the old headlines visible.
+                if (isInitialLoad) {
+                    loadingIndicator.style.display = 'none';
+                    headlinesContainer.innerHTML = `
+                        <li class="error">Could not load headlines: ${error.message}</li>
+                    `;
+                }
             }
         }
 
