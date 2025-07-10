@@ -17,4 +17,4 @@ BACKOFF_BASE = 2 # Base for exponential backoff calculation (e.g., 2 ** attempt)
 
 # --- News Source ---
 # Using a single aggregated feed from Google News.
-GOOGLE_NEWS_URL = 'https://news.google.com/rss/search?q=news%20from%20world&hl=en-US&gl=US&ceid=US%3Aen'
+GOOGLE_NEWS_URL = 'https://news.google.com/rss/search?q=news%20from%20world%20-ndtv%20-hindustan%20times%20-India%20Today&hl=en-US&gl=US&ceid=US%3Aen'
