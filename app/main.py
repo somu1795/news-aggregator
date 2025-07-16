@@ -1,7 +1,7 @@
 import os
 import logging
 import logging.config
-import re
+from aiolimiter import AsyncLimiter
 from fastapi import FastAPI, HTTPException, Request, Response, Security
 import random
 from fastapi.responses import JSONResponse
@@ -23,6 +23,8 @@ import httpx
 from bs4 import BeautifulSoup
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST, Counter, Gauge
 import config
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 logger = logging.getLogger(__name__)
 APP_VERSION = "1.0.0"
@@ -42,6 +44,10 @@ CACHE_MISSES = Counter("headlines_cache_misses_total", "Total cache misses for h
 HEADLINES_FETCHED = Gauge("headlines_fetched_count", "Number of headlines fetched in the last live pull")
 REDIS_ERRORS = Counter("redis_errors_total", "Total number of Redis errors encountered")
 FALLBACK_FETCHES = Counter("fallback_fetches_total", "Total number of fallback fetches performed")
+
+# Rate limiter for outgoing requests to news sources.
+# This ensures we don't hit all sources at once, respecting a global limit of 20 req/minute.
+outgoing_rate_limiter = AsyncLimiter(20, 60)
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=True)
 ADMIN_API_KEY_SECRET = os.getenv("ADMIN_API_KEY")
@@ -203,7 +209,9 @@ async def _fetch_and_parse_feed(client: httpx.AsyncClient, source_name: str, url
     }
     for attempt in range(config.FETCH_RETRIES):
         try:
-            response = await client.get(url, headers=headers)
+            # Wait for our turn based on the global rate limit before making the request.
+            async with outgoing_rate_limiter:
+                response = await client.get(url, headers=headers)
             response.raise_for_status()
             feed = feedparser.parse(response.content)
             if getattr(feed, 'bozo', False):
@@ -369,3 +377,11 @@ instrumentator = Instrumentator(
 @app.get("/metrics", include_in_schema=False)
 async def metrics():
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+# Mount the React build output at /modern/static
+app.mount("/modern/static", StaticFiles(directory="modern_static"), name="modern_static")
+
+# Serve the React app's index.html at /modern
+@app.get("/modern", include_in_schema=False)
+async def serve_modern_frontend():
+    return FileResponse("modern_static/index.html")

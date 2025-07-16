@@ -1,14 +1,17 @@
 # --- Stage 1: Builder ---
-# This stage uses the 'builder' image which contains the 'xcaddy' tool
-# to build a custom Caddy binary with the required plugins.
-FROM caddy:2.8.4-builder AS builder
+# This stage uses the 'builder' image which contains Go and xcaddy
+# to build the latest Caddy binary from the master branch on GitHub.
+FROM caddy:builder AS builder
 
-RUN xcaddy build \
+RUN xcaddy build master \
     --with github.com/caddyserver/cache-handler
 
 # --- Stage 2: Final Image ---
 # This stage uses the lean 'alpine' image for the final production container.
-FROM caddy:2.8.4-alpine
+# We use the official Caddy alpine image as a base to ensure all necessary
+# dependencies like ca-certificates are present.
+FROM caddy:alpine
 
-# Copy the custom-built Caddy binary from the builder stage.
+# Copy the custom-built Caddy binary from the builder stage, replacing the
+# default one.
 COPY --from=builder /usr/bin/caddy /usr/bin/caddy

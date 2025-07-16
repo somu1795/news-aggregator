@@ -1,42 +1,44 @@
 {
-	# Global options block to disable automatic HTTPS certificate management.
-	# This is crucial as SSL is handled externally by a different reverse proxy.
+	# Global options block
+
+	# Disable automatic HTTPS as it's handled by the external proxy.
 	auto_https off
 	servers {
 		protocols h1 h2
 	}
-	# Initialize the cache-handler module with its default in-memory storage.
-	# This is required for the 'cache' directive to work below.
 	cache
+	
 }
 
 # Define a server that listens only on HTTP port 7001.
 :7001 {
-	# Enable access logging to see incoming requests from the proxy.
-	log
+	# Log to standard output in a structured JSON format.
+	log {
+		output stdout
+		format json
+	}
+	encode zstd gzip
 
-	# Route requests to the appropriate handler.
-	route {
-		# Cache the static homepage for 5 minutes to reduce load on the backend.
-		# This matcher identifies requests for the root path.
-		@home path /
-		cache @home not @non_head {
-			ttl 5m
-		}
+	# Cache GET requests for the homepage for 5 minutes to reduce backend load.
+	@home path /
+	cache @home 5m
 
-		# Reverse proxy all other requests to the 'app' service.
-		# Caddy automatically discovers and load-balances across all scaled 'app' containers.
-		reverse_proxy app:8989 {
-			# Use a round-robin load balancing strategy for even distribution.
-			lb_policy round_robin
+	# Reverse proxy all other requests to the 'app' service.
+	# Caddy automatically discovers and load-balances across all scaled 'app' containers.
+	reverse_proxy app:8989 {
+		# Use a round-robin load balancing strategy for even distribution.
+		lb_policy round_robin
 
-			# Actively check the health of backend containers and stop sending
-			# traffic to unhealthy ones.
-			health_uri      /health
-			health_interval 10s
-			health_headers {
-				Host "localhost"
-			}
+		# Trust the incoming X-Forwarded-* headers from our external proxy,
+		# which is on a private network (VPN).
+		trusted_proxies SUBNET_REDACTED
+
+		# Actively check the health of backend containers and stop sending
+		# traffic to unhealthy ones.
+		health_uri      /health
+		health_interval 10s
+		health_headers {
+			Host "localhost"
 		}
 	}
 }

@@ -14,7 +14,8 @@
 - **Multi-Source Aggregation**: Fetches from multiple RSS feeds concurrently, defined in a central configuration file.
 - **Configurable Source Weighting**: Control the mix of headlines from different sources (e.g., 70% world news, 30% science) via a simple configuration.
 - **Randomized Headline Mix**: Shuffles the final list of headlines for a more varied and engaging user experience on every page load.
-- **Containerized & Production-Ready**: Fully containerized with a multi-stage **Docker** build for a small, secure, and fast-starting image.
+- **Resilient Fetching**: Automatically retries failed requests to RSS feeds and supports fallback URLs for each source.
+- **Containerized & Production-Ready**: Fully containerized with a production-optimized **Docker** build for a small, secure, and fast-starting image.
 - **Advanced Link Resolution**: Includes a sophisticated mechanism to resolve Google News's intermediate redirect links to get to the final article URL.
 - **Orchestrated with Docker Compose**: Services are managed with a single `docker-compose.yml` file for easy setup and deployment.
 - **Secure by Default**: Runs as a non-root user inside the container and uses an internal reverse proxy (**Caddy**) for load balancing.
@@ -109,7 +110,8 @@ To handle a large number of users (e.g., 10,000+), you will need to adjust the d
 
 ## API Endpoints
 
-- `GET /`: Serves the HTML frontend.
+- `GET /`: Serves the original HTML frontend.
+- `GET /modern`: Serves the modern Single Page Application (SPA) frontend.
 - `GET /api/headlines`: Fetches the latest news headlines.
 - `GET /health`: Health check endpoint for monitoring.
 - `GET /metrics`: Prometheus metrics endpoint.
