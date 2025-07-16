@@ -70,8 +70,8 @@ All configuration is managed via the `.env` file. See `.env.example` for a full 
 | Variable           | Description                                                              | Default      |
 | ------------------ | ------------------------------------------------------------------------ | ------------ |
 | `ALLOWED_HOSTS`    | Comma-separated list of allowed hostnames. **Required.**                 | `localhost`  |
-| `ENABLE_API_DOCS`  | Set to "true" to enable interactive API docs at `/docs`.                   | `false`      |
-| `ADMIN_API_KEY`    | A secret key to protect administrative endpoints. **Required.**            | `changeme`   |
+| `ENABLE_API_DOCS`  | Set to "true" to enable interactive API docs at `/docs`.                 | `false`      |
+| `ADMIN_API_KEY`    | A secret key to protect administrative endpoints. **Required.**          | `changeme`   |
 | `UVICORN_WORKERS`  | Number of Uvicorn worker processes per container.                        | `9`          |
 | `CADDY_HTTP_PORT`  | The external port Caddy will listen on.                                  | `7001`       |
 | `API_RATE_LIMIT`   | Rate limit for the /api/headlines endpoint per IP.                       | `100/minute` |
