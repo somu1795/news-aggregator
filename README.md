@@ -13,7 +13,7 @@
 - **Robust Caching**: Uses **Redis** to cache headlines, providing fast responses and reducing load on external news sources.
 - **High Concurrency Ready**: Implements a Redis-based distributed lock to prevent cache stampedes under high load.
 - **Resilient Fetching**: Automatically retries failed requests to RSS feeds and supports fallback URLs for each source.
-- **Containerized & Production-Ready**: Fully containerized with a multi-stage **Docker** build for a small, secure, and fast-starting image.
+- **Containerized & Production-Ready**: Fully containerized with a production-optimized **Docker** build for a small, secure, and fast-starting image.
 - **Orchestrated with Docker Compose**: Services are managed with a single `docker-compose.yml` file for easy setup and deployment.
 - **Secure by Default**: Runs as a non-root user inside the container and uses an internal reverse proxy (**Caddy**) for load balancing.
 - **Monitoring**: Exposes Prometheus metrics for observability via `/metrics`.
@@ -105,7 +105,8 @@ To handle a large number of users (e.g., 10,000+), you will need to adjust the d
 
 ## API Endpoints
 
-- `GET /`: Serves the HTML frontend.
+- `GET /`: Serves the original HTML frontend.
+- `GET /modern`: Serves the modern Single Page Application (SPA) frontend.
 - `GET /api/headlines`: Fetches the latest news headlines.
 - `GET /health`: Health check endpoint for monitoring.
 - `GET /metrics`: Prometheus metrics endpoint.

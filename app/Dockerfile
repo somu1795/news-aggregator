@@ -1,4 +1,4 @@
-# Use a standard, slim Python image. This will build much faster.
+# --- Backend ---
 FROM python:3.10-slim-bullseye
 
 # Set environment variables to prevent Python from writing .pyc files and to buffer output
@@ -24,7 +24,8 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code and set ownership
+# Copy application code and static assets, then set ownership
+# This will copy main.py, config.py, templates/, and the new modern_static/ directory
 COPY --chown=app:app . .
 
 # Ensure the entrypoint script is executable
