@@ -3,7 +3,7 @@ import pytest_asyncio
 import json
 import time
 import os
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, patch
 import asyncio
 from importlib import reload
 
@@ -285,8 +285,8 @@ def test_404_error_as_json(client):
     assert "application/json" in response.headers['content-type']
     assert response.json()['error'] == "Not Found"
 
-def test_500_error_as_html(client):
-    """Tests that a generic 500 error returns an HTML page for browser clients."""
+def test_500_error_in_endpoint_as_html(client):
+    """Tests that an error within an endpoint returns a 500 HTML page."""
     # We patch the `get_headlines` endpoint to simulate an unexpected internal error.
     with patch("main.get_headlines", side_effect=ValueError("Something broke badly")):
         response = client.get("/api/headlines", headers={"Accept": "text/html"})
@@ -295,6 +295,17 @@ def test_500_error_as_html(client):
     assert "text/html" in response.headers['content-type']
     # Check for text from the /home/pi/news-aggregator/app/templates/500.html template
     assert "An unexpected server error occurred." in response.text
+
+def test_500_error_in_template_rendering_as_html(client):
+    """Tests that a template rendering failure returns the static fallback error page."""
+    # We patch the template rendering to simulate an unexpected internal error.
+    with patch("main.templates.TemplateResponse", side_effect=ValueError("Template engine crashed")):
+        response = client.get("/", headers={"Accept": "text/html"})
+
+    assert response.status_code == 500
+    assert "text/html" in response.headers['content-type']
+    # Check for text from the static /home/pi/news-aggregator/app/templates/error.html template
+    assert "<h1>Something went wrong.</h1>" in response.text
 
 # --- Test Docs Endpoint ---
 
@@ -308,54 +319,11 @@ def test_docs_enabled_via_env(mock_redis):
     """Tests that the /docs endpoint can be enabled via an environment variable."""
     # We need to reload the modules to re-evaluate the app definition with the new env var
     reload(settings)
+    # We must import the app *after* the settings have been reloaded
     from main import app as reloaded_app
     # A new client instance is needed to use the reloaded app
     with TestClient(reloaded_app) as new_client:
         new_client.app.state.redis = mock_redis # re-attach mock redis
-        response = new_client.get("/docs")
-        assert response.status_code == 200
-        assert "text/html" in response.headers['content-type']
-
-# --- Test Exception Handling ---
-
-def test_404_error_as_html(client):
-    """Tests that a 404 error returns an HTML page for browser clients."""
-    response = client.get("/non-existent-page", headers={"Accept": "text/html"})
-    assert response.status_code == 404
-    assert "text/html" in response.headers['content-type']
-    assert "Sorry, the page you are looking for could not be found." in response.text
-
-def test_404_error_as_json(client):
-    """Tests that a 404 error returns a JSON response for API clients."""
-    response = client.get("/non-existent-page", headers={"Accept": "application/json"})
-    assert response.status_code == 404
-    assert "application/json" in response.headers['content-type']
-    assert response.json()['error'] == "Not Found"
-
-def test_500_error_as_html(client):
-    """Tests that a generic 500 error returns an HTML page for browser clients."""
-    # We patch the `serve_frontend` endpoint's template rendering to simulate
-    # an unexpected internal error that is not an HTTPException.
-    with patch("main.templates.TemplateResponse", side_effect=ValueError("Template engine crashed")):
-        response = client.get("/", headers={"Accept": "text/html"})
-
-    assert response.status_code == 500
-    assert "text/html" in response.headers['content-type']
-    # Check for text from the /home/pi/news-aggregator/app/templates/500.html template
-    assert "An unexpected server error occurred." in response.text
-
-# --- Test Docs Endpoint ---
-
-def test_docs_disabled_by_default(client):
-    """Tests that the /docs endpoint is disabled by default."""
-    response = client.get("/docs")
-    assert response.status_code == 404
-
-@patch.dict(os.environ, {"ENABLE_API_DOCS": "true"})
-def test_docs_enabled_via_env(mock_redis):
-    """Tests that the /docs endpoint can be enabled via an environment variable."""
-    # We need a new client instance to re-evaluate the app definition
-    with TestClient(app) as new_client:
         response = new_client.get("/docs")
         assert response.status_code == 200
         assert "text/html" in response.headers['content-type']
