@@ -1,5 +1,5 @@
 # --- Backend ---
-FROM python:3.10-slim-bullseye
+FROM python:3.12-slim-bullseye
 
 # Set environment variables to prevent Python from writing .pyc files and to buffer output
 ENV PYTHONDONTWRITEBYTECODE=1
