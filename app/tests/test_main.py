@@ -129,7 +129,8 @@ async def test_get_headlines_cache_hit(client, mock_redis):
     cache_data = {
         "data": cached_headlines,
         "source": "cache_revalidated", # This will be the source from the cache
-        "expires_at": expires_at
+        "expires_at": expires_at,
+        "ttl": 60 # Add the original TTL to the mock cached data
     }
     await mock_redis.setex(settings.CACHE_KEY, 60, json.dumps(cache_data))
     

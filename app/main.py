@@ -1,5 +1,6 @@
 import logging
 import logging.config
+import os
 from aiolimiter import AsyncLimiter
 import random
 from fastapi.responses import JSONResponse
@@ -105,9 +106,6 @@ except (KeyError, AttributeError):
 
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts_list)
 app.add_middleware(SmartExceptionMiddleware)
-
-REDIS_HOST = os.getenv("REDIS_HOST", "redis")
-REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 
 @app.on_event("startup")
 async def startup_event():
@@ -374,7 +372,12 @@ async def get_headlines(request: Request, response: Response):
             logger.info("Serving response from cache")
             CACHE_HITS.labels(source="redis").inc()
             response.headers["Cache-Control"] = f"public, max-age={ttl if ttl > 0 else 0}"
-            return APIResponse(**json.loads(cached), ttl=ttl)
+            
+            # Create the response object from the cached dictionary
+            api_response = APIResponse(**json.loads(cached))
+            # Update the TTL with the current remaining value from Redis, which is more accurate
+            api_response.ttl = ttl
+            return api_response
 
         is_lock_acquired = await redis_client.set(
             settings.LOCK_KEY, lock_id, nx=True, ex=settings.LOCK_TIMEOUT_SECONDS

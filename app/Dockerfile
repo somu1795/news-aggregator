@@ -2,8 +2,8 @@
 FROM python:3.10-slim-bullseye
 
 # Set environment variables to prevent Python from writing .pyc files and to buffer output
-ENV PYTHONDONTWRITEBYTECODE 1
-ENV PYTHONUNBUFFERED 1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
 # Install curl, which is required for the HEALTHCHECK command to run.
 RUN apt-get update && \
