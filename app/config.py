@@ -6,7 +6,8 @@ variables and a .env file, providing a single, type-safe source of truth for all
 application settings.
 """
 import os
-from pydantic import BaseSettings, Field
+from pydantic import Field
+from pydantic_settings import BaseSettings
 from typing import Dict
 
 class Settings(BaseSettings):
