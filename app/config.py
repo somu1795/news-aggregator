@@ -1,33 +1,65 @@
 """
-Centralized configuration for the News Aggregator application.
+Centralized configuration for the News Aggregator application using Pydantic.
 
-This file consolidates static settings to make them easier to manage and
-separates them from the main application logic.
+This module defines a `Settings` class that loads configuration from environment
+variables and a .env file, providing a single, type-safe source of truth for all
+application settings.
 """
+import os
+from pydantic import BaseSettings, Field
+from typing import Dict
 
-# --- Cache Settings ---
-CACHE_KEY = "headlines:v2"
-CACHE_TTL_SECONDS = 60
+class Settings(BaseSettings):
+    """
+    Application settings, loaded from environment variables or .env file.
+    Pydantic automatically matches environment variables to the field names (case-insensitive).
+    """
+    # --- Application Metadata ---
+    APP_VERSION: str = "1.0.1"
 
-# --- Feed Fetching Settings ---
-MAX_HEADLINES = 30 # Increased to get a better variety from a single feed
-REQUEST_TIMEOUT = 10.0
-FETCH_RETRIES = 2
-BACKOFF_BASE = 2 # Base for exponential backoff calculation (e.g., 2 ** attempt)
+    # --- Environment-specific Settings ---
+    DEBUG: bool = Field(False, env="DEBUG")
+    ENABLE_API_DOCS: bool = Field(False, env="ENABLE_API_DOCS")
+    LOG_LEVEL: str = Field("INFO", env="LOG_LEVEL")
+    ADMIN_API_KEY: str = Field("changeme", env="ADMIN_API_KEY")
 
-# --- News Sources ---
-# A dictionary of news sources. The key is a descriptive name, and the value is the RSS feed URL.
-# Using multiple sources provides a more global and resilient feed.
-NEWS_SOURCES = {
-    "Google News (Custom Search)": 'https://news.google.com/rss/search?q=news%20from%20world%20-ndtv%20-hindustan%20times%20-India%20Today&hl=en-US&gl=US&ceid=US%3Aen',
-    "Google News (Science)": 'https://news.google.com/rss/topics/CAAqKggKIiRDQkFTRlFvSUwyMHZNRFp0Y1RjU0JXVnVMVWRDR2dKSlRpZ0FQAQ?hl=en-US&gl=US&ceid=US%3Aen',
-}
+    # --- Redis Settings ---
+    REDIS_URL: str = Field("redis://redis:6379", env="REDIS_URL")
+    CACHE_KEY: str = "headlines:v2"
+    CACHE_TTL_SECONDS: int = 60
+    LOCK_KEY: str = f"{CACHE_KEY}:lock"
+    LOCK_TIMEOUT_SECONDS: int = 15  # How long the lock is held
+    LOCK_WAIT_TIMEOUT_SECONDS: int = 12 # How long a follower waits for the lock
 
-# --- Source Weighting ---
-# Defines the percentage of headlines to pull from each source to create a balanced mix.
-# The values should sum to 1.0.
-# The keys must match the keys in NEWS_SOURCES.
-SOURCE_WEIGHTS = {
-    "Google News (Custom Search)": 0.7,
-    "Google News (Science)": 0.3,
-}
+    # --- Feed Fetching Settings ---
+    MAX_HEADLINES: int = 30
+    REQUEST_TIMEOUT: float = 10.0
+    FETCH_RETRIES: int = 3  # Increased for more resilience
+    BACKOFF_BASE: int = 2
+
+    # --- News Sources ---
+    NEWS_SOURCES: Dict[str, str] = {
+        "Google News (Custom Search)": 'https://news.google.com/rss/search?q=news%20from%20world%20-ndtv%20-hindustan%20times%20-India%20Today&hl=en-US&gl=US&ceid=US%3Aen',
+        "Google News (Science)": 'https://news.google.com/rss/topics/CAAqKggKIiRDQkFTRlFvSUwyMHZNRFp0Y1RjU0JXVnVMVWRDR2dKSlRpZ0FQAQ?hl=en-US&gl=US&ceid=US%3Aen',
+    }
+
+    # --- Source Weighting ---
+    SOURCE_WEIGHTS: Dict[str, float] = {
+        "Google News (Custom Search)": 0.7,
+        "Google News (Science)": 0.3,
+    }
+
+    class Config:
+        # Pydantic will look for a .env file and load environment variables from it.
+        env_file = ".env"
+        env_file_encoding = "utf-8"
+
+# Create a single, importable instance of the settings
+settings = Settings()
+
+# --- Validation ---
+if not abs(sum(settings.SOURCE_WEIGHTS.values()) - 1.0) < 1e-9:
+    raise ValueError("SOURCE_WEIGHTS must sum to 1.0")
+
+if not all(key in settings.NEWS_SOURCES for key in settings.SOURCE_WEIGHTS.keys()):
+    raise ValueError("All keys in SOURCE_WEIGHTS must also be present in NEWS_SOURCES")
