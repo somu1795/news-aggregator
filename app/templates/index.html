@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="https://fonts.googleapis.com/css2?family=Roboto+Slab:wght@400;700&display=swap" rel="stylesheet">
     <title>News Aggregator</title>
     <style>
         :root {
@@ -19,17 +20,6 @@
             --item-bg: #1e1e1e;
             --source-bg: #2d2d2d;
             --link-color: #80b3ff;
-        }
-
-        body {
-            font-family: Arial, sans-serif;
-            line-height: 1.6;
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 20px;
-            background-color: var(--bg-color);
-            color: var(--text-color);
-            transition: background-color 0.3s, color 0.3s;
         }
 
         h1 {
@@ -152,6 +142,22 @@
             padding-right: 30px;
         }
 
+        body {
+            /*
+             * The !important declaration gives this style the highest priority,
+             * ensuring it overrides any other conflicting font-family rules.
+             * Placing this block at the end of the <style> tag also helps
+             * with CSS cascade precedence.
+            */
+            font-family: 'Roboto Slab', serif !important;
+            line-height: 1.6;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            transition: background-color 0.3s, color 0.3s;
+        }
     </style>
 </head>
 <body>
