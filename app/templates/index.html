@@ -123,6 +123,15 @@
             transform: scale(1.1);
         }
 
+        .toggle-btn.loading {
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
         .control-select {
             height: 40px;
             border-radius: 20px;
@@ -160,6 +169,7 @@
 </head>
 <body>
     <div class="controls">
+        <button class="toggle-btn" id="refreshBtn" title="Refresh Headlines">🔄</button>
         <button class="toggle-btn" id="darkModeToggle" title="Toggle Dark Mode">🌙</button>
         <select id="bypassSelector" class="control-select" title="Select Paywall Bypass Service"></select>
     </div>
@@ -174,6 +184,7 @@
 
         // --- DOM Elements ---
         const darkModeToggle = document.getElementById('darkModeToggle');
+        const refreshBtn = document.getElementById('refreshBtn');
         const bypassSelector = document.getElementById('bypassSelector');
         const body = document.body;
         const headlinesContainer = document.getElementById('headlines');
@@ -263,40 +274,49 @@
         async function loadHeadlines() {
             const isInitialLoad = headlinesData.length === 0;
 
+            // Add loading state
+            if (isInitialLoad) {
+                loadingIndicator.style.display = 'block';
+            } else {
+                refreshBtn.classList.add('loading');
+                refreshBtn.disabled = true;
+            }
+
             try {
                 const response = await fetch('/api/headlines');
                 if (!response.ok) {
-                    // Try to parse a detailed error message from the API
                     let errorDetail = `HTTP error! status: ${response.status}`;
                     try {
                         const errorJson = await response.json();
-                        // The backend sends errors in a { "detail": "..." } format
                         if (errorJson && errorJson.detail) {
                             errorDetail = errorJson.detail;
                         }
                     } catch (e) {
-                        // Response was not JSON, stick with the HTTP status error.
+                        // Response was not JSON, stick with the HTTP status.
                     }
                     throw new Error(errorDetail);
                 }
                 const apiResponse = await response.json();
 
-                headlinesData = apiResponse.data; // Store data globally
-                if (isInitialLoad) {
-                    loadingIndicator.style.display = 'none';
-                }
-                renderHeadlines(); // Render the data
+                headlinesData = apiResponse.data;
+                renderHeadlines();
 
             } catch (error) {
                 console.error('Error loading headlines:', error);
-                // If it's the first load and it fails, show an error.
-                // Otherwise (if it's a background refresh that fails),
-                // we just log the error and keep the old headlines visible.
                 if (isInitialLoad) {
-                    loadingIndicator.style.display = 'none';
                     headlinesContainer.innerHTML = `
                         <li class="error">Could not load headlines: ${error.message}</li>
                     `;
+                }
+                // On subsequent refresh failures, we just log the error and do nothing,
+                // keeping the old headlines visible. A toast notification could be a good UX improvement here.
+            } finally {
+                // Remove loading state
+                if (isInitialLoad) {
+                    loadingIndicator.style.display = 'none';
+                } else {
+                    refreshBtn.classList.remove('loading');
+                    refreshBtn.disabled = false;
                 }
             }
         }
@@ -304,8 +324,7 @@
         // Initial load
         initializeBypassSelector();
         loadHeadlines();
-        // Refresh every minute
-        setInterval(loadHeadlines, 60000);
+        refreshBtn.addEventListener('click', loadHeadlines);
     </script>
 </body>
 </html>
