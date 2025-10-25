@@ -40,7 +40,7 @@ class Settings(BaseSettings):
 
     # --- News Sources ---
     NEWS_SOURCES: Dict[str, str] = {
-        "Google News (Custom Search)": 'https://news.google.com/rss/search?q=news%20from%20world%20-ndtv%20-hindustan%20times%20-India%20Today%20-The%20New%20York%20Times&hl=en-US&gl=US&ceid=US%3Aen',
+        "Google News (Custom Search)": 'https://news.google.com/rss/search?q=news%20from%20world%20-ndtv%20-hindustan%20times%20-India%20Today%20-Horseed&hl=en-US&gl=US&ceid=US%3Aen',
         "Google News (Science)": 'https://news.google.com/rss/topics/CAAqKggKIiRDQkFTRlFvSUwyMHZNRFp0Y1RjU0JXVnVMVWRDR2dKSlRpZ0FQAQ?hl=en-US&gl=US&ceid=US%3Aen',
     }
 
