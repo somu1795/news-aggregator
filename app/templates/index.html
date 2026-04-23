@@ -3,6 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Aggregated news headlines from multiple sources, updated in real time.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto+Slab:wght@400;700&display=swap&v=2" rel="stylesheet">
     <title>News Aggregator</title>
     <style>
         :root {
@@ -19,17 +23,6 @@
             --item-bg: #1e1e1e;
             --source-bg: #2d2d2d;
             --link-color: #80b3ff;
-        }
-
-        body {
-            font-family: Arial, sans-serif;
-            line-height: 1.6;
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 20px;
-            background-color: var(--bg-color);
-            color: var(--text-color);
-            transition: background-color 0.3s, color 0.3s;
         }
 
         h1 {
@@ -133,6 +126,15 @@
             transform: scale(1.1);
         }
 
+        .toggle-btn.loading {
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
         .control-select {
             height: 40px;
             border-radius: 20px;
@@ -152,10 +154,25 @@
             padding-right: 30px;
         }
 
+        body {
+            /*
+             * Placing this block at the end of the <style> tag also helps
+             * with CSS cascade precedence.
+            */
+            font-family: 'Roboto Slab', serif;
+            line-height: 1.6;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            transition: background-color 0.3s, color 0.3s;
+        }
     </style>
 </head>
 <body>
     <div class="controls">
+        <button class="toggle-btn" id="refreshBtn" title="Refresh Headlines">🔄</button>
         <button class="toggle-btn" id="darkModeToggle" title="Toggle Dark Mode">🌙</button>
         <select id="bypassSelector" class="control-select" title="Select Paywall Bypass Service"></select>
     </div>
@@ -170,6 +187,7 @@
 
         // --- DOM Elements ---
         const darkModeToggle = document.getElementById('darkModeToggle');
+        const refreshBtn = document.getElementById('refreshBtn');
         const bypassSelector = document.getElementById('bypassSelector');
         const body = document.body;
         const headlinesContainer = document.getElementById('headlines');
@@ -231,6 +249,15 @@
         }
         bypassSelector.addEventListener('change', handleBypassChange);
 
+        // --- Sanitisation helpers ---
+        function sanitizeUrl(url) {
+            try {
+                const parsed = new URL(url);
+                if (parsed.protocol === 'https:' || parsed.protocol === 'http:') return url;
+            } catch (e) { /* invalid URL */ }
+            return '#';
+        }
+
         // --- Data Handling ---
         function renderHeadlines() {
             if (!headlinesData || headlinesData.length === 0) {
@@ -238,61 +265,85 @@
                 return;
             }
 
-            headlinesContainer.innerHTML = headlinesData.map(item => {                
+            headlinesContainer.innerHTML = '';
+            headlinesData.forEach(item => {
                 const isPremium = isPremiumDomain(item.link);
                 const currentService = bypassServices.find(s => s.id === selectedBypass);
                 const shouldBypass = currentService && currentService.prefix && isPremium;
 
-                const finalLink = shouldBypass ? `${currentService.prefix}${item.link}` : item.link;
-                const linkClass = shouldBypass ? 'headline bypassed' : 'headline';
+                const rawLink = shouldBypass ? `${currentService.prefix}${item.link}` : item.link;
+                const safeLink = sanitizeUrl(rawLink);
 
-                return `
-                    <li class="news-item">
-                        <div class="headline-container">
-                            <a href="${finalLink}" target="_blank" rel="noopener noreferrer" class="${linkClass}">${item.title}</a>
-                            <span class="source">${item.source}</span>
-                        </div>
-                    </li>`;
-            }).join('');
+                const li = document.createElement('li');
+                li.className = 'news-item';
+
+                const div = document.createElement('div');
+                div.className = 'headline-container';
+
+                const a = document.createElement('a');
+                a.href = safeLink;
+                a.target = '_blank';
+                a.rel = 'noopener noreferrer';
+                a.className = shouldBypass ? 'headline bypassed' : 'headline';
+                a.textContent = item.title;
+
+                const span = document.createElement('span');
+                span.className = 'source';
+                span.textContent = item.source;
+
+                div.appendChild(a);
+                div.appendChild(span);
+                li.appendChild(div);
+                headlinesContainer.appendChild(li);
+            });
         }
 
         async function loadHeadlines() {
             const isInitialLoad = headlinesData.length === 0;
 
+            // Add loading state
+            if (isInitialLoad) {
+                loadingIndicator.style.display = 'block';
+            } else {
+                refreshBtn.classList.add('loading');
+                refreshBtn.disabled = true;
+            }
+
             try {
                 const response = await fetch('/api/headlines');
                 if (!response.ok) {
-                    // Try to parse a detailed error message from the API
                     let errorDetail = `HTTP error! status: ${response.status}`;
                     try {
                         const errorJson = await response.json();
-                        // The backend sends errors in a { "detail": "..." } format
                         if (errorJson && errorJson.detail) {
                             errorDetail = errorJson.detail;
                         }
                     } catch (e) {
-                        // Response was not JSON, stick with the HTTP status error.
+                        // Response was not JSON, stick with the HTTP status.
                     }
                     throw new Error(errorDetail);
                 }
                 const apiResponse = await response.json();
 
-                headlinesData = apiResponse.data; // Store data globally
-                if (isInitialLoad) {
-                    loadingIndicator.style.display = 'none';
-                }
-                renderHeadlines(); // Render the data
+                headlinesData = apiResponse.data;
+                renderHeadlines();
 
             } catch (error) {
                 console.error('Error loading headlines:', error);
-                // If it's the first load and it fails, show an error.
-                // Otherwise (if it's a background refresh that fails),
-                // we just log the error and keep the old headlines visible.
                 if (isInitialLoad) {
-                    loadingIndicator.style.display = 'none';
                     headlinesContainer.innerHTML = `
                         <li class="error">Could not load headlines: ${error.message}</li>
                     `;
+                }
+                // On subsequent refresh failures, we just log the error and do nothing,
+                // keeping the old headlines visible. A toast notification could be a good UX improvement here.
+            } finally {
+                // Remove loading state
+                if (isInitialLoad) {
+                    loadingIndicator.style.display = 'none';
+                } else {
+                    refreshBtn.classList.remove('loading');
+                    refreshBtn.disabled = false;
                 }
             }
         }
@@ -300,8 +351,7 @@
         // Initial load
         initializeBypassSelector();
         loadHeadlines();
-        // Refresh every minute
-        setInterval(loadHeadlines, 60000);
+        refreshBtn.addEventListener('click', loadHeadlines);
     </script>
 </body>
 </html>

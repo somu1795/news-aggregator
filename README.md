@@ -16,7 +16,6 @@
 - **Randomized Headline Mix**: Shuffles the final list of headlines for a more varied and engaging user experience on every page load.
 - **Resilient Fetching**: Automatically retries failed requests to RSS feeds and supports fallback URLs for each source.
 - **Containerized & Production-Ready**: Fully containerized with a production-optimized **Docker** build for a small, secure, and fast-starting image.
-- **Advanced Link Resolution**: Includes a sophisticated mechanism to resolve Google News's intermediate redirect links to get to the final article URL.
 - **Orchestrated with Docker Compose**: Services are managed with a single `docker-compose.yml` file for easy setup and deployment.
 - **Secure by Default**: Runs as a non-root user inside the container and uses an internal reverse proxy (**Caddy**) for load balancing.
 - **Monitoring**: Exposes Prometheus metrics for observability via `/metrics`.
@@ -30,7 +29,7 @@ For a detailed diagram and explanation, please see the ARCHITECTURE.md file.
 
 ## Tech Stack
 
-- **Backend**: FastAPI, Python 3.10
+- **Backend**: FastAPI, Python 3.12
 - **Cache & Locking**: Redis
 - **Internal Proxy**: Caddy
 - **Containerization**: Docker, Docker Compose

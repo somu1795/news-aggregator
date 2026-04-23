@@ -3,47 +3,79 @@ workspace:
   path: src/GITEA_HOST_REDACTED/${CI_REPO_OWNER}/${CI_REPO_NAME}
 
 when:
-  branch: main
-  event: push
+  branch: [main, test-woodpecker]
+  event: [push, manual]
 
-variables:
-  REGISTRY: REGISTRY_REDACTED
-  IMAGE_TAG: ${CI_COMMIT_SHA:0:7}
-  COMPOSE_IMAGE_APP: news-aggregator-app
-  COMPOSE_IMAGE_CADDY: news-aggregator-caddy
+labels:
+  build-machine: true
 
 steps:
-  - name: sync-to-github
-    image: alpine/git
-    commands:
-    - git remote rm github 2>/dev/null || true
-    - git remote add github "https://<your-token>@<github-username>/<repo>.git"
-    - git config --global core.compression 0
-    - git fetch --unshallow || true
-    - git fetch --all
-    - git remote -v
-    - git push github --all
-    - git push github --tags
+  # - name: sync-to-github
+  #   image: alpine/git
+  #   environment:
+  #     GITHUB_TOKEN:
+  #       from_secret: github_token
+  #   commands:
+  #     - |
+  #       set -e
+  #       REMOTE_URL="https://${GITHUB_TOKEN}@github.com/GITHUB_USER_REDACTED/news-aggregator.git"
+  #       echo "Using remote: ${REMOTE_URL#*@}"
+  #       git remote rm github 2>/dev/null || true
+  #       git remote add github "${REMOTE_URL}"
+  #       git push github --all
+  #       git push github --tags
 
   - name: build-images-with-compose
     image: docker/compose:1.29.2
     privileged: true
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      ADMIN_API_KEY:
+        from_secret: ADMIN_API_KEY
+      API_RATE_LIMIT:
+        from_secret: API_RATE_LIMIT
+      UVICORN_WORKERS:
+        from_secret: UVICORN_WORKERS
+      REDIS_MAX_MEMORY:
+        from_secret: REDIS_MAX_MEMORY
+      ALLOWED_HOSTS:
+        from_secret: ALLOWED_HOSTS
     commands:
-      - docker-compose build
+      - |
+        set -e
+        echo "Generating .env file..."
+        cat <<EOF > .env
+        ALLOWED_HOSTS=${ALLOWED_HOSTS}
+        ADMIN_API_KEY=${ADMIN_API_KEY}
+        REDIS_MAX_MEMORY=${REDIS_MAX_MEMORY}
+        API_RATE_LIMIT=${API_RATE_LIMIT}
+        UVICORN_WORKERS=${UVICORN_WORKERS}
+        EOF
+        docker-compose build
 
   - name: tag-and-push-images
     image: docker:20.10
     privileged: true
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      REGISTRY: REGISTRY_REDACTED
     commands:
-      - "docker tag ${COMPOSE_IMAGE_APP}:latest ${REGISTRY}/${COMPOSE_IMAGE_APP}:${IMAGE_TAG}"
-      - "docker tag ${COMPOSE_IMAGE_APP}:latest ${REGISTRY}/${COMPOSE_IMAGE_APP}:latest"
-      - "docker push ${REGISTRY}/${COMPOSE_IMAGE_APP}:${IMAGE_TAG}"
-      - "docker push ${REGISTRY}/${COMPOSE_IMAGE_APP}:latest"
-      - "docker tag ${COMPOSE_IMAGE_CADDY}:latest ${REGISTRY}/${COMPOSE_IMAGE_CADDY}:${IMAGE_TAG}"
-      - "docker tag ${COMPOSE_IMAGE_CADDY}:latest ${REGISTRY}/${COMPOSE_IMAGE_CADDY}:latest"
-      - "docker push ${REGISTRY}/${COMPOSE_IMAGE_CADDY}:${IMAGE_TAG}"
-      - "docker push ${REGISTRY}/${COMPOSE_IMAGE_CADDY}:latest"
+      - |
+        set -e
+        export COMPOSE_IMAGE_APP=news-aggregator-app
+        export COMPOSE_IMAGE_CADDY=news-aggregator-caddy
+        SHORT_TAG=$(echo ${CI_COMMIT_SHA} | cut -c1-7)
+        echo "Using IMAGE_TAG=$SHORT_TAG"
+        echo "Registry: $REGISTRY"
+
+        docker tag ${COMPOSE_IMAGE_APP}:latest ${REGISTRY}/${COMPOSE_IMAGE_APP}:${SHORT_TAG}
+        docker tag ${COMPOSE_IMAGE_APP}:latest ${REGISTRY}/${COMPOSE_IMAGE_APP}:latest
+        docker push ${REGISTRY}/${COMPOSE_IMAGE_APP}:${SHORT_TAG}
+        docker push ${REGISTRY}/${COMPOSE_IMAGE_APP}:latest
+
+        docker tag ${COMPOSE_IMAGE_CADDY}:latest ${REGISTRY}/${COMPOSE_IMAGE_CADDY}:${SHORT_TAG}
+        docker tag ${COMPOSE_IMAGE_CADDY}:latest ${REGISTRY}/${COMPOSE_IMAGE_CADDY}:latest
+        docker push ${REGISTRY}/${COMPOSE_IMAGE_CADDY}:${SHORT_TAG}
+        docker push ${REGISTRY}/${COMPOSE_IMAGE_CADDY}:latest
