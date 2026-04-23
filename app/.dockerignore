@@ -5,3 +5,9 @@ __pycache__/
 # Ignore virtual environment folders
 .venv
 venv
+
+# Ignore tests and dev-only files
+tests/
+requirements-dev.txt
+*.bkp
+*.bkp.*

@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">    
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Aggregated news headlines from multiple sources, updated in real time.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Roboto+Slab:wght@400;700&display=swap&v=2" rel="stylesheet">
     <title>News Aggregator</title>
     <style>
@@ -246,6 +249,15 @@
         }
         bypassSelector.addEventListener('change', handleBypassChange);
 
+        // --- Sanitisation helpers ---
+        function sanitizeUrl(url) {
+            try {
+                const parsed = new URL(url);
+                if (parsed.protocol === 'https:' || parsed.protocol === 'http:') return url;
+            } catch (e) { /* invalid URL */ }
+            return '#';
+        }
+
         // --- Data Handling ---
         function renderHeadlines() {
             if (!headlinesData || headlinesData.length === 0) {
@@ -253,22 +265,37 @@
                 return;
             }
 
-            headlinesContainer.innerHTML = headlinesData.map(item => {                
+            headlinesContainer.innerHTML = '';
+            headlinesData.forEach(item => {
                 const isPremium = isPremiumDomain(item.link);
                 const currentService = bypassServices.find(s => s.id === selectedBypass);
                 const shouldBypass = currentService && currentService.prefix && isPremium;
 
-                const finalLink = shouldBypass ? `${currentService.prefix}${item.link}` : item.link;
-                const linkClass = shouldBypass ? 'headline bypassed' : 'headline';
+                const rawLink = shouldBypass ? `${currentService.prefix}${item.link}` : item.link;
+                const safeLink = sanitizeUrl(rawLink);
 
-                return `
-                    <li class="news-item">
-                        <div class="headline-container">
-                            <a href="${finalLink}" target="_blank" rel="noopener noreferrer" class="${linkClass}">${item.title}</a>
-                            <span class="source">${item.source}</span>
-                        </div>
-                    </li>`;
-            }).join('');
+                const li = document.createElement('li');
+                li.className = 'news-item';
+
+                const div = document.createElement('div');
+                div.className = 'headline-container';
+
+                const a = document.createElement('a');
+                a.href = safeLink;
+                a.target = '_blank';
+                a.rel = 'noopener noreferrer';
+                a.className = shouldBypass ? 'headline bypassed' : 'headline';
+                a.textContent = item.title;
+
+                const span = document.createElement('span');
+                span.className = 'source';
+                span.textContent = item.source;
+
+                div.appendChild(a);
+                div.appendChild(span);
+                li.appendChild(div);
+                headlinesContainer.appendChild(li);
+            });
         }
 
         async function loadHeadlines() {

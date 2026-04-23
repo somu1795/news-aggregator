@@ -30,7 +30,16 @@ document.addEventListener('DOMContentLoaded', () => {
         const title = document.createElement('h2');
         title.className = 'card-title';
         const link = document.createElement('a');
-        link.href = headline.link;
+        try {
+            const parsed = new URL(headline.link);
+            if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+                link.href = headline.link;
+            } else {
+                link.href = '#';
+            }
+        } catch (e) {
+            link.href = '#';
+        }
         link.textContent = headline.title;
         link.target = '_blank';
         link.rel = 'noopener noreferrer';

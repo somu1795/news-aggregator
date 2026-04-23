@@ -1,11 +1,11 @@
 # --- Backend ---
-FROM python:3.12-slim-bullseye
+FROM python:3.12-slim-bookworm
 
 # Set environment variables to prevent Python from writing .pyc files and to buffer output
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# Install curl, which is required for the HEALTHCHECK command to run.
+# Install curl, which is required for the Docker Compose healthcheck to run.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends curl && \
     rm -rf /var/lib/apt/lists/*
@@ -25,7 +25,6 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code and static assets, then set ownership
-# This will copy main.py, config.py, templates/, and the new modern_static/ directory
 COPY --chown=app:app . .
 
 # Ensure the entrypoint script is executable
@@ -36,10 +35,6 @@ USER app
 
 # Expose the port the app runs on
 EXPOSE 8989
-
-# Healthcheck to ensure the app is running
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-    CMD curl -f http://localhost:8989/health || exit 1
 
 # The entrypoint script will execute the main command (Uvicorn)
 ENTRYPOINT ["./entrypoint.sh"]

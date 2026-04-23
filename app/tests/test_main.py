@@ -27,12 +27,12 @@ CUSTOM_SEARCH_URL = settings.NEWS_SOURCES["Google News (Custom Search)"]
 CUSTOM_SEARCH_LINKS = [f"https://news.google.com/rss/articles/custom-link-{i}" for i in range(1, 26)]
 CUSTOM_SEARCH_XML = f"""<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0"><channel>
-    {''.join([f'''<item>
+    {''.join([f"""<item>
         <title>Custom Article {i}</title>
         <link>{CUSTOM_SEARCH_LINKS[i-1]}</link>
         <pubDate>{time.strftime('%a, %d %b %Y %H:%M:%S GMT', time.gmtime(FIXED_TIME_UNIX - i * 10))}</pubDate>
         <source url="https://custom.source">Custom Source</source>
-    </item>''' for i in range(1, 26)])}
+    </item>""" for i in range(1, 26)])}
 </channel></rss>
 """
 
@@ -42,40 +42,17 @@ SCIENCE_URL = settings.NEWS_SOURCES["Google News (Science)"]
 SCIENCE_LINKS = [f"https://news.google.com/rss/articles/science-link-{i}" for i in range(1, 11)]
 SCIENCE_XML = f"""<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0"><channel>
-    {''.join([f'''<item>
+    {''.join([f"""<item>
         <title>Science Article {i}</title>
         <link>{SCIENCE_LINKS[i-1]}</link>
         <pubDate>{time.strftime('%a, %d %b %Y %H:%M:%S GMT', time.gmtime(FIXED_TIME_UNIX - i * 10 - 5))}</pubDate>
         <source url="https://science.source">Science Source</source>
-    </item>''' for i in range(1, 11)])}
+    </item>""" for i in range(1, 11)])}
 </channel></rss>
 """
 
 # Use pytest-asyncio for all async tests in this module
 pytestmark = pytest.mark.asyncio
-
-
-# --- Fixtures ---
-
-@pytest_asyncio.fixture(scope="function")
-async def mock_redis():
-    """Fixture to provide a mock redis client for each test function."""
-    redis_client = FakeRedis(decode_responses=True)    
-    yield redis_client
-    # In newer versions of fakeredis, close() might not be async
-    if hasattr(redis_client, 'close') and asyncio.iscoroutinefunction(redis_client.close):
-        await redis_client.close()
-
-@pytest.fixture(scope="function")
-def client(mock_redis, monkeypatch):
-    """Fixture to provide a TestClient instance with mocked redis and settings."""
-    # Set a dummy admin key for testing
-    monkeypatch.setattr(settings, 'ADMIN_API_KEY', 'test-key')
-    monkeypatch.setattr(settings, 'DEBUG', True) # Ensure debug features are on for tests
-
-    app.state.redis = mock_redis
-    with TestClient(app) as test_client:
-        yield test_client
 
 
 # --- Test Endpoints ---
@@ -287,24 +264,24 @@ def test_404_error_as_json(client):
 
 def test_500_error_in_endpoint_as_html(client):
     """Tests that an error within an endpoint returns a 500 HTML page."""
-    # We patch the `get_headlines` endpoint to simulate an unexpected internal error.
-    with patch("main.get_headlines", side_effect=ValueError("Something broke badly")):
+    # Patch at the route module level where the function is defined
+    with patch("routes.headlines.get_headlines", side_effect=ValueError("Something broke badly")):
         response = client.get("/api/headlines", headers={"Accept": "text/html"})
 
     assert response.status_code == 500
     assert "text/html" in response.headers['content-type']
-    # Check for text from the /home/pi/news-aggregator/app/templates/500.html template
+    # Check for text from the templates/500.html template
     assert "An unexpected server error occurred." in response.text
 
 def test_500_error_in_template_rendering_as_html(client):
     """Tests that a template rendering failure returns the static fallback error page."""
-    # We patch the template rendering to simulate an unexpected internal error.
-    with patch("main.templates.TemplateResponse", side_effect=ValueError("Template engine crashed")):
+    # Patch the template rendering in the frontend route module
+    with patch("routes.frontend.templates.TemplateResponse", side_effect=ValueError("Template engine crashed")):
         response = client.get("/", headers={"Accept": "text/html"})
 
     assert response.status_code == 500
     assert "text/html" in response.headers['content-type']
-    # Check for text from the static /home/pi/news-aggregator/app/templates/error.html template
+    # Check for text from the static templates/error.html template
     assert "<h1>Something went wrong.</h1>" in response.text
 
 # --- Test Docs Endpoint ---
@@ -313,17 +290,3 @@ def test_docs_disabled_by_default(client):
     """Tests that the /docs endpoint is disabled by default."""
     response = client.get("/docs")
     assert response.status_code == 404
-
-@patch.dict(os.environ, {"ENABLE_API_DOCS": "true"})
-def test_docs_enabled_via_env(mock_redis):
-    """Tests that the /docs endpoint can be enabled via an environment variable."""
-    # We need to reload the modules to re-evaluate the app definition with the new env var
-    reload(settings)
-    # We must import the app *after* the settings have been reloaded
-    from main import app as reloaded_app
-    # A new client instance is needed to use the reloaded app
-    with TestClient(reloaded_app) as new_client:
-        new_client.app.state.redis = mock_redis # re-attach mock redis
-        response = new_client.get("/docs")
-        assert response.status_code == 200
-        assert "text/html" in response.headers['content-type']

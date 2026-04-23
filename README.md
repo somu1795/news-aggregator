@@ -27,7 +27,7 @@ For a detailed diagram and explanation, please see the ARCHITECTURE.md file.
 
 ## Tech Stack
 
-- **Backend**: FastAPI, Python 3.10
+- **Backend**: FastAPI, Python 3.12
 - **Cache & Locking**: Redis
 - **Internal Proxy**: Caddy
 - **Containerization**: Docker, Docker Compose
