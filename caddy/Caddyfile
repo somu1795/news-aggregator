@@ -31,7 +31,7 @@
 
 		# Trust the incoming X-Forwarded-* headers from our external proxy,
 		# which is on a private network (VPN).
-		trusted_proxies SUBNET_REDACTED
+		trusted_proxies SUBNET_REDACTED 100.64.0.0/10
 
 		# Actively check the health of backend containers and stop sending
 		# traffic to unhealthy ones.

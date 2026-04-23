@@ -88,9 +88,18 @@ app = FastAPI(
 # ---------------------------------------------------------------------------
 # Rate Limiting (slowapi)
 # ---------------------------------------------------------------------------
+from fastapi import Request
+
+def get_real_ip(request: Request) -> str:
+    """Extracts the true client IP, prioritizing Cloudflare's header."""
+    if "cf-connecting-ip" in request.headers:
+        return request.headers["cf-connecting-ip"]
+    if "x-real-ip" in request.headers:
+        return request.headers["x-real-ip"]
+    return get_remote_address(request)
 
 limiter = Limiter(
-    key_func=get_remote_address,
+    key_func=get_real_ip,
     storage_uri=settings.REDIS_URL,
     default_limits=[settings.API_RATE_LIMIT],
 )
