@@ -75,11 +75,15 @@ The following diagram illustrates the flow of a user request through the system.
 ### FastAPI Application (`app` service)
 - **Role**: Backend API and Application Logic.
 - **Framework**: Built with Python and the **FastAPI** framework, served by **Uvicorn** with `uvloop` and `httptools` for high performance.
-- **Function**: This is the core of the application. It runs as one or more containerized workers (controlled by `UVICORN_WORKERS`).
-  - **`/`**: Serves the single-page `index.html` frontend.
-  - **`/api/headlines`**: The main data endpoint. It orchestrates the fetching of news headlines.
-  - **`/health`**: A health check endpoint used by Docker to ensure the service is running correctly.
-  - **`/metrics`**: Exposes Prometheus-compatible metrics for monitoring.
+- **Structure**: The application follows a modular design pattern:
+  - **`main.py`**: Entry point handling configuration, middleware wiring, and the application lifespan.
+  - **`config.py`**: Pydantic-based centralized settings management.
+  - **`routes/`**: Distinct API route controllers (`headlines.py`, `admin.py`, `frontend.py`, `health.py`).
+  - **`services/`**: Core business logic modules (`cache_service.py`, `feed_service.py`, `redirect.py`).
+  - **`middleware/`**: Smart exception handling and rate limiting (`slowapi`).
+- **Function**:
+  - Validates security headers, handles CORS, and enforces rate limits via a Redis-backed `slowapi` instance.
+  - Manages frontend serving and robust background news fetching routines.
 
 ### Redis
 - **Role**: In-Memory Cache and Distributed Lock Manager.
@@ -119,15 +123,18 @@ This section describes the lifecycle of a request to the `/api/headlines` endpoi
         - If it times out waiting, it performs a fallback fetch to ensure the user gets a response.
 
 6.  **External Fetching**:
-    - Each `_fetch_source_with_fallback` task uses `httpx` to make an HTTP GET request to the source's RSS feed URL. It includes retries and fallback URLs for resilience.
+    - The `feed_service` uses `httpx` and an `asyncio.Semaphore` to concurrently fetch RSS feed URLs from external sources without overwhelming the network stack.
     - The XML response is parsed into a list of headline objects using the `feedparser` library.
-    - Source-specific filters are applied (e.g., removing non-article links from the BBC feed).
+    - Source-specific logic allocates headline quotas based on configured weights.
 
-7.  **Aggregation & Caching**:
-    - The headlines from all successful fetches are combined into a single list.
-    - The list is sorted by publication date in descending order and truncated to `MAX_HEADLINES`.
+7.  **URL Redirect Caching**:
+    - For Google News RSS links, the application must resolve the final target URL to bypass Google's redirect pages.
+    - The `redirect` service intercepts these URLs and caches the resolved destination in Redis for 24 hours (`RESOLVED_URL_TTL`), saving extensive HTTP overhead on subsequent cache misses.
+
+8.  **Aggregation & Caching**:
+    - The headlines from all successful fetches are combined into a single, randomized list.
     - This final list is stored in Redis with a specific Time-To-Live (TTL), so it will automatically expire.
 
-8.  **Response**: The newly fetched list is returned to the user with `source: "live"`.
+9.  **Response**: The newly fetched list is returned to the user with `source: "live"`.
 
 This architecture ensures the application is fast for most users (due to caching) while being robust enough to handle failures when fetching from external sources.

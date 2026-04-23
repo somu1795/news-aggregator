@@ -55,13 +55,32 @@ For a detailed diagram and explanation, please see the ARCHITECTURE.md file.
     ```
     **Important:** You must edit `.env` and set `ALLOWED_HOSTS` to the domain name or IP address you will use to access the application. You should also set a secure `ADMIN_API_KEY`.
 
-3.  **Build and run the services:**
-    This command will build the Docker images and start all services in the background.
+3.  **Build and start the services:**
+    Instead of using raw docker-compose commands, use the provided robust management scripts which handle pre-flight checks, cleanup, and health verification:
     ```sh
-    docker-compose up --build -d
+    ./start.sh
+    ```
+    To stop the services gracefully:
+    ```sh
+    ./stop.sh
     ```
 
 The application will be available at `http://<your-host-ip>:7001` (or whichever port you set for `CADDY_HTTP_PORT`).
+
+## Proxy Configuration (Cloudflare & Tailscale)
+
+If you are deploying this behind a public VPS proxy (e.g., Cloudflare -> VPS Caddy -> Tailscale -> App), you must correctly configure proxy headers to ensure the real client IP is passed and rate limiting works accurately.
+
+1. **VPS Public Caddyfile**:
+   Do NOT use `header_up X-Forwarded-For {remote_host}` as this will override the true client IP with the Cloudflare edge IP. Instead, pass Cloudflare's specific header:
+   ```caddyfile
+   header_up X-Real-IP {http.request.header.CF-Connecting-IP}
+   header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}
+   ```
+2. **Internal App Caddyfile**:
+   Ensure the Tailscale subnet (`100.64.0.0/10`) is included in `trusted_proxies` in `caddy/Caddyfile` so it accepts the forwarded headers.
+3. **Application Layer**:
+   The FastAPI app uses `slowapi` for rate limiting and is pre-configured to prioritize `CF-Connecting-IP`.
 
 ## Configuration
 
