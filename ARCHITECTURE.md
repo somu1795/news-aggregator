@@ -75,11 +75,15 @@ The following diagram illustrates the flow of a user request through the system.
 ### FastAPI Application (`app` service)
 - **Role**: Backend API and Application Logic.
 - **Framework**: Built with Python and the **FastAPI** framework, served by **Uvicorn** with `uvloop` and `httptools` for high performance.
-- **Function**: This is the core of the application. It runs as one or more containerized workers (controlled by `UVICORN_WORKERS`).
-  - **`/`**: Serves the single-page `index.html` frontend.
-  - **`/api/headlines`**: The main data endpoint. It orchestrates the fetching of news headlines.
-  - **`/health`**: A health check endpoint used by Docker to ensure the service is running correctly.
-  - **`/metrics`**: Exposes Prometheus-compatible metrics for monitoring.
+- **Structure**: The application follows a modular design pattern:
+  - **`main.py`**: Entry point handling configuration, middleware wiring, and the application lifespan.
+  - **`config.py`**: Pydantic-based centralized settings management.
+  - **`routes/`**: Distinct API route controllers (`headlines.py`, `admin.py`, `frontend.py`, `health.py`).
+  - **`services/`**: Core business logic modules (`cache_service.py`, `feed_service.py`, `redirect.py`).
+  - **`middleware/`**: Smart exception handling and rate limiting (`slowapi`).
+- **Function**:
+  - Validates security headers, handles CORS, and enforces rate limits via a Redis-backed `slowapi` instance.
+  - Manages frontend serving and robust background news fetching routines.
 
 ### Redis
 - **Role**: In-Memory Cache and Distributed Lock Manager.
@@ -111,19 +115,18 @@ This section describes the lifecycle of a request to the `/api/headlines` endpoi
     - **If Lock is Acquired**: The worker proceeds to step 6. After fetching and caching, it releases the lock.
     - **If Lock is Not Acquired**: Another worker is already fetching. This "follower" worker will wait briefly, periodically checking if the cache has been populated. If it times out, it performs its own fetch to ensure the user gets a response.
 
-6.  **Concurrent External Fetching**:
-    - The leader worker initiates concurrent `httpx` requests to all RSS feed URLs defined in `config.NEWS_SOURCES`.
-    - Each feed is fetched and parsed into a separate list of articles using the `feedparser` library. This process includes built-in retries with exponential backoff for resilience.
+6.  **External Fetching**:
+    - The `feed_service` uses `httpx` and an `asyncio.Semaphore` to concurrently fetch RSS feed URLs from external sources without overwhelming the network stack.
+    - The XML response is parsed into a list of headline objects using the `feedparser` library.
+    - Source-specific logic allocates headline quotas based on configured weights.
 
-7.  **Aggregation, Weighting, and Shuffling**:
-    - The articles from each source are first sorted by publication date.
-    - The application then calculates how many articles to take from each source based on the percentages in `config.SOURCE_WEIGHTS` and the total desired count in `config.MAX_HEADLINES`.
-    - The top N articles are taken from each source and combined into a single list.
-    - This combined list is then **shuffled randomly** to ensure a varied mix is presented to the user on each load.
+7.  **URL Redirect Caching**:
+    - For Google News RSS links, the application must resolve the final target URL to bypass Google's redirect pages.
+    - The `redirect` service intercepts these URLs and caches the resolved destination in Redis for 24 hours (`RESOLVED_URL_TTL`), saving extensive HTTP overhead on subsequent cache misses.
 
-8.  **Link Resolution & Caching**:
-    - For the final, shuffled list of headlines, the app concurrently resolves each article's link using the `_resolve_redirect` function. This is a crucial step for Google News feeds, as it follows redirects and scrapes landing pages to find the final destination URL.
-    - The final list, now with fully resolved links, is stored in Redis with a specific Time-To-Live (TTL), so it will automatically expire.
+8.  **Aggregation & Caching**:
+    - The headlines from all successful fetches are combined into a single, randomized list.
+    - This final list is stored in Redis with a specific Time-To-Live (TTL), so it will automatically expire.
 
 9.  **Response**: The newly fetched list is returned to the user with `source: "live"`.
 
