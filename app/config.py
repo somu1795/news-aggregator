@@ -5,9 +5,7 @@ This module defines a `Settings` class that loads configuration from environment
 variables and a .env file, providing a single, type-safe source of truth for all
 application settings.
 """
-
 from typing import Dict, List
-
 from pydantic import Field
 from pydantic_settings import BaseSettings
 
