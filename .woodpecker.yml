@@ -1,6 +1,6 @@
 workspace:
   base: /woodpecker
-  path: src/GITEA_HOST_REDACTED/${CI_REPO_OWNER}/${CI_REPO_NAME}
+  path: src/${CI_REPO_OWNER}/${CI_REPO_NAME}
 
 when:
   branch: [main, test-woodpecker]
@@ -10,21 +10,6 @@ labels:
   build-machine: true
 
 steps:
-  # - name: sync-to-github
-  #   image: alpine/git
-  #   environment:
-  #     GITHUB_TOKEN:
-  #       from_secret: github_token
-  #   commands:
-  #     - |
-  #       set -e
-  #       REMOTE_URL="https://${GITHUB_TOKEN}@github.com/GITHUB_USER_REDACTED/news-aggregator.git"
-  #       echo "Using remote: ${REMOTE_URL#*@}"
-  #       git remote rm github 2>/dev/null || true
-  #       git remote add github "${REMOTE_URL}"
-  #       git push github --all
-  #       git push github --tags
-
   - name: build-images-with-compose
     image: docker/compose:1.29.2
     privileged: true
@@ -60,7 +45,8 @@ steps:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      REGISTRY: REGISTRY_REDACTED
+      REGISTRY:
+        from_secret: REGISTRY
     commands:
       - |
         set -e

@@ -29,9 +29,9 @@
 		# Use a round-robin load balancing strategy for even distribution.
 		lb_policy round_robin
 
-		# Trust the incoming X-Forwarded-* headers from our external proxy,
-		# which is on a private network (VPN).
-		trusted_proxies SUBNET_REDACTED 100.64.0.0/10
+		# Trust the incoming X-Forwarded-* headers from our external proxy.
+		# Replace the first subnet with your LAN range at deploy time.
+		trusted_proxies private_ranges
 
 		# Actively check the health of backend containers and stop sending
 		# traffic to unhealthy ones.
