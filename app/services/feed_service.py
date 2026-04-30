@@ -6,7 +6,7 @@ requests without artificially throttling throughput.
 """
 
 import asyncio
-import logging
+import calendar
 import random
 import time
 from typing import Dict, List
@@ -14,11 +14,12 @@ from typing import Dict, List
 import feedparser
 import httpx
 import redis.asyncio as aioredis
+import structlog
 
 from config import settings
 from services.redirect import resolve_redirect
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # Concurrency semaphore — limits parallel outgoing HTTP requests.
 # Much more efficient than the previous 20-req/min rate limiter which
@@ -47,7 +48,10 @@ async def fetch_and_parse_feed(
                 response = await client.get(url, headers=_FEED_HEADERS)
             response.raise_for_status()
             feed = feedparser.parse(response.content)
-            if getattr(feed, "bozo", False):
+
+            # Only treat bozo (malformed XML) as fatal if no entries were parsed.
+            # Many real-world feeds are technically malformed but usable.
+            if getattr(feed, "bozo", False) and not feed.entries:
                 raise ValueError(f"Feed parse error for {source_name}: {feed.bozo_exception}")
 
             headlines = []
@@ -58,21 +62,25 @@ async def fetch_and_parse_feed(
                     # Prioritize the source from the article entry, fallback to the feed's name from config
                     "source": getattr(entry, "source", {}).get("title") or source_name,
                     "published": (
-                        time.mktime(entry.published_parsed)
+                        calendar.timegm(entry.published_parsed)
                         if getattr(entry, "published_parsed", None)
                         else time.time()
                     ),
                     "last_updated": time.time(),
                 })
-            logger.info(f"Fetched {len(headlines)} headlines from {source_name} at {url}")
+            logger.info("Fetched headlines from source", count=len(headlines), source=source_name)
             return headlines
         except Exception as e:
-            logger.warning(f"Attempt {attempt + 1} failed for {source_name} at {url}: {e}")
+            logger.warning(
+                "Feed fetch attempt failed",
+                source=source_name, attempt=attempt + 1, error=str(e),
+            )
             if attempt < settings.FETCH_RETRIES - 1:
                 await asyncio.sleep(settings.BACKOFF_BASE ** attempt)
             else:
                 logger.error(
-                    f"Failed to fetch from {source_name} at {url} after {settings.FETCH_RETRIES} attempts.",
+                    "Feed fetch exhausted all retries",
+                    source=source_name, retries=settings.FETCH_RETRIES,
                     exc_info=True,
                 )
                 return []
@@ -93,8 +101,16 @@ async def get_fresh_headlines(
         for name, url in settings.NEWS_SOURCES.items()
     ]
     source_names = list(settings.NEWS_SOURCES.keys())
-    results_by_source_list = await asyncio.gather(*fetch_tasks)
-    results_by_source = dict(zip(source_names, results_by_source_list))
+    results_by_source_list = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+
+    # Filter out exceptions and log them
+    results_by_source: Dict[str, List[Dict]] = {}
+    for name, result in zip(source_names, results_by_source_list):
+        if isinstance(result, Exception):
+            logger.error("Unexpected error fetching source", source=name, error=str(result))
+            results_by_source[name] = []
+        else:
+            results_by_source[name] = result
 
     # 2. Sort each source's headlines by date
     for name in results_by_source:
@@ -124,12 +140,13 @@ async def get_fresh_headlines(
     random.shuffle(weighted_headlines)
 
     if not weighted_headlines:
-        logger.error("Failed to fetch any headlines from any source.")
+        logger.error("Failed to fetch any headlines from any source")
         return []
 
     logger.info(
-        f"Aggregated {len(weighted_headlines)} headlines from "
-        f"{len(settings.NEWS_SOURCES)} sources with weighting."
+        "Aggregated headlines with weighting",
+        total=len(weighted_headlines),
+        sources=len(settings.NEWS_SOURCES),
     )
 
     # 6. Resolve redirects for the final list of headlines (with URL caching)
@@ -137,8 +154,11 @@ async def get_fresh_headlines(
         resolve_redirect(client, redis_client, h["link"])
         for h in weighted_headlines
     ]
-    resolved_links = await asyncio.gather(*resolve_tasks)
+    resolved_links = await asyncio.gather(*resolve_tasks, return_exceptions=True)
     for i, headline in enumerate(weighted_headlines):
-        headline["link"] = resolved_links[i]
+        if isinstance(resolved_links[i], Exception):
+            logger.warning("Failed to resolve redirect", link=headline["link"], error=str(resolved_links[i]))
+        else:
+            headline["link"] = resolved_links[i]
 
     return weighted_headlines

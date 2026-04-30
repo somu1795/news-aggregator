@@ -7,11 +7,11 @@ distributed locking to prevent cache stampedes.
 
 import asyncio
 import json
-import logging
 import uuid
 from typing import List, Optional
 
 import redis.asyncio as aioredis
+import structlog
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
 
@@ -20,7 +20,7 @@ from metrics import CACHE_HITS, CACHE_MISSES, REDIS_ERRORS, FALLBACK_FETCHES, FA
 from services.cache_service import fetch_and_cache_headlines, wait_for_cache_or_fallback, release_lock
 from services.feed_service import get_fresh_headlines
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
@@ -44,6 +44,7 @@ class APIResponse(BaseModel):
 async def get_headlines(request: Request, response: Response):
     redis_client = request.app.state.redis
     http_client = request.app.state.http_client
+    lock_script = request.app.state.release_lock_script
     lock_id = str(uuid.uuid4())
 
     try:
@@ -64,22 +65,27 @@ async def get_headlines(request: Request, response: Response):
             settings.LOCK_KEY, lock_id, nx=True, ex=settings.LOCK_TIMEOUT_SECONDS
         )
         if is_lock_acquired:
-            logger.info("Cache miss and lock acquired.")
+            logger.info("Cache miss and lock acquired")
             CACHE_MISSES.labels(reason="expired").inc()
             try:
-                return await fetch_and_cache_headlines(redis_client, http_client, APIResponse)
+                result = await fetch_and_cache_headlines(redis_client, http_client, APIResponse)
+                response.headers["Cache-Control"] = "no-store"
+                return result
             finally:
-                await release_lock(redis_client, lock_id)
+                await release_lock(redis_client, lock_id, lock_script)
         else:
             CACHE_MISSES.labels(reason="locked").inc()
-            return await wait_for_cache_or_fallback(redis_client, http_client, APIResponse)
+            result = await wait_for_cache_or_fallback(redis_client, http_client, APIResponse)
+            response.headers["Cache-Control"] = "no-store"
+            return result
     except aioredis.RedisError as e:
-        logger.error(f"Redis error, performing fallback fetch: {e}", exc_info=True)
+        logger.error("Redis error, performing fallback fetch", error=str(e), exc_info=True)
         REDIS_ERRORS.labels(operation="get_headlines").inc()
         FALLBACK_FETCHES.labels(reason="redis_error").inc()
         FALLBACK_REASON_ENUM.state("redis_error")
         headlines = await get_fresh_headlines(http_client, redis_client)
+        response.headers["Cache-Control"] = "no-store"
         return APIResponse(data=headlines, source="fallback_redis_error", expires_at=None)
     except Exception as e:
-        logger.error(f"Unexpected error in get_headlines: {e}", exc_info=True)
+        logger.error("Unexpected error in get_headlines", error=str(e), exc_info=True)
         raise HTTPException(status_code=503, detail="Service temporarily unavailable")

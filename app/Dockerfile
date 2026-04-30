@@ -1,11 +1,11 @@
 # --- Backend ---
-FROM python:3.12-slim-bookworm
+FROM python:3.14-slim-bookworm
 
 # Set environment variables to prevent Python from writing .pyc files and to buffer output
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# Install curl, which is required for the Docker Compose healthcheck to run.
+# Install curl (Docker healthcheck).
 RUN apt-get update && \
     apt-get install -y --no-install-recommends curl && \
     rm -rf /var/lib/apt/lists/*

@@ -23,5 +23,4 @@ exec uvicorn main:app \
     --loop uvloop \
     --http httptools \
     --proxy-headers \
-    --forwarded-allow-ips='*' \
-    --log-config logging.conf
+    --forwarded-allow-ips='*'

@@ -23,6 +23,10 @@
 	@home path /
 	cache @home 5m
 
+	# Block external access to Prometheus metrics
+	@metrics path /metrics
+	respond @metrics "Forbidden" 403
+
 	# Reverse proxy all other requests to the 'app' service.
 	# Caddy automatically discovers and load-balances across all scaled 'app' containers.
 	reverse_proxy app:8989 {

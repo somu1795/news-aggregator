@@ -13,6 +13,7 @@ from fakeredis.aioredis import FakeRedis
 
 from main import app
 from config import settings
+from services.cache_service import register_lock_script
 
 
 # Use pytest-asyncio for all async tests in this module
@@ -35,5 +36,6 @@ def client(mock_redis, monkeypatch):
     monkeypatch.setattr(settings, "DEBUG", True)
 
     app.state.redis = mock_redis
+    app.state.release_lock_script = register_lock_script(mock_redis)
     with TestClient(app) as test_client:
         yield test_client

@@ -4,14 +4,13 @@ Admin API routes.
 POST /admin/cache/clear — clears the Redis headline cache (requires API key).
 """
 
-import logging
-
+import structlog
 from fastapi import APIRouter, Request, Security
 
 from config import settings
 from deps import get_api_key
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
@@ -20,5 +19,5 @@ router = APIRouter()
 async def clear_cache(request: Request):
     redis_client = request.app.state.redis
     await redis_client.delete(settings.CACHE_KEY)
-    logger.info("Admin request: Redis cache cleared successfully.")
+    logger.info("Admin request: Redis cache cleared successfully")
     return {"status": "ok", "message": "Cache cleared"}

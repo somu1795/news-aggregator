@@ -9,13 +9,12 @@ This module is responsible only for:
   - Mounting static file directories
 """
 
-import logging
-import logging.config
 from contextlib import asynccontextmanager
 
 import httpx
 import redis.asyncio as aioredis
-from fastapi import FastAPI
+import structlog
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -27,13 +26,17 @@ from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 
 from config import settings
+from logging_config import configure_logging
 from middleware.exception import SmartExceptionMiddleware
 from services.cache_service import register_lock_script
+
+# Configure structured logging before any logger is used
+configure_logging(settings.LOG_LEVEL)
 
 # Import metrics module so Prometheus collectors are registered at import time
 import metrics as _metrics  # noqa: F401
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -44,31 +47,36 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """Manages application startup and shutdown resources."""
     # --- Startup ---
-    logger.info("Initializing Redis connection pool...")
+    logger.info("Initializing Redis connection pool")
     try:
         redis_pool = aioredis.ConnectionPool.from_url(
             url=settings.REDIS_URL,
-            max_connections=100,
+            max_connections=30,
             decode_responses=True,
         )
         app.state.redis = aioredis.Redis.from_pool(redis_pool)
-        app.state.http_client = httpx.AsyncClient(http2=True, timeout=settings.REQUEST_TIMEOUT)
+
+        limits = httpx.Limits(max_connections=50, max_keepalive_connections=20)
+        app.state.http_client = httpx.AsyncClient(
+            http2=True, timeout=settings.REQUEST_TIMEOUT, limits=limits,
+        )
+
         await app.state.redis.ping()
-        await register_lock_script(app.state.redis)
-        logger.info("Redis connection pool initialized successfully.")
+        app.state.release_lock_script = register_lock_script(app.state.redis)
+        logger.info("Redis connection pool initialized successfully")
     except Exception as e:
-        logger.critical(f"Failed to connect to Redis during startup: {e}", exc_info=True)
+        logger.critical("Failed to connect to Redis during startup", error=str(e), exc_info=True)
         raise
 
     yield
 
     # --- Shutdown ---
-    logger.info("Closing connections...")
+    logger.info("Closing connections")
     if hasattr(app.state, "redis") and app.state.redis:
         await app.state.redis.close()
     if hasattr(app.state, "http_client") and app.state.http_client:
         await app.state.http_client.aclose()
-    logger.info("Connections closed.")
+    logger.info("Connections closed")
 
 
 # ---------------------------------------------------------------------------
@@ -88,7 +96,6 @@ app = FastAPI(
 # ---------------------------------------------------------------------------
 # Rate Limiting (slowapi)
 # ---------------------------------------------------------------------------
-from fastapi import Request
 
 def get_real_ip(request: Request) -> str:
     """Extracts the true client IP, prioritizing Cloudflare's header."""

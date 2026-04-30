@@ -7,16 +7,16 @@ on subsequent cache misses.
 
 import asyncio
 import json
-import logging
 from typing import Optional
 
 import httpx
 import redis.asyncio as aioredis
+import structlog
 from bs4 import BeautifulSoup
 
 from config import settings
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 RESOLVED_URL_PREFIX = "resolved_url:"
 RESOLVED_URL_TTL = 86400  # 24 hours
@@ -38,7 +38,11 @@ def _parse_batch_execute_response(response_text: str) -> Optional[str]:
         inner_array = json.loads(inner_json_string)
         return inner_array[1]
     except (json.JSONDecodeError, IndexError, TypeError) as e:
-        logger.warning(f"Failed to parse batchexecute response: {e}. Response snippet: {response_text[:200]}")
+        logger.warning(
+            "Failed to parse batchexecute response",
+            error=str(e),
+            snippet=response_text[:200],
+        )
         return None
 
 
@@ -56,10 +60,10 @@ async def resolve_redirect(
     try:
         cached = await redis_client.get(cache_key)
         if cached:
-            logger.debug(f"URL cache hit for {url}")
+            logger.debug("URL cache hit", url=url)
             return cached
-    except Exception:
-        pass  # Non-critical — proceed with live resolution
+    except Exception as e:
+        logger.debug("URL cache lookup failed (non-critical)", url=url, error=str(e))
 
     headers = {"user-agent": _BROWSER_UA}
     resolved_url = url  # Default fallback
@@ -67,12 +71,14 @@ async def resolve_redirect(
     for attempt in range(settings.FETCH_RETRIES):
         try:
             # 2. Initial GET, following redirects
-            initial_resp = await client.get(url, headers=headers, follow_redirects=True, timeout=10.0)
+            initial_resp = await client.get(
+                url, headers=headers, follow_redirects=True, timeout=settings.REQUEST_TIMEOUT,
+            )
             initial_resp.raise_for_status()
 
             final_url = str(initial_resp.url)
             if "news.google.com" not in final_url:
-                logger.debug(f"Resolved {url} to {final_url} via standard redirect.")
+                logger.debug("Resolved via standard redirect", original=url, resolved=final_url)
                 resolved_url = final_url
                 break
 
@@ -80,7 +86,7 @@ async def resolve_redirect(
             soup = BeautifulSoup(initial_resp.text, "html.parser")
             c_wiz_element = soup.select_one("c-wiz[data-p]")
             if not c_wiz_element:
-                logger.warning(f"Could not find c-wiz element for {url}. Falling back to: {final_url}")
+                logger.warning("Could not find c-wiz element, falling back", url=url, fallback=final_url)
                 resolved_url = final_url
                 break
 
@@ -96,20 +102,25 @@ async def resolve_redirect(
                 "user-agent": _BROWSER_UA,
             }
             batch_url = "https://news.google.com/_/DotsSplashUi/data/batchexecute"
-            response = await client.post(batch_url, headers=post_headers, data=payload, timeout=10.0)
+            response = await client.post(
+                batch_url, headers=post_headers, data=payload, timeout=settings.REQUEST_TIMEOUT,
+            )
             response.raise_for_status()
 
             # 5. Extract final URL
             article_url = _parse_batch_execute_response(response.text)
             if article_url:
-                logger.debug(f"Resolved {url} to {article_url} via batchexecute API.")
+                logger.debug("Resolved via batchexecute", original=url, resolved=article_url)
                 resolved_url = article_url
             else:
-                logger.warning(f"batchexecute parsing failed for {url}. Falling back to original link.")
+                logger.warning("batchexecute parsing failed, falling back to original", url=url)
             break
 
         except Exception as e:
-            logger.warning(f"Attempt {attempt + 1} to resolve redirect for {url} failed: {e}.")
+            logger.warning(
+                "Redirect resolution attempt failed",
+                url=url, attempt=attempt + 1, error=str(e),
+            )
             if attempt < settings.FETCH_RETRIES - 1:
                 await asyncio.sleep(settings.BACKOFF_BASE ** attempt)
 
@@ -117,7 +128,7 @@ async def resolve_redirect(
     if resolved_url != url:
         try:
             await redis_client.setex(cache_key, RESOLVED_URL_TTL, resolved_url)
-        except Exception:
-            pass  # Non-critical
+        except Exception as e:
+            logger.debug("URL cache write failed (non-critical)", url=url, error=str(e))
 
     return resolved_url

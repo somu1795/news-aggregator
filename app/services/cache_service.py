@@ -7,18 +7,18 @@ cache stampedes across multiple workers.
 
 import asyncio
 import json
-import logging
 import time
 from typing import List, Dict
 
 import redis.asyncio as aioredis
 import httpx
+import structlog
 
 from config import settings
 from metrics import CACHE_HITS, HEADLINES_FETCHED, FALLBACK_FETCHES, FALLBACK_REASON_ENUM
 from services.feed_service import get_fresh_headlines
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # Lua script for safe lock release — only deletes the lock if we still own it.
 # Registered once at startup via register_lock_script() for Redis-side caching.
@@ -30,19 +30,20 @@ else
 end
 """
 
-_release_lock = None  # Will hold the registered Script object
+
+def register_lock_script(redis_client: aioredis.Redis):
+    """Register the Lua lock-release script with Redis for performance.
+
+    Returns the registered Script object to be stored in app.state,
+    avoiding module-level mutable globals.
+    """
+    return redis_client.register_script(RELEASE_LOCK_SCRIPT)
 
 
-async def register_lock_script(redis_client: aioredis.Redis):
-    """Register the Lua lock-release script with Redis for performance."""
-    global _release_lock
-    _release_lock = redis_client.register_script(RELEASE_LOCK_SCRIPT)
-
-
-async def release_lock(redis_client: aioredis.Redis, lock_id: str):
+async def release_lock(redis_client: aioredis.Redis, lock_id: str, lock_script) -> None:
     """Release the distributed lock, but only if we still own it."""
-    if _release_lock:
-        await _release_lock(keys=[settings.LOCK_KEY], args=[lock_id])
+    if lock_script:
+        await lock_script(keys=[settings.LOCK_KEY], args=[lock_id])
     else:
         # Fallback to eval if script wasn't registered
         await redis_client.eval(RELEASE_LOCK_SCRIPT, 1, settings.LOCK_KEY, lock_id)
@@ -54,7 +55,7 @@ async def fetch_and_cache_headlines(
     response_class,
 ) -> dict:
     """Fetch live headlines, cache them in Redis, and return the API response dict."""
-    logger.info("Fetching live headlines.")
+    logger.info("Fetching live headlines")
     headlines = await get_fresh_headlines(http_client, redis_client)
     now = time.time()
     expires_at = now + settings.CACHE_TTL_SECONDS
@@ -79,15 +80,15 @@ async def wait_for_cache_or_fallback(
     response_class,
 ) -> dict:
     """Wait for another worker to populate the cache, or perform a fallback fetch."""
-    logger.info("Cache lock is held. Waiting for cache to be populated.")
+    logger.info("Cache lock is held, waiting for cache to be populated")
     for _ in range(settings.LOCK_WAIT_TIMEOUT_SECONDS):
         await asyncio.sleep(1)
         cached = await redis_client.get(settings.CACHE_KEY)
         if cached:
-            logger.info("Cache populated by another process. Serving new data.")
+            logger.info("Cache populated by another process, serving new data")
             CACHE_HITS.labels(source="wait_for_lock").inc()
             return response_class(**json.loads(cached))
-    logger.warning("Timed out waiting for cache lock. Performing fallback fetch.")
+    logger.warning("Timed out waiting for cache lock, performing fallback fetch")
     headlines = await get_fresh_headlines(http_client, redis_client)
     FALLBACK_FETCHES.labels(reason="lock_timeout").inc()
     FALLBACK_REASON_ENUM.state("lock_timeout")
