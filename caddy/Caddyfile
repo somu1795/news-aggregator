@@ -23,6 +23,14 @@
 	}
 	encode zstd gzip
 
+	# Security headers (the page also gets a Content-Security-Policy from the app)
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+
 	# Block external access to Prometheus metrics
 	@metrics path /metrics
 	respond @metrics "Forbidden" 403

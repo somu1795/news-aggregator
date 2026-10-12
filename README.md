@@ -76,6 +76,16 @@ For the full details — diagram, how and when data is refreshed, link resolutio
 
 The application will be available at `http://<your-host-ip>:7001` (or whichever port you set for `CADDY_HTTP_PORT`).
 
+## Cloudflare Tunnel (recommended)
+
+The simplest public setup: no open ports, Cloudflare's DDoS protection, and the real client IP handled for you.
+
+1. In Cloudflare Zero Trust, create a tunnel (Cloudflared, Docker) and copy its token.
+2. Give it a public hostname (your site) with the service `http://caddy:7001`.
+3. In `.env`, set `COMPOSE_PROFILES=cloudflare` and `CLOUDFLARE_TUNNEL_TOKEN=<token>`, then `docker compose up -d`. The `cloudflared` container connects out to Cloudflare.
+
+Cloudflare sets `CF-Connecting-IP` to the visitor's IP and rejects requests that try to send their own, so the rate limit sees real IPs. Caddy adds HSTS and the other security headers itself.
+
 ## Proxy Configuration (Cloudflare & Tailscale)
 
 If you are deploying this behind a public VPS proxy (e.g., Cloudflare -> VPS Caddy -> Tailscale -> App), you must correctly configure proxy headers to ensure the real client IP is passed and rate limiting works accurately.

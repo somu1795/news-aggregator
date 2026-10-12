@@ -163,6 +163,26 @@ services:
           pids: 256
     restart: unless-stopped
 
+  # Cloudflare Tunnel: an outbound connection to Cloudflare, which serves the site
+  # (no inbound port needed). In the tunnel's Public Hostname, point the site at
+  # http://caddy:7001. Started only with COMPOSE_PROFILES=cloudflare in .env.
+  cloudflared:
+    image: cloudflare/cloudflared:2026.9.0
+    <<: *hardened
+    profiles: [cloudflare]
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:-}
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+          pids: 64
+    restart: unless-stopped
+    depends_on:
+      - caddy
+
   redis:
     image: redis:8.10.2-alpine
     <<: *hardened
