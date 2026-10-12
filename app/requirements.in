@@ -1,0 +1,14 @@
+# Direct dependencies. Edit this file, then regenerate the pinned lockfile:
+#   pip-compile requirements.in -o requirements.txt
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.38,<1.0
+redis>=8.1,<9.0
+feedparser>=6.0,<7.0
+httpx[http2]>=0.27,<1.0
+beautifulsoup4>=4.12,<5.0
+pydantic>=2.12,<3.0
+pydantic-settings>=2.0,<3.0
+prometheus-fastapi-instrumentator>=8.1,<9.0
+Jinja2>=3.1,<4.0
+slowapi>=0.1.9,<1.0
+structlog>=26.1,<27.0

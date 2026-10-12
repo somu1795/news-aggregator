@@ -194,10 +194,11 @@
         const loadingIndicator = document.getElementById('loading');
 
         // --- Configuration ---
+        // archive.ph/newest/<url> opens the latest snapshot directly (or archive.today's
+        // search page if there is none). 12ft.io was removed: the service is shut down.
         const bypassServices = [
             { id: 'none', name: 'No Bypass', prefix: null },
-            { id: '12ft', name: '12ft.io', prefix: 'https://12ft.io/' },
-            { id: 'archive', name: 'archive.today', prefix: 'https://archive.today/' }
+            { id: 'archive', name: 'archive.today', prefix: 'https://archive.ph/newest/' }
         ];
 
         const premiumDomains = [
@@ -237,7 +238,8 @@
                 .map(service => `<option value="${service.id}">${service.name}</option>`)
                 .join('');
 
-            const savedService = localStorage.getItem('bypassService') || 'none';
+            const saved = localStorage.getItem('bypassService');
+            const savedService = bypassServices.some(s => s.id === saved) ? saved : 'none';  // e.g. a saved '12ft'
             bypassSelector.value = savedService;
             selectedBypass = savedService;
         }

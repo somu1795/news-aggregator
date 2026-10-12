@@ -1,38 +1,41 @@
 """
-Prometheus metric declarations for the News Aggregator.
+Prometheus metric declarations shared by the API and the refresher.
 
-All application metrics are defined here as a single source of truth,
-imported by the modules that need to record them.
+The API runs several Uvicorn workers in Prometheus multi-process mode
+(PROMETHEUS_MULTIPROC_DIR), so its /metrics aggregates all workers. The
+refresher is a single process serving its own metrics on METRICS_PORT.
+
+Only labeled metrics belong here: they create no series until first used, so
+refresher-side metrics don't show up as zeros in the API's /metrics. The
+refresher's unlabeled metrics are declared in refresher.py.
 """
 
-from prometheus_client import Counter, Gauge, Enum
+from prometheus_client import Counter
 
-CACHE_HITS = Counter(
-    "headlines_cache_hits_total",
-    "Total cache hits for headlines",
-    ["source"],
-)
-CACHE_MISSES = Counter(
-    "headlines_cache_misses_total",
-    "Total cache misses for headlines",
-    ["reason"],
-)
-HEADLINES_FETCHED = Gauge(
-    "headlines_fetched_count",
-    "Number of headlines fetched in the last live pull",
-)
 REDIS_ERRORS = Counter(
     "redis_errors_total",
     "Total number of Redis errors encountered",
     ["operation"],
 )
-FALLBACK_FETCHES = Counter(
-    "fallback_fetches_total",
-    "Total number of fallback fetches performed",
-    ["reason"],
+
+# --- Refresher-side (recorded by services the refresher uses) ---
+REFRESHES = Counter(
+    "headlines_refreshes_total",
+    "Refresh cycles by result (success, empty, timeout, error)",
+    ["result"],
 )
-FALLBACK_REASON_ENUM = Enum(
-    "fallback_reason",
-    "Reason for a fallback fetch",
-    states=["redis_error", "lock_timeout"],
+FEED_FETCH_FAILURES = Counter(
+    "feed_fetch_failures_total",
+    "Feed fetches that failed after all retries",
+    ["source"],
+)
+REDIRECT_RESOLUTIONS = Counter(
+    "redirect_resolutions_total",
+    "Google News link resolution outcomes (custom resolver)",
+    ["outcome"],
+)
+REDIRECT_FALLBACKS = Counter(
+    "redirect_fallbacks_total",
+    "Fallback link resolutions, run only when the custom resolver failed (success, failed)",
+    ["outcome"],
 )

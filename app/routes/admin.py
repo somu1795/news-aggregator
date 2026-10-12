@@ -1,7 +1,9 @@
 """
 Admin API routes.
 
-POST /admin/cache/clear — clears the Redis headline cache (requires API key).
+POST /admin/cache/clear — asks the refresher to publish a fresh snapshot now
+                          (requires API key). The current snapshot keeps being
+                          served until the new one is ready.
 """
 
 import structlog
@@ -18,6 +20,6 @@ router = APIRouter()
 @router.post("/admin/cache/clear", dependencies=[Security(get_api_key)], include_in_schema=False)
 async def clear_cache(request: Request):
     redis_client = request.app.state.redis
-    await redis_client.delete(settings.CACHE_KEY)
-    logger.info("Admin request: Redis cache cleared successfully")
-    return {"status": "ok", "message": "Cache cleared"}
+    await redis_client.lpush(settings.REFRESH_REQUEST_KEY, "1")
+    logger.info("Admin request: refresh requested")
+    return {"status": "ok", "message": "Refresh requested"}

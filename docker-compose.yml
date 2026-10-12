@@ -1,26 +1,26 @@
 services:
   app:
     init: true
+    image: news-aggregator-app
     build:
       context: ./app
       dockerfile: Dockerfile
     environment:
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
       # API_RATE_LIMIT: Controls requests per IP. Default is "100/minute".
       - API_RATE_LIMIT=${API_RATE_LIMIT:-100/minute}
       - ALLOWED_HOSTS=${ALLOWED_HOSTS?You must set ALLOWED_HOSTS in your .env file}
       - ADMIN_API_KEY=${ADMIN_API_KEY?You must set ADMIN_API_KEY in your .env file}
-      # For production, a good starting point for workers is (2 x number of CPUs) + 1.
-      # With the default APP_CPUS=4, a value of 9 is recommended.
-      - UVICORN_WORKERS=${UVICORN_WORKERS:-9}
+      # One worker per CPU in APP_CPUS. Benchmarked: 4 workers on 4 CPUs match
+      # 9 workers' throughput at half the memory; scale out with more containers.
+      - UVICORN_WORKERS=${UVICORN_WORKERS:-4}
       - LOG_LEVEL=INFO
-    volumes:
-      # The code is already baked into the image via the Dockerfile's COPY command.
-      # For production and fast startup, we use the internal copy.
-      # For development, you can uncomment the line below to live-mount your local code.
-      # - ./app:/app:ro
-      - app_logs:/var/log/app
+      # Lets /metrics aggregate all Uvicorn workers (see app/entrypoint.sh)
+      - PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus-metrics
+    # The code is already baked into the image via the Dockerfile's COPY command.
+    # For production and fast startup, we use the internal copy.
+    # For development, you can uncomment the lines below to live-mount your local code.
+    # volumes:
+    #   - ./app:/app:ro
     deploy:
       resources:
         # These are resource limits per container. To handle very high traffic (10k+ users),
@@ -39,8 +39,62 @@ services:
       redis:
         condition: service_healthy
 
+  # Fetches feeds on a schedule and publishes snapshots to Redis. Run exactly
+  # one replica; the API never fetches upstream itself.
+  refresher:
+    init: true
+    image: news-aggregator-app
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    entrypoint: ["python", "refresher.py"]
+    environment:
+      - LOG_LEVEL=INFO
+    volumes:
+      # Edit sources.json and `docker compose restart refresher` — no rebuild needed.
+      - ./app/sources.json:/app/sources.json:ro
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # Tags headlines by topic for the topic views (see tagger/tagger.py), on the
+  # host's Intel NPU. On a host without one (no /dev/accel), remove `devices`
+  # and `group_add` and it runs on the CPU.
+  tagger:
+    init: true
+    image: news-aggregator-tagger
+    build: ./tagger
+    devices:
+      - /dev/accel:/dev/accel
+    group_add:
+      # The host group that owns /dev/accel/accel0 (`getent group render`); a number, as
+      # the container doesn't know the host's group names
+      - "${RENDER_GID:-991}"
+    volumes:
+      - tagger_data:/data  # Stored headlines (SQLite), the classifier, the NPU compile cache
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          # ~450 MB in use; the first start (NPU compile + training) peaks at ~1.2 GB
+          memory: 1536M
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 180s  # The first start compiles the model for the NPU and trains (~1.5 min)
+    restart: unless-stopped
+
   caddy:
     init: true
+    image: news-aggregator-caddy
     build: ./caddy
     ports:
       # Expose Caddy's HTTP port on all network interfaces so it can be accessed
@@ -56,7 +110,7 @@ services:
     restart: unless-stopped
 
   redis:
-    image: redis:7.0-alpine
+    image: redis:8.10.2-alpine
     volumes:
       - redis_data:/data
       - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
@@ -73,7 +127,7 @@ services:
           memory: 300M # Set a hard limit slightly above Redis's maxmemory
 
 volumes:
+  tagger_data:
   redis_data:
   caddy_data:
   caddy_config:
-  app_logs:

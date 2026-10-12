@@ -1,0 +1,507 @@
+{
+  "topics": [
+    {
+      "id": "uplifting",
+      "label": "Uplifting"
+    },
+    {
+      "id": "tech",
+      "label": "Tech"
+    },
+    {
+      "id": "science",
+      "label": "Science"
+    },
+    {
+      "id": "nature",
+      "label": "Nature"
+    },
+    {
+      "id": "culture",
+      "label": "Culture"
+    },
+    {
+      "id": "sport",
+      "label": "Sport"
+    }
+  ],
+  "regions": [
+    {
+      "id": "asia",
+      "label": "Asia",
+      "sources": [
+        {
+          "name": "Google News India",
+          "url": "https://news.google.com/rss/topics/CAAqJQgKIh9DQkFTRVFvSUwyMHZNRE55YXpBU0JXVnVMVWxPS0FBUAE?hl=en-IN&gl=IN&ceid=IN:en",
+          "weight": 0.2,
+          "label": "other"
+        },
+        {
+          "name": "Google News Singapore",
+          "url": "https://news.google.com/rss/topics/CAAqJQgKIh9DQkFTRVFvSUwyMHZNRFowTW5RU0JXVnVMVk5IS0FBUAE?hl=en-SG&gl=SG&ceid=SG:en",
+          "weight": 0.12,
+          "label": "other"
+        },
+        {
+          "name": "Google News Philippines",
+          "url": "https://news.google.com/rss/topics/CAAqJQgKIh9DQkFTRVFvSUwyMHZNRFYyT0dNU0JXVnVMVkJJS0FBUAE?hl=en-PH&gl=PH&ceid=PH:en",
+          "weight": 0.12,
+          "label": "other"
+        },
+        {
+          "name": "Google News Pakistan",
+          "url": "https://news.google.com/rss/topics/CAAqJQgKIh9DQkFTRVFvSUwyMHZNRFZ6WWpFU0JXVnVMVkJMS0FBUAE?hl=en-PK&gl=PK&ceid=PK:en",
+          "weight": 0.1,
+          "label": "other"
+        },
+        {
+          "name": "Google News Malaysia",
+          "url": "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSkwyMHZNRGx3Yld0MkVnVmxiaTFOV1NnQVAB?hl=en-MY&gl=MY&ceid=MY:en",
+          "weight": 0.08,
+          "label": "other"
+        },
+        {
+          "name": "Google News Israel",
+          "url": "https://news.google.com/rss/topics/CAAqJQgKIh9DQkFTRVFvSUwyMHZNRE56Y0hvU0JXVnVMVWxNS0FBUAE?hl=en-IL&gl=IL&ceid=IL:en",
+          "weight": 0.08,
+          "label": "other"
+        },
+        {
+          "name": "BBC Asia",
+          "url": "https://feeds.bbci.co.uk/news/world/asia/rss.xml",
+          "weight": 0.1
+        },
+        {
+          "name": "BBC Middle East",
+          "url": "https://feeds.bbci.co.uk/news/world/middle_east/rss.xml",
+          "weight": 0.1
+        },
+        {
+          "name": "Al Jazeera",
+          "url": "https://www.aljazeera.com/xml/rss/all.xml",
+          "weight": 0.1
+        }
+      ],
+      "topic_sources": [
+        {
+          "name": "Google News India Technology",
+          "url": "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=en-IN&gl=IN&ceid=IN:en",
+          "label": "tech"
+        },
+        {
+          "name": "Google News India Science",
+          "url": "https://news.google.com/rss/headlines/section/topic/SCIENCE?hl=en-IN&gl=IN&ceid=IN:en",
+          "label": "science"
+        },
+        {
+          "name": "Google News India Sports",
+          "url": "https://news.google.com/rss/headlines/section/topic/SPORTS?hl=en-IN&gl=IN&ceid=IN:en",
+          "label": "sport"
+        },
+        {
+          "name": "Google News India Entertainment",
+          "url": "https://news.google.com/rss/headlines/section/topic/ENTERTAINMENT?hl=en-IN&gl=IN&ceid=IN:en",
+          "label": "culture"
+        },
+        {
+          "name": "Google News Singapore Technology",
+          "url": "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=en-SG&gl=SG&ceid=SG:en",
+          "label": "tech"
+        },
+        {
+          "name": "Google News Singapore Science",
+          "url": "https://news.google.com/rss/headlines/section/topic/SCIENCE?hl=en-SG&gl=SG&ceid=SG:en",
+          "label": "science"
+        },
+        {
+          "name": "Google News Singapore Sports",
+          "url": "https://news.google.com/rss/headlines/section/topic/SPORTS?hl=en-SG&gl=SG&ceid=SG:en",
+          "label": "sport"
+        },
+        {
+          "name": "Google News Singapore Entertainment",
+          "url": "https://news.google.com/rss/headlines/section/topic/ENTERTAINMENT?hl=en-SG&gl=SG&ceid=SG:en",
+          "label": "culture"
+        }
+      ]
+    },
+    {
+      "id": "europe",
+      "label": "Europe",
+      "sources": [
+        {
+          "name": "Google News UK",
+          "url": "https://news.google.com/rss/topics/CAAqJQgKIh9DQkFTRVFvSUwyMHZNRGR6YzJNU0JXVnVMVWRDS0FBUAE?hl=en-GB&gl=GB&ceid=GB:en",
+          "weight": 0.25,
+          "label": "other"
+        },
+        {
+          "name": "Google News Ireland",
+          "url": "https://news.google.com/rss/topics/CAAqJQgKIh9DQkFTRVFvSUwyMHZNRE55ZERrU0JXVnVMVWxGS0FBUAE?hl=en-IE&gl=IE&ceid=IE:en",
+          "weight": 0.15,
+          "label": "other"
+        },
+        {
+          "name": "Politico Europe",
+          "url": "https://www.politico.eu/feed/",
+          "weight": 0.2
+        },
+        {
+          "name": "BBC Europe",
+          "url": "https://feeds.bbci.co.uk/news/world/europe/rss.xml",
+          "weight": 0.15
+        },
+        {
+          "name": "Kyiv Independent",
+          "url": "https://kyivindependent.com/news-archive/rss/",
+          "weight": 0.1
+        },
+        {
+          "name": "The Local France",
+          "url": "https://feeds.thelocal.com/rss/fr",
+          "weight": 0.075
+        },
+        {
+          "name": "The Local Germany",
+          "url": "https://feeds.thelocal.com/rss/de",
+          "weight": 0.075
+        }
+      ],
+      "topic_sources": [
+        {
+          "name": "Google News UK Technology",
+          "url": "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=en-GB&gl=GB&ceid=GB:en",
+          "label": "tech"
+        },
+        {
+          "name": "Google News UK Science",
+          "url": "https://news.google.com/rss/headlines/section/topic/SCIENCE?hl=en-GB&gl=GB&ceid=GB:en",
+          "label": "science"
+        },
+        {
+          "name": "Google News UK Sports",
+          "url": "https://news.google.com/rss/headlines/section/topic/SPORTS?hl=en-GB&gl=GB&ceid=GB:en",
+          "label": "sport"
+        },
+        {
+          "name": "Google News UK Entertainment",
+          "url": "https://news.google.com/rss/headlines/section/topic/ENTERTAINMENT?hl=en-GB&gl=GB&ceid=GB:en",
+          "label": "culture"
+        }
+      ]
+    },
+    {
+      "id": "americas",
+      "label": "Americas",
+      "sources": [
+        {
+          "name": "Google News US",
+          "url": "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSkwyMHZNRGxqTjNjd0VnVmxiaTFWVXlnQVAB?hl=en-US&gl=US&ceid=US:en",
+          "weight": 0.25,
+          "label": "other"
+        },
+        {
+          "name": "Google News Canada",
+          "url": "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSkwyMHZNR1F3TmpCbkVnVmxiaTFEUVNnQVAB?hl=en-CA&gl=CA&ceid=CA:en",
+          "weight": 0.2,
+          "label": "other"
+        },
+        {
+          "name": "BBC Latin America",
+          "url": "https://feeds.bbci.co.uk/news/world/latin_america/rss.xml",
+          "weight": 0.15
+        },
+        {
+          "name": "BBC US & Canada",
+          "url": "https://feeds.bbci.co.uk/news/world/us_and_canada/rss.xml",
+          "weight": 0.1
+        },
+        {
+          "name": "Latin Times",
+          "url": "https://www.latintimes.com/rss",
+          "weight": 0.1
+        },
+        {
+          "name": "Mexico News Daily",
+          "url": "https://mexiconewsdaily.com/feed/",
+          "weight": 0.1
+        },
+        {
+          "name": "MercoPress",
+          "url": "https://en.mercopress.com/rss/",
+          "weight": 0.1
+        }
+      ],
+      "topic_sources": [
+        {
+          "name": "Google News US Technology",
+          "url": "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=en-US&gl=US&ceid=US:en",
+          "label": "tech"
+        },
+        {
+          "name": "Google News US Science",
+          "url": "https://news.google.com/rss/headlines/section/topic/SCIENCE?hl=en-US&gl=US&ceid=US:en",
+          "label": "science"
+        },
+        {
+          "name": "Google News US Sports",
+          "url": "https://news.google.com/rss/headlines/section/topic/SPORTS?hl=en-US&gl=US&ceid=US:en",
+          "label": "sport"
+        },
+        {
+          "name": "Google News US Entertainment",
+          "url": "https://news.google.com/rss/headlines/section/topic/ENTERTAINMENT?hl=en-US&gl=US&ceid=US:en",
+          "label": "culture"
+        },
+        {
+          "name": "Google News Canada Technology",
+          "url": "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=en-CA&gl=CA&ceid=CA:en",
+          "label": "tech"
+        },
+        {
+          "name": "Google News Canada Science",
+          "url": "https://news.google.com/rss/headlines/section/topic/SCIENCE?hl=en-CA&gl=CA&ceid=CA:en",
+          "label": "science"
+        },
+        {
+          "name": "Google News Canada Sports",
+          "url": "https://news.google.com/rss/headlines/section/topic/SPORTS?hl=en-CA&gl=CA&ceid=CA:en",
+          "label": "sport"
+        },
+        {
+          "name": "Google News Canada Entertainment",
+          "url": "https://news.google.com/rss/headlines/section/topic/ENTERTAINMENT?hl=en-CA&gl=CA&ceid=CA:en",
+          "label": "culture"
+        }
+      ]
+    },
+    {
+      "id": "africa",
+      "label": "Africa",
+      "sources": [
+        {
+          "name": "Google News South Africa",
+          "url": "https://news.google.com/rss/topics/CAAqJQgKIh9DQkFTRVFvSUwyMHZNR2g2YkhvU0JXVnVMVnBCS0FBUAE?hl=en-ZA&gl=ZA&ceid=ZA:en",
+          "weight": 0.2,
+          "label": "other"
+        },
+        {
+          "name": "Google News Nigeria",
+          "url": "https://news.google.com/rss/topics/CAAqJQgKIh9DQkFTRVFvSUwyMHZNRFZqWjNZU0JXVnVMVTVIS0FBUAE?hl=en-NG&gl=NG&ceid=NG:en",
+          "weight": 0.2,
+          "label": "other"
+        },
+        {
+          "name": "Google News Kenya",
+          "url": "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSkwyMHZNREU1Y21jMUVnVmxiaTFMUlNnQVAB?hl=en-KE&gl=KE&ceid=KE:en",
+          "weight": 0.15,
+          "label": "other"
+        },
+        {
+          "name": "Google News Ghana",
+          "url": "https://news.google.com/rss/topics/CAAqJQgKIh9DQkFTRVFvSUwyMHZNRE0xWkdzU0JXVnVMVWRJS0FBUAE?hl=en-GH&gl=GH&ceid=GH:en",
+          "weight": 0.1,
+          "label": "other"
+        },
+        {
+          "name": "Google News Uganda",
+          "url": "https://news.google.com/rss/topics/CAAqJQgKIh9DQkFTRVFvSUwyMHZNRGQwY0RJU0JXVnVMVlZIS0FBUAE?hl=en-UG&gl=UG&ceid=UG:en",
+          "weight": 0.1,
+          "label": "other"
+        },
+        {
+          "name": "AllAfrica",
+          "url": "https://allafrica.com/tools/headlines/rdf/latest/headlines.rdf",
+          "weight": 0.15
+        },
+        {
+          "name": "BBC Africa",
+          "url": "https://feeds.bbci.co.uk/news/world/africa/rss.xml",
+          "weight": 0.1
+        }
+      ],
+      "topic_sources": [
+        {
+          "name": "Google News Nigeria Technology",
+          "url": "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=en-NG&gl=NG&ceid=NG:en",
+          "label": "tech"
+        },
+        {
+          "name": "Google News Nigeria Science",
+          "url": "https://news.google.com/rss/headlines/section/topic/SCIENCE?hl=en-NG&gl=NG&ceid=NG:en",
+          "label": "science"
+        },
+        {
+          "name": "Google News Nigeria Sports",
+          "url": "https://news.google.com/rss/headlines/section/topic/SPORTS?hl=en-NG&gl=NG&ceid=NG:en",
+          "label": "sport"
+        },
+        {
+          "name": "Google News Nigeria Entertainment",
+          "url": "https://news.google.com/rss/headlines/section/topic/ENTERTAINMENT?hl=en-NG&gl=NG&ceid=NG:en",
+          "label": "culture"
+        },
+        {
+          "name": "Google News South Africa Technology",
+          "url": "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=en-ZA&gl=ZA&ceid=ZA:en",
+          "label": "tech"
+        },
+        {
+          "name": "Google News South Africa Science",
+          "url": "https://news.google.com/rss/headlines/section/topic/SCIENCE?hl=en-ZA&gl=ZA&ceid=ZA:en",
+          "label": "science"
+        },
+        {
+          "name": "Google News South Africa Sports",
+          "url": "https://news.google.com/rss/headlines/section/topic/SPORTS?hl=en-ZA&gl=ZA&ceid=ZA:en",
+          "label": "sport"
+        },
+        {
+          "name": "Google News South Africa Entertainment",
+          "url": "https://news.google.com/rss/headlines/section/topic/ENTERTAINMENT?hl=en-ZA&gl=ZA&ceid=ZA:en",
+          "label": "culture"
+        },
+        {
+          "name": "Google News Kenya Technology",
+          "url": "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=en-KE&gl=KE&ceid=KE:en",
+          "label": "tech"
+        },
+        {
+          "name": "Google News Kenya Science",
+          "url": "https://news.google.com/rss/headlines/section/topic/SCIENCE?hl=en-KE&gl=KE&ceid=KE:en",
+          "label": "science"
+        },
+        {
+          "name": "Google News Kenya Sports",
+          "url": "https://news.google.com/rss/headlines/section/topic/SPORTS?hl=en-KE&gl=KE&ceid=KE:en",
+          "label": "sport"
+        },
+        {
+          "name": "Google News Kenya Entertainment",
+          "url": "https://news.google.com/rss/headlines/section/topic/ENTERTAINMENT?hl=en-KE&gl=KE&ceid=KE:en",
+          "label": "culture"
+        }
+      ]
+    },
+    {
+      "id": "oceania",
+      "label": "Oceania",
+      "sources": [
+        {
+          "name": "Google News Australia",
+          "url": "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSkwyMHZNR05vWjJoNUVnVmxiaTFCVlNnQVAB?hl=en-AU&gl=AU&ceid=AU:en",
+          "weight": 0.3,
+          "label": "other"
+        },
+        {
+          "name": "Google News New Zealand",
+          "url": "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSkwyMHZNR04wZDE5aUVnVmxiaTFPV2lnQVAB?hl=en-NZ&gl=NZ&ceid=NZ:en",
+          "weight": 0.25,
+          "label": "other"
+        },
+        {
+          "name": "ABC Australia",
+          "url": "https://www.abc.net.au/news/feed/51120/rss.xml",
+          "weight": 0.2
+        },
+        {
+          "name": "RNZ",
+          "url": "https://www.rnz.co.nz/rss/national.xml",
+          "weight": 0.15
+        },
+        {
+          "name": "BBC Australia",
+          "url": "https://feeds.bbci.co.uk/news/world/australia/rss.xml",
+          "weight": 0.1
+        }
+      ],
+      "topic_sources": [
+        {
+          "name": "Google News Australia Technology",
+          "url": "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=en-AU&gl=AU&ceid=AU:en",
+          "label": "tech"
+        },
+        {
+          "name": "Google News Australia Science",
+          "url": "https://news.google.com/rss/headlines/section/topic/SCIENCE?hl=en-AU&gl=AU&ceid=AU:en",
+          "label": "science"
+        },
+        {
+          "name": "Google News Australia Sports",
+          "url": "https://news.google.com/rss/headlines/section/topic/SPORTS?hl=en-AU&gl=AU&ceid=AU:en",
+          "label": "sport"
+        },
+        {
+          "name": "Google News Australia Entertainment",
+          "url": "https://news.google.com/rss/headlines/section/topic/ENTERTAINMENT?hl=en-AU&gl=AU&ceid=AU:en",
+          "label": "culture"
+        },
+        {
+          "name": "Google News New Zealand Technology",
+          "url": "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=en-NZ&gl=NZ&ceid=NZ:en",
+          "label": "tech"
+        },
+        {
+          "name": "Google News New Zealand Science",
+          "url": "https://news.google.com/rss/headlines/section/topic/SCIENCE?hl=en-NZ&gl=NZ&ceid=NZ:en",
+          "label": "science"
+        },
+        {
+          "name": "Google News New Zealand Sports",
+          "url": "https://news.google.com/rss/headlines/section/topic/SPORTS?hl=en-NZ&gl=NZ&ceid=NZ:en",
+          "label": "sport"
+        },
+        {
+          "name": "Google News New Zealand Entertainment",
+          "url": "https://news.google.com/rss/headlines/section/topic/ENTERTAINMENT?hl=en-NZ&gl=NZ&ceid=NZ:en",
+          "label": "culture"
+        }
+      ]
+    }
+  ],
+  "extras": [
+    {
+      "name": "Google News Science",
+      "url": "https://news.google.com/rss/topics/CAAqKggKIiRDQkFTRlFvSUwyMHZNRFp0Y1RjU0JXVnVMVWRDR2dKSlRpZ0FQAQ?hl=en-US&gl=US&ceid=US%3Aen",
+      "weight": 0.3,
+      "label": "science"
+    },
+    {
+      "name": "Hacker News",
+      "url": "https://news.ycombinator.com/rss",
+      "weight": 0.2
+    }
+  ],
+  "topic_extras": [
+    {
+      "name": "Guardian Environment",
+      "url": "https://www.theguardian.com/environment/rss",
+      "label": "nature"
+    },
+    {
+      "name": "Guardian Wildlife",
+      "url": "https://www.theguardian.com/environment/wildlife/rss",
+      "label": "nature"
+    },
+    {
+      "name": "Guardian Climate Crisis",
+      "url": "https://www.theguardian.com/environment/climate-crisis/rss",
+      "label": "nature"
+    },
+    {
+      "name": "Good News Network",
+      "url": "https://www.goodnewsnetwork.org/feed/",
+      "label": "uplifting"
+    },
+    {
+      "name": "Positive News",
+      "url": "https://www.positive.news/feed/",
+      "label": "uplifting"
+    },
+    {
+      "name": "Reasons to be Cheerful",
+      "url": "https://reasonstobecheerful.world/feed/",
+      "label": "uplifting"
+    }
+  ]
+}

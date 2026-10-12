@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Headlines from Asia, Europe, the Americas, Africa and Oceania, plus science and Hacker News. Updated every few minutes.">
+    <title>news.txt</title>
+    <style>
+        :root {
+            --paper: #f3efe4;
+            --ink: #1c1a16;
+            --muted: #6f685a;
+            --rule: #cfc8b6;
+            --accent: #a8431a;
+            --visited: #7a6a8c;
+            color-scheme: light;
+        }
+        @media (prefers-color-scheme: dark) {
+            :root:not([data-theme="light"]) {
+                --paper: #120f0a;
+                --ink: #f2b84b;
+                --muted: #a17a37;
+                --rule: #3a2e1a;
+                --accent: #ffd27a;
+                --visited: #c99a52;
+                color-scheme: dark;
+            }
+        }
+        :root[data-theme="dark"] {
+            --paper: #120f0a;
+            --ink: #f2b84b;
+            --muted: #a17a37;
+            --rule: #3a2e1a;
+            --accent: #ffd27a;
+            --visited: #c99a52;
+            color-scheme: dark;
+        }
+
+        * { box-sizing: border-box; }
+        html { background: var(--paper); }
+        body {
+            margin: 0 auto;
+            max-width: 76ch;
+            padding: 2.5rem 1rem 4rem;
+            background: var(--paper);
+            color: var(--ink);
+            font: 15px/1.55 ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, "Liberation Mono", monospace;
+            -webkit-font-smoothing: antialiased;
+        }
+        a { color: inherit; }
+        button {
+            font: inherit;
+            color: inherit;
+            background: none;
+            border: 0;
+            padding: 0;
+            cursor: pointer;
+        }
+        button:hover, a:hover { color: var(--accent); }
+        :focus-visible { outline: 1px dashed var(--accent); outline-offset: 2px; }
+
+        header { margin-bottom: 1.25rem; }
+        .masthead {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            align-items: baseline;
+            gap: .5rem 1.5rem;
+        }
+        h1 {
+            margin: 0;
+            font-size: 1rem;
+            font-weight: 700;
+            letter-spacing: .08em;
+        }
+        h1 .cursor { color: var(--accent); }
+        nav { display: flex; flex-wrap: wrap; gap: .25rem 1.25rem; color: var(--muted); }
+        nav .key { text-decoration: underline; text-underline-offset: 3px; }
+        nav .on { color: var(--ink); }
+        .regions { display: flex; flex-wrap: wrap; gap: .25rem 1.5ch; margin-top: .9rem; }
+        .regions a { color: var(--muted); text-decoration: none; }
+        .regions a:hover { color: var(--accent); }
+        .regions a[aria-current="page"] { color: var(--ink); font-weight: 700; }
+        .regions sup { font-size: .65em; color: var(--muted); font-weight: 400; margin-left: .2ch; }
+        .regions + .regions { margin-top: .35rem; }
+        .status { margin: .5rem 0 0; color: var(--muted); }
+        .rule { border: 0; border-top: 1px dashed var(--rule); margin: 1rem 0 0; }
+
+        ol { list-style: none; margin: 0; padding: 0; }
+        li {
+            display: grid;
+            grid-template-columns: 3.5ch 1fr;
+            column-gap: 1ch;
+            padding: .5rem 0;
+        }
+        .num { color: var(--muted); text-align: right; }
+        .title { text-decoration: none; overflow-wrap: anywhere; }
+        .title:visited { color: var(--visited); }
+        .title:hover { text-decoration: underline; text-underline-offset: 3px; }
+        .domain { color: var(--muted); font-size: .9em; }
+        .meta { grid-column: 2; color: var(--muted); font-size: .85em; }
+        .meta a { color: var(--muted); }
+        .meta a:hover { color: var(--accent); }
+        .paywall { color: var(--accent); }
+
+        .notice { color: var(--muted); padding: 1rem 0; }
+        .notice.error { color: var(--accent); }
+        .blink { animation: blink 1s steps(1) infinite; }
+        @keyframes blink { 50% { opacity: 0; } }
+        @media (prefers-reduced-motion: reduce) { .blink { animation: none; } }
+
+        footer { margin-top: 1.5rem; color: var(--muted); font-size: .85em; }
+
+        @media (max-width: 480px) {
+            body { font-size: 14px; padding-top: 1.5rem; }
+            li { grid-template-columns: 3ch 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="masthead">
+            <h1>NEWS.TXT<span class="cursor blink">_</span></h1>
+            <nav aria-label="Controls">
+                <button id="refresh" title="Refresh (r)">[<span class="key">r</span>]efresh</button>
+                <button id="theme" title="Toggle dark mode (d)">[<span class="key">d</span>]ark</button>
+                <span id="bypass" title="Open paywalled sites via a bypass service">bypass:</span>
+            </nav>
+        </div>
+        <nav class="regions" id="regions" aria-label="Regions"></nav>
+        <nav class="regions" id="topics" aria-label="Topics"></nav>
+        <p class="status" id="status" aria-live="polite">connecting<span class="blink">...</span></p>
+        <hr class="rule">
+    </header>
+
+    <main>
+        <ol id="list"></ol>
+        <p class="notice" id="notice" hidden></p>
+    </main>
+
+    <footer>
+        <hr class="rule">
+        <p>-- end of transmission -- <a href="/archive">classic view</a></p>
+    </footer>
+
+    <script id="views-data" type="application/json">{{ views | tojson }}</script>
+    <script id="topics-data" type="application/json">{{ topics | tojson }}</script>
+    <script>
+        (function () {
+            "use strict";
+
+            // Regions (All + regions) and topics (Everything + topics) come from the server's source catalog.
+            // A view is a region and a topic; the default topic is the region's main view.
+            var VIEWS = JSON.parse(document.getElementById("views-data").textContent);
+            var TOPICS = JSON.parse(document.getElementById("topics-data").textContent);
+            var DEFAULT_VIEW = VIEWS[0].id;
+            var DEFAULT_TOPIC = TOPICS[0].id;
+            var STALE_MS = 60000;  // Re-fetch a cached view in the background after this long
+
+            // archive.ph/newest/<url> opens the latest snapshot directly (or archive.today's
+            // search page if there is none). 12ft.io was removed: the service is shut down.
+            var BYPASS_SERVICES = [
+                { id: "none", name: "off", prefix: null },
+                { id: "archive", name: "archive", prefix: "https://archive.ph/newest/" }
+            ];
+            var PAYWALLED = [
+                "nytimes.com", "wsj.com", "bloomberg.com", "economist.com",
+                "washingtonpost.com", "ft.com", "businessinsider.com", "theathletic.com",
+                "reuters.com", "thetimes.co.uk", "theatlantic.com"
+            ];
+
+            var list = document.getElementById("list");
+            var statusEl = document.getElementById("status");
+            var notice = document.getElementById("notice");
+            var regionsEl = document.getElementById("regions");
+            var topicsEl = document.getElementById("topics");
+            var refreshBtn = document.getElementById("refresh");
+            var themeBtn = document.getElementById("theme");
+            var bypassEl = document.getElementById("bypass");
+
+            // Per-view state, by viewKey(): { data, fetchedAt, loadedAt, loading, error }
+            var views = {};
+            var current = DEFAULT_VIEW;
+            var currentTopic = DEFAULT_TOPIC;
+            function viewKey(region, topic) { return region + "/" + topic; }
+            function stateOf(region, topic) {
+                var key = viewKey(region, topic);
+                if (!views[key]) views[key] = { data: null, fetchedAt: null, loadedAt: 0, loading: false, error: null };
+                return views[key];
+            }
+
+            // Preferences are shared with the classic view where the meaning is the same
+            var bypass = read("bypassService") || "none";
+            if (!BYPASS_SERVICES.some(function (s) { return s.id === bypass; })) bypass = "none";  // e.g. a saved "12ft"
+
+            // --- Storage (may be unavailable in private windows) ---
+            function read(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
+            function write(key, value) { try { localStorage.setItem(key, value); } catch (e) { /* ignore */ } }
+
+            function labelOf(id) {
+                var match = VIEWS.filter(function (v) { return v.id === id; })[0];
+                return match ? match.label : id;
+            }
+            function isView(id) { return VIEWS.some(function (v) { return v.id === id; }); }
+            function isTopic(id) { return TOPICS.some(function (t) { return t.id === id; }); }
+            function topicLabel(id) {
+                var match = TOPICS.filter(function (t) { return t.id === id; })[0];
+                return match ? match.label : id;
+            }
+            // e.g. "asia", "asia / sport"
+            function viewName(region, topic) {
+                return labelOf(region).toLowerCase() + (topic === DEFAULT_TOPIC ? "" : " / " + topicLabel(topic).toLowerCase());
+            }
+
+            // --- Theme: follows the OS until toggled ---
+            function isDark() {
+                var forced = document.documentElement.getAttribute("data-theme");
+                if (forced) return forced === "dark";
+                return window.matchMedia("(prefers-color-scheme: dark)").matches;
+            }
+            function applyTheme(theme) {
+                if (theme) document.documentElement.setAttribute("data-theme", theme);
+                themeBtn.classList.toggle("on", isDark());
+            }
+            function toggleTheme() {
+                var next = isDark() ? "light" : "dark";
+                write("retroTheme", next);
+                applyTheme(next);
+            }
+            applyTheme(read("retroTheme"));
+
+            // --- Bypass selector ---
+            function renderBypass() {
+                while (bypassEl.childNodes.length > 1) bypassEl.removeChild(bypassEl.lastChild);
+                BYPASS_SERVICES.forEach(function (service) {
+                    var b = document.createElement("button");
+                    b.type = "button";
+                    b.textContent = service.id === bypass ? "[" + service.name + "]" : service.name;
+                    if (service.id === bypass) b.className = "on";
+                    b.setAttribute("aria-pressed", service.id === bypass ? "true" : "false");
+                    b.style.marginLeft = "1ch";
+                    b.addEventListener("click", function () {
+                        bypass = service.id;
+                        write("bypassService", bypass);
+                        renderBypass();
+                        render();
+                    });
+                    bypassEl.appendChild(b);
+                });
+            }
+
+            // --- Region and topic tabs: real links (shareable, open in new tab), switched in place on click ---
+            function urlFor(region, topic) {
+                var params = new URLSearchParams();
+                if (region !== DEFAULT_VIEW) params.set("region", region);
+                if (topic !== DEFAULT_TOPIC) params.set("topic", topic);
+                var query = params.toString();
+                return query ? "/?" + query : "/";
+            }
+            function renderNav(el, items, selected, hrefFor, onSelect, hint) {
+                el.textContent = "";
+                items.forEach(function (item, i) {
+                    var a = document.createElement("a");
+                    a.href = hrefFor(item.id);
+                    a.textContent = item.id === selected ? "[" + item.label.toLowerCase() + "]" : item.label.toLowerCase();
+                    a.title = item.label + " (" + hint(i) + ")";
+                    if (item.id === selected) a.setAttribute("aria-current", "page");
+                    if (hint === numberKey && i < 9) {
+                        var key = document.createElement("sup");
+                        key.textContent = String(i + 1);
+                        key.setAttribute("aria-hidden", "true");
+                        a.appendChild(key);
+                    }
+                    a.addEventListener("click", function (event) {
+                        if (event.ctrlKey || event.metaKey || event.shiftKey || event.button !== 0) return;
+                        event.preventDefault();
+                        onSelect(item.id);
+                    });
+                    el.appendChild(a);
+                });
+            }
+            function numberKey(i) { return String(i + 1); }
+            function topicKey() { return "t: next topic"; }
+            function renderTabs() {
+                renderNav(regionsEl, VIEWS, current, function (id) { return urlFor(id, currentTopic); },
+                    function (id) { selectView(id, currentTopic, true); }, numberKey);
+                renderNav(topicsEl, TOPICS, currentTopic, function (id) { return urlFor(current, id); },
+                    function (id) { selectView(current, id, true); }, topicKey);
+            }
+
+            // --- Helpers ---
+            function safeUrl(url) {
+                try {
+                    var parsed = new URL(url);
+                    if (parsed.protocol === "https:" || parsed.protocol === "http:") return url;
+                } catch (e) { /* invalid */ }
+                return null;
+            }
+            function hostOf(url) {
+                try { return new URL(url).hostname.replace(/^www\./, ""); } catch (e) { return ""; }
+            }
+            function isPaywalled(host) {
+                return PAYWALLED.some(function (d) { return host === d || host.endsWith("." + d); });
+            }
+            function ago(seconds) {
+                var s = Math.max(0, Date.now() / 1000 - seconds);
+                if (s < 60) return "just now";
+                if (s < 3600) return Math.floor(s / 60) + "m ago";
+                if (s < 86400) return Math.floor(s / 3600) + "h ago";
+                return Math.floor(s / 86400) + "d ago";
+            }
+            function clock(seconds) {
+                var d = new Date(seconds * 1000);
+                return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+            }
+            function cleanTitle(title, source) {
+                // Google News appends " - Publisher"; the publisher is already shown below the title
+                var suffix = " - " + source;
+                return source && title.length > suffix.length && title.slice(-suffix.length) === suffix
+                    ? title.slice(0, -suffix.length)
+                    : title;
+            }
+            function link(href, text, className) {
+                var a = document.createElement("a");
+                a.href = href;
+                a.textContent = text;
+                a.target = "_blank";
+                a.rel = "noopener noreferrer";
+                if (className) a.className = className;
+                return a;
+            }
+            function showNotice(text, isError) {
+                notice.textContent = text;
+                notice.className = isError ? "notice error" : "notice";
+                notice.hidden = false;
+            }
+
+            // --- Rendering (always of the current view) ---
+            function render() {
+                var state = stateOf(current, currentTopic);
+                list.textContent = "";
+                notice.hidden = true;
+                if (state.data === null) {
+                    if (state.error) showNotice("could not load " + viewName(current, currentTopic) + ": " + state.error, true);
+                    return;
+                }
+                if (!state.data.length) {
+                    showNotice("no headlines for " + viewName(current, currentTopic) + " right now.", false);
+                    return;
+                }
+                var service = BYPASS_SERVICES.filter(function (s) { return s.id === bypass; })[0];
+                state.data.forEach(function (item, i) {
+                    var href = safeUrl(item.link);
+                    if (!href) return;
+                    var host = hostOf(href);
+                    var bypassed = !!(service && service.prefix && isPaywalled(host));
+                    if (bypassed) href = service.prefix + href;
+
+                    var li = document.createElement("li");
+                    var num = document.createElement("span");
+                    num.className = "num";
+                    num.textContent = (i + 1) + ".";
+
+                    var body = document.createElement("div");
+                    body.appendChild(link(href, cleanTitle(item.title, item.source), "title"));
+                    if (host) {
+                        var domain = document.createElement("span");
+                        domain.className = "domain";
+                        domain.textContent = " (" + host + ")";
+                        body.appendChild(domain);
+                    }
+
+                    var meta = document.createElement("div");
+                    meta.className = "meta";
+                    meta.appendChild(document.createTextNode(item.source + " \u00b7 " + ago(item.published)));
+                    var comments = item.comments && safeUrl(item.comments);
+                    if (comments) {
+                        meta.appendChild(document.createTextNode(" \u00b7 "));
+                        meta.appendChild(link(comments, "discuss"));
+                    }
+                    if (bypassed) {
+                        var mark = document.createElement("span");
+                        mark.className = "paywall";
+                        mark.textContent = " \u00b7 via " + service.name;
+                        meta.appendChild(mark);
+                    }
+
+                    li.appendChild(num);
+                    li.appendChild(body);
+                    li.appendChild(meta);
+                    list.appendChild(li);
+                });
+            }
+
+            function updateStatus() {
+                var state = stateOf(current, currentTopic);
+                var label = viewName(current, currentTopic);
+                if (state.data === null) {
+                    statusEl.textContent = state.error ? label + " \u00b7 offline" : "loading " + label + "...";
+                    return;
+                }
+                statusEl.textContent = label + " \u00b7 " + state.data.length + " items \u00b7 updated " +
+                    clock(state.fetchedAt) + " (" + ago(state.fetchedAt) + ")" + (state.loading ? " \u00b7 refreshing..." : "");
+            }
+
+            // --- Data ---
+            function load(region, topic) {
+                var state = stateOf(region, topic);
+                if (state.loading) return;
+                state.loading = true;
+                function isCurrent() { return region === current && topic === currentTopic; }
+                if (isCurrent()) { refreshBtn.disabled = true; updateStatus(); }
+                var url = "/api/headlines?region=" + encodeURIComponent(region) +
+                    (topic === DEFAULT_TOPIC ? "" : "&topic=" + encodeURIComponent(topic));
+                fetch(url, { headers: { "Accept": "application/json" } })
+                    .then(function (response) {
+                        return response.json().catch(function () { return {}; }).then(function (body) {
+                            if (!response.ok) throw new Error(body.detail || body.error || "HTTP " + response.status);
+                            return body;
+                        });
+                    })
+                    .then(function (body) {
+                        state.data = Array.isArray(body.data) ? body.data : [];
+                        state.fetchedAt = body.fetched_at || Date.now() / 1000;
+                        state.loadedAt = Date.now();
+                        state.error = null;
+                    })
+                    .catch(function (error) {
+                        state.error = error.message;  // Keep any data we already have
+                    })
+                    .then(function () {
+                        state.loading = false;
+                        if (isCurrent()) {  // Ignore responses for a view the user has left
+                            refreshBtn.disabled = false;
+                            render();
+                            updateStatus();
+                        }
+                    });
+            }
+
+            function selectView(region, topic, pushHistory) {
+                if (!isView(region)) region = DEFAULT_VIEW;
+                if (!isTopic(topic)) topic = DEFAULT_TOPIC;
+                var changed = region !== current || topic !== currentTopic;
+                current = region;
+                currentTopic = topic;
+                write("retroRegion", region);
+                write("retroTopic", topic);
+                if (pushHistory && changed) history.pushState({ region: region, topic: topic }, "", urlFor(region, topic));
+                document.title = region === DEFAULT_VIEW && topic === DEFAULT_TOPIC ? "news.txt" : "news.txt / " + viewName(region, topic);
+                renderTabs();
+                render();
+                updateStatus();
+                if (changed) window.scrollTo(0, 0);
+                var state = stateOf(region, topic);
+                if (state.data === null || Date.now() - state.loadedAt > STALE_MS) load(region, topic);
+            }
+
+            function fromUrl(name, isValid) {
+                var param = new URLSearchParams(location.search).get(name);
+                return param && isValid(param) ? param : null;
+            }
+
+            // --- Wiring ---
+            refreshBtn.addEventListener("click", function () { load(current, currentTopic); });
+            themeBtn.addEventListener("click", toggleTheme);
+            window.addEventListener("popstate", function () {
+                selectView(fromUrl("region", isView) || DEFAULT_VIEW, fromUrl("topic", isTopic) || DEFAULT_TOPIC, false);
+            });
+            document.addEventListener("keydown", function (event) {
+                if (event.ctrlKey || event.metaKey || event.altKey) return;
+                if (event.target && /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName)) return;
+                if (event.key === "r") load(current, currentTopic);
+                else if (event.key === "d") toggleTheme();
+                else if (event.key === "t" || event.key === "T") {
+                    var index = TOPICS.map(function (t) { return t.id; }).indexOf(currentTopic);
+                    var step = event.key === "t" ? 1 : TOPICS.length - 1;  // Shift+t goes back
+                    selectView(current, TOPICS[(index + step) % TOPICS.length].id, true);
+                }
+                else if (/^[1-9]$/.test(event.key) && VIEWS[Number(event.key) - 1]) selectView(VIEWS[Number(event.key) - 1].id, currentTopic, true);
+            });
+            window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () { applyTheme(); });
+            setInterval(updateStatus, 30000);  // Keep "updated Xm ago" honest
+
+            renderBypass();
+            // A view in the URL wins (shared links); otherwise reopen the last one viewed
+            var params = new URLSearchParams(location.search);
+            var linked = params.has("region") || params.has("topic");
+            var initialRegion = linked ? fromUrl("region", isView) || DEFAULT_VIEW : (isView(read("retroRegion")) ? read("retroRegion") : DEFAULT_VIEW);
+            var initialTopic = linked ? fromUrl("topic", isTopic) || DEFAULT_TOPIC : (isTopic(read("retroTopic")) ? read("retroTopic") : DEFAULT_TOPIC);
+            history.replaceState({ region: initialRegion, topic: initialTopic }, "", urlFor(initialRegion, initialTopic));
+            current = null;
+            selectView(initialRegion, initialTopic, false);
+        })();
+    </script>
+</body>
+</html>

@@ -1,5 +1,5 @@
 # --- Backend ---
-FROM python:3.14-slim-bookworm
+FROM python:3.14.8-slim-trixie
 
 # Set environment variables to prevent Python from writing .pyc files and to buffer output
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -13,10 +13,6 @@ RUN apt-get update && \
 # Create a non-root user for security
 RUN addgroup --system --gid 1001 app && \
     adduser --system --uid 1001 --ingroup app app
-
-# Create and set permissions for the log directory before switching user.
-RUN mkdir -p /var/log/app && \
-    chown -R app:app /var/log/app
 
 WORKDIR /app
 

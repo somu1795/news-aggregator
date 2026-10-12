@@ -10,8 +10,22 @@ labels:
   build-machine: true
 
 steps:
+  - name: test
+    image: python:3.14.8-slim-trixie
+    commands:
+      - cd app
+      - pip install --no-cache-dir -r requirements-dev.txt
+      - python -m pytest -q
+
+  - name: test-tagger
+    image: python:3.12-slim-bookworm
+    commands:
+      - cd tagger
+      - pip install --no-cache-dir -r requirements.txt pytest
+      - python -m pytest -q
+
   - name: build-images-with-compose
-    image: docker/compose:1.29.2
+    image: docker:29.9.0-cli
     privileged: true
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -22,8 +36,6 @@ steps:
         from_secret: API_RATE_LIMIT
       UVICORN_WORKERS:
         from_secret: UVICORN_WORKERS
-      REDIS_MAX_MEMORY:
-        from_secret: REDIS_MAX_MEMORY
       ALLOWED_HOSTS:
         from_secret: ALLOWED_HOSTS
     commands:
@@ -33,14 +45,13 @@ steps:
         cat <<EOF > .env
         ALLOWED_HOSTS=${ALLOWED_HOSTS}
         ADMIN_API_KEY=${ADMIN_API_KEY}
-        REDIS_MAX_MEMORY=${REDIS_MAX_MEMORY}
         API_RATE_LIMIT=${API_RATE_LIMIT}
         UVICORN_WORKERS=${UVICORN_WORKERS}
         EOF
-        docker-compose build
+        docker compose build
 
   - name: tag-and-push-images
-    image: docker:20.10
+    image: docker:29.9.0-cli
     privileged: true
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -52,6 +63,7 @@ steps:
         set -e
         export COMPOSE_IMAGE_APP=news-aggregator-app
         export COMPOSE_IMAGE_CADDY=news-aggregator-caddy
+        export COMPOSE_IMAGE_TAGGER=news-aggregator-tagger
         SHORT_TAG=$(echo ${CI_COMMIT_SHA} | cut -c1-7)
         echo "Using IMAGE_TAG=$SHORT_TAG"
         echo "Registry: $REGISTRY"
@@ -65,3 +77,8 @@ steps:
         docker tag ${COMPOSE_IMAGE_CADDY}:latest ${REGISTRY}/${COMPOSE_IMAGE_CADDY}:latest
         docker push ${REGISTRY}/${COMPOSE_IMAGE_CADDY}:${SHORT_TAG}
         docker push ${REGISTRY}/${COMPOSE_IMAGE_CADDY}:latest
+
+        docker tag ${COMPOSE_IMAGE_TAGGER}:latest ${REGISTRY}/${COMPOSE_IMAGE_TAGGER}:${SHORT_TAG}
+        docker tag ${COMPOSE_IMAGE_TAGGER}:latest ${REGISTRY}/${COMPOSE_IMAGE_TAGGER}:latest
+        docker push ${REGISTRY}/${COMPOSE_IMAGE_TAGGER}:${SHORT_TAG}
+        docker push ${REGISTRY}/${COMPOSE_IMAGE_TAGGER}:latest

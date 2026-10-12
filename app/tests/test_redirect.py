@@ -30,7 +30,7 @@ pytestmark = pytest.mark.asyncio
 async def redis():
     client = FakeRedis(decode_responses=True)
     yield client
-    await client.close()
+    await client.aclose()
 
 
 @pytest.fixture(scope="function")
@@ -92,7 +92,7 @@ async def test_resolve_cached_url(redis, http_client):
     original_url = "https://news.google.com/rss/articles/cached-456"
     cached_url = "https://bbc.com/cached-article"
 
-    await redis.setex(f"{RESOLVED_URL_PREFIX}{original_url}", RESOLVED_URL_TTL, cached_url)
+    await redis.set(f"{RESOLVED_URL_PREFIX}{original_url}", cached_url, ex=RESOLVED_URL_TTL)
 
     result = await resolve_redirect(http_client, redis, original_url)
     assert result == cached_url
@@ -110,7 +110,7 @@ async def test_resolve_batchexecute(redis, http_client):
     # First request returns a Google News page with c-wiz element
     google_html = """
     <html><body>
-    <c-wiz data-p='%.@.[\"encodedstuff\",\"more\",1,2,3,4,5,6,7,8]'></c-wiz>
+    <c-wiz data-p='%.@.\"encodedstuff\",\"more\",1,2,3,4,5,6,7,8]'></c-wiz>
     </body></html>
     """
     respx.get(google_url).mock(
@@ -214,7 +214,7 @@ async def test_resolve_redis_cache_failure_non_fatal(http_client):
     """Redis errors during URL cache lookup are non-fatal."""
     broken_redis = AsyncMock()
     broken_redis.get = AsyncMock(side_effect=ConnectionError("Redis down"))
-    broken_redis.setex = AsyncMock(side_effect=ConnectionError("Redis down"))
+    broken_redis.set = AsyncMock(side_effect=ConnectionError("Redis down"))
 
     url = "https://example.com/non-google-url"
 

@@ -11,9 +11,11 @@ Uses the pure ASGI interface instead of BaseHTTPMiddleware to avoid:
 """
 
 import structlog
-from fastapi import HTTPException, Request
+from fastapi import Request
+from fastapi.exception_handlers import http_exception_handler as default_http_exception_handler
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.templating import Jinja2Templates
+from starlette.exceptions import HTTPException
 from starlette.responses import Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -56,6 +58,17 @@ class SmartExceptionMiddleware:
             await response(scope, receive, send)
 
     @staticmethod
+    async def http_exception_handler(request: Request, exc: HTTPException) -> Response:
+        """
+        Handles HTTPExceptions (including routing 404s, which never reach the
+        middleware): HTML error pages for browsers, FastAPI's standard
+        {"detail": ...} JSON (with any headers, e.g. Retry-After) for API clients.
+        """
+        if "text/html" in request.headers.get("accept", "").lower():
+            return SmartExceptionMiddleware._build_error_response(request, exc)
+        return await default_http_exception_handler(request, exc)
+
+    @staticmethod
     def _build_error_response(request: Request, exc: Exception) -> Response:
         """Build the appropriate error response based on the Accept header."""
         status_code = 500
@@ -70,8 +83,9 @@ class SmartExceptionMiddleware:
                 # Try to render the rich error template first
                 template_name = "404.html" if status_code == 404 else "500.html"
                 return templates.TemplateResponse(
+                    request,
                     template_name,
-                    {"request": request, "detail": detail},
+                    {"detail": detail},
                     status_code=status_code,
                 )
             except Exception as template_exc:

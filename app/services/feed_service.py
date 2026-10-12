@@ -1,5 +1,5 @@
 """
-RSS feed fetching, parsing, and weighted headline aggregation.
+RSS feed fetching, parsing, and weighted headline mixing.
 
 Uses a concurrency semaphore instead of a rate limiter to bound outgoing
 requests without artificially throttling throughput.
@@ -7,17 +7,20 @@ requests without artificially throttling throughput.
 
 import asyncio
 import calendar
-import random
+import re
 import time
-from typing import Dict, List
+from collections import Counter
+from typing import Dict, List, Set
+from urllib.parse import urlparse
 
 import feedparser
 import httpx
 import redis.asyncio as aioredis
 import structlog
 
-from config import settings
-from services.redirect import resolve_redirect
+from config import ALL_VIEW, CATALOG, OTHER_LABEL, Catalog, NewsSource, TopicSource, settings, topic_view
+from metrics import FEED_FETCH_FAILURES
+from services.link_resolver import resolve_link
 
 logger = structlog.get_logger(__name__)
 
@@ -25,6 +28,10 @@ logger = structlog.get_logger(__name__)
 # Much more efficient than the previous 20-req/min rate limiter which
 # guaranteed 90s+ latency on cache misses with 30+ headlines to resolve.
 _OUTGOING_SEMAPHORE = asyncio.Semaphore(15)
+
+# Link resolution talks to Google; a refresh can have ~200 new links (first run),
+# so bound it instead of firing them all at once.
+_RESOLVE_SEMAPHORE = asyncio.Semaphore(10)
 
 _FEED_HEADERS = {
     "User-Agent": (
@@ -45,7 +52,7 @@ async def fetch_and_parse_feed(
     for attempt in range(settings.FETCH_RETRIES):
         try:
             async with _OUTGOING_SEMAPHORE:
-                response = await client.get(url, headers=_FEED_HEADERS)
+                response = await client.get(url, headers=_FEED_HEADERS, follow_redirects=True)
             response.raise_for_status()
             feed = feedparser.parse(response.content)
 
@@ -67,6 +74,7 @@ async def fetch_and_parse_feed(
                         else time.time()
                     ),
                     "last_updated": time.time(),
+                    "comments": entry.get("comments"),
                 })
             logger.info("Fetched headlines from source", count=len(headlines), source=source_name)
             return headlines
@@ -83,82 +91,298 @@ async def fetch_and_parse_feed(
                     source=source_name, retries=settings.FETCH_RETRIES,
                     exc_info=True,
                 )
+                FEED_FETCH_FAILURES.labels(source=source_name).inc()
                 return []
     return []
 
 
-async def get_fresh_headlines(
-    client: httpx.AsyncClient,
-    redis_client: aioredis.Redis,
+def _publisher_key(headline: Dict) -> str:
+    """
+    Identifies the publisher for the per-publisher cap. Google links aren't
+    resolved yet at mixing time, so they use the publisher name from the feed;
+    direct links (e.g. Hacker News, whose source is always "Hacker News") use
+    the link's domain.
+    """
+    host = (urlparse(headline["link"]).hostname or "").lower()
+    if host.endswith("news.google.com"):
+        return headline["source"].lower()
+    return host.removeprefix("www.")
+
+
+def _title_key(headline: Dict) -> str:
+    """Normalized title for de-duplication; ignores Google's " - Publisher" suffix, case and punctuation."""
+    title = headline["title"]
+    suffix = f" - {headline['source']}"
+    if title.endswith(suffix):
+        title = title[: -len(suffix)]
+    return re.sub(r"[^a-z0-9]+", " ", title.lower()).strip()
+
+
+def mix_headlines(
+    sources: List[NewsSource], results_by_source: Dict[str, List[Dict]], now: float, view: str = "",
+    cap_publishers: bool = True,
 ) -> List[Dict]:
     """
-    Fetches headlines from all configured news sources concurrently, applies
-    weighted allocation, shuffles the results, and resolves redirect URLs.
+    Builds the final list by interleaving sources according to their weights.
+
+    - Each source keeps its own feed order (Google's ranking, HN's front-page rank).
+    - Items older than MAX_HEADLINE_AGE_HOURS are dropped.
+    - Duplicates (same link or same normalized title) are dropped, first one wins.
+    - At most MAX_PER_PUBLISHER items per publisher. A feed whose items all come
+      from one publisher (e.g. ABC Australia's own feed) is exempt: its share is
+      already bounded by its weight. `cap_publishers=False` skips the cap, for
+      combining lists that were already capped when they were built.
+    - Sources are merged with smooth weighted round-robin, so every stretch of the
+      list has roughly the configured mix (e.g. W S W H W S W W H S ... for 0.5/0.3/0.2)
+      and the order is deterministic between refreshes.
+    - A source that runs out drops out of the rotation and the others fill its slots.
     """
-    # 1. Fetch from all sources concurrently
-    fetch_tasks = [
-        fetch_and_parse_feed(client, name, url)
-        for name, url in settings.NEWS_SOURCES.items()
-    ]
-    source_names = list(settings.NEWS_SOURCES.keys())
-    results_by_source_list = await asyncio.gather(*fetch_tasks, return_exceptions=True)
-
-    # Filter out exceptions and log them
-    results_by_source: Dict[str, List[Dict]] = {}
-    for name, result in zip(source_names, results_by_source_list):
-        if isinstance(result, Exception):
-            logger.error("Unexpected error fetching source", source=name, error=str(result))
-            results_by_source[name] = []
-        else:
-            results_by_source[name] = result
-
-    # 2. Sort each source's headlines by date
-    for name in results_by_source:
-        results_by_source[name].sort(key=lambda x: x["published"], reverse=True)
-
-    # 3. Allocate headlines based on weights from config
-    allocations = {
-        name: round(settings.MAX_HEADLINES * weight)
-        for name, weight in settings.SOURCE_WEIGHTS.items()
+    min_published = now - settings.MAX_HEADLINE_AGE_HOURS * 3600
+    fresh = {
+        source.name: [h for h in results_by_source.get(source.name, []) if h["published"] >= min_published]
+        for source in sources
     }
+    dropped_stale = sum(len(results_by_source.get(name, [])) - len(items) for name, items in fresh.items())
+    pending = {name: iter(items) for name, items in fresh.items()}
+    single_publisher = {name for name, items in fresh.items() if len({_publisher_key(h) for h in items}) == 1}
+    weights = {source.name: source.weight for source in sources}
+    credit = {name: 0.0 for name in weights}
+    active = [source.name for source in sources]  # Config order breaks ties
 
-    # Adjust for rounding errors to ensure the total is exactly MAX_HEADLINES
-    total_allocated = sum(allocations.values())
-    if total_allocated != settings.MAX_HEADLINES:
-        remainder = settings.MAX_HEADLINES - total_allocated
-        primary_source = max(settings.SOURCE_WEIGHTS, key=settings.SOURCE_WEIGHTS.get)
-        if primary_source in allocations:
-            allocations[primary_source] += remainder
+    seen_links, seen_titles = set(), set()
+    per_publisher = Counter()
+    picked_per_source = Counter()
+    skipped = Counter()
+    mixed: List[Dict] = []
 
-    # 4. Gather headlines according to the calculated allocations
-    weighted_headlines = []
-    for source_name, num_to_take in allocations.items():
-        source_headlines = results_by_source.get(source_name, [])
-        weighted_headlines.extend(source_headlines[:num_to_take])
+    while active and len(mixed) < settings.MAX_HEADLINES:
+        # Smooth weighted round-robin: every active source earns its weight,
+        # the one with the most credit is picked and pays back the active total.
+        for name in active:
+            credit[name] += weights[name]
+        name = max(active, key=lambda n: credit[n])
+        credit[name] -= sum(weights[n] for n in active)
 
-    # 5. Shuffle the final combined list for a random mix
-    random.shuffle(weighted_headlines)
-
-    if not weighted_headlines:
-        logger.error("Failed to fetch any headlines from any source")
-        return []
+        for headline in pending[name]:
+            title_key = _title_key(headline)
+            publisher = _publisher_key(headline)
+            if headline["link"] in seen_links or title_key in seen_titles:
+                skipped["duplicate"] += 1
+            elif cap_publishers and name not in single_publisher and per_publisher[publisher] >= settings.MAX_PER_PUBLISHER:
+                skipped["publisher_cap"] += 1
+            else:
+                seen_links.add(headline["link"])
+                seen_titles.add(title_key)
+                per_publisher[publisher] += 1
+                picked_per_source[name] += 1
+                mixed.append(headline)
+                break
+        else:
+            active.remove(name)  # Exhausted; its share goes to the remaining sources
 
     logger.info(
-        "Aggregated headlines with weighting",
-        total=len(weighted_headlines),
-        sources=len(settings.NEWS_SOURCES),
+        "Mixed headlines",
+        view=view,
+        total=len(mixed),
+        per_source=dict(picked_per_source),
+        dropped_stale=dropped_stale,
+        dropped_duplicate=skipped["duplicate"],
+        dropped_publisher_cap=skipped["publisher_cap"],
     )
+    return mixed
 
-    # 6. Resolve redirects for the final list of headlines (with URL caching)
-    resolve_tasks = [
-        resolve_redirect(client, redis_client, h["link"])
-        for h in weighted_headlines
-    ]
-    resolved_links = await asyncio.gather(*resolve_tasks, return_exceptions=True)
-    for i, headline in enumerate(weighted_headlines):
-        if isinstance(resolved_links[i], Exception):
-            logger.warning("Failed to resolve redirect", link=headline["link"], error=str(resolved_links[i]))
+
+async def _fetch_all(client: httpx.AsyncClient, sources: List[NewsSource | TopicSource]) -> Dict[str, List[Dict]]:
+    """Fetches every feed concurrently; a feed that errors contributes nothing."""
+    results = await asyncio.gather(
+        *(fetch_and_parse_feed(client, source.name, source.url) for source in sources), return_exceptions=True,
+    )
+    results_by_source: Dict[str, List[Dict]] = {}
+    for source, result in zip(sources, results):
+        if isinstance(result, Exception):
+            logger.error("Unexpected error fetching source", source=source.name, error=str(result))
+            results_by_source[source.name] = []
         else:
-            headline["link"] = resolved_links[i]
+            results_by_source[source.name] = result
+    return results_by_source
 
-    return weighted_headlines
+
+def build_views(catalog: Catalog, results_by_source: Dict[str, List[Dict]], now: float) -> Dict[str, List[Dict]]:
+    """
+    Builds every view with the same mix: news (that region's, or all regions
+    equally for "all") plus the extras (science, Hacker News) at their weights.
+
+    1. News lists: each region from its own sources, and "world" from the
+       regional lists, equally (a story two regions both carry appears once;
+       the publisher cap applies across regions).
+    2. Extras lists: each extra on its own, publisher-capped.
+    3. Each view interleaves its news list with the extras lists. Everything is
+       already capped, so this step only interleaves and de-duplicates. News has
+       the largest single weight, so it leads every view.
+
+    A view whose news list is empty (all its feeds failed) stays empty, so its
+    previous snapshot is kept rather than replaced by extras alone.
+    """
+    regional = {
+        region.id: mix_headlines(region.sources, results_by_source, now, view=f"{region.id}/news")
+        for region in catalog.regions
+    }
+    world = mix_headlines(
+        [NewsSource(name=f"region:{region_id}", url="", weight=1 / len(regional)) for region_id in regional],
+        {f"region:{region_id}": items for region_id, items in regional.items()},
+        now,
+        view=f"{ALL_VIEW}/news",
+    )
+    extras = {source.name: mix_headlines([source], results_by_source, now, view=source.name) for source in catalog.extras}
+    news_weight = 1 - sum(source.weight for source in catalog.extras)
+
+    def with_extras(view: str, news: List[Dict]) -> List[Dict]:
+        if not news:
+            return []
+        sources = [NewsSource(name="news", url="", weight=news_weight)] + catalog.extras
+        return mix_headlines(sources, {"news": news} | extras, now, view=view, cap_publishers=False)
+
+    views = {region_id: with_extras(region_id, items) for region_id, items in regional.items()}
+    views[ALL_VIEW] = with_extras(ALL_VIEW, world)
+    return views
+
+
+async def _resolve_links(client: httpx.AsyncClient, redis_client: aioredis.Redis, headlines: List[Dict]) -> None:
+    """Resolves each distinct link once and updates every headline that uses it."""
+    links = sorted({h["link"] for h in headlines})
+
+    async def resolve(link: str) -> str:
+        async with _RESOLVE_SEMAPHORE:
+            return await resolve_link(client, redis_client, link)
+
+    # The custom resolver runs first; a fallback runs only for links it failed on.
+    results = await asyncio.gather(*(resolve(link) for link in links), return_exceptions=True)
+    resolved = {}
+    for link, result in zip(links, results):
+        if isinstance(result, Exception):
+            logger.warning("Failed to resolve redirect", link=link, error=str(result))
+        else:
+            resolved[link] = result
+    for headline in headlines:
+        headline["link"] = resolved.get(headline["link"], headline["link"])
+
+
+async def get_fresh_views(
+    client: httpx.AsyncClient,
+    redis_client: aioredis.Redis,
+) -> tuple[Dict[str, List[Dict]], Dict[str, List[Dict]]]:
+    """
+    Fetches every feed in the catalog once, builds each region's list and the
+    "all" list (see build_views), and resolves links.
+    Returns ({view_id: headlines}, {source name: fetched headlines}).
+    """
+    catalog = CATALOG
+    sources = [s for region in catalog.regions for s in region.sources] + catalog.extras
+    results_by_source = await _fetch_all(client, sources)
+
+    views = build_views(catalog, results_by_source, time.time())
+    if not any(views.values()):
+        logger.error("Failed to fetch any headlines from any source")
+        return views, results_by_source
+
+    # The same headline object can appear in a region and in "all"; resolve each once
+    unique = list({id(h): h for items in views.values() for h in items}.values())
+    await _resolve_links(client, redis_client, unique)
+    return views, results_by_source
+
+
+# Last fetch of the topic feeds: {"at": monotonic time, "results": {source name: headlines}}
+_topic_feeds: Dict = {"at": float("-inf"), "results": {}}
+
+
+async def _fetch_topic_feeds(client: httpx.AsyncClient, catalog: Catalog) -> Dict[str, List[Dict]]:
+    """Topic feeds change slowly and are many, so they're fetched every TOPIC_FEEDS_INTERVAL_SECONDS."""
+    if time.monotonic() - _topic_feeds["at"] >= settings.TOPIC_FEEDS_INTERVAL_SECONDS:
+        results = await _fetch_all(client, catalog.topic_feeds)
+        if any(results.values()):  # Otherwise keep the previous fetch and retry next cycle
+            _topic_feeds.update(at=time.monotonic(), results=results)
+    return _topic_feeds["results"]
+
+
+async def _tag(client: httpx.AsyncClient, catalog: Catalog, results_by_source: Dict[str, List[Dict]]) -> Dict[str, Set[str]]:
+    """
+    Tags every fetched headline: the tagger's topics, plus the topic its feed is
+    about (a Sports section's items are always "sport"). The feed's label is
+    also sent to the tagger, which stores it as training data.
+    Returns {title: topics}.
+    """
+    labels = {s.name: s.label for s in catalog.labelled_sources}
+    candidates: Dict[str, tuple] = {}  # title -> (headline, label); a topic label beats "other" or none
+    for name, items in results_by_source.items():
+        label = labels.get(name)
+        for headline in items:
+            previous = candidates.get(headline["title"])
+            if previous is None or (previous[1] in (None, OTHER_LABEL) and label not in (None, OTHER_LABEL)):
+                candidates[headline["title"]] = (headline, label)
+    payload = [
+        {"title": h["title"], "source": h["source"], "link": h["link"], "label": label}
+        for h, label in candidates.values()
+    ]
+    response = await client.post(f"{settings.TAGGER_URL}/tag", json={"items": payload}, timeout=settings.TAGGER_TIMEOUT)
+    response.raise_for_status()
+    body = response.json()
+    logger.info("Tagged headlines", count=len(payload), model=body["model"])
+    return {
+        item["title"]: set(tags) | ({item["label"]} if item["label"] not in (None, OTHER_LABEL) else set())
+        for item, tags in zip(payload, body["tags"])
+    }
+
+
+def build_topic_views(
+    catalog: Catalog, results_by_source: Dict[str, List[Dict]], tags_by_title: Dict[str, Set[str]], now: float,
+) -> Dict[str, List[Dict]]:
+    """
+    Builds one view per region (and "all") per topic, from the items tagged with
+    that topic: the region's news and topic feeds, plus the extras and topic
+    extras, which belong to no region. The news/extras mix of the main views
+    doesn't apply to a single topic (Hacker News has little sport). Instead,
+    feeds about the topic (their items are tagged by their feed, so they're
+    precise) lead and get twice the share of the rest (tagged by the model).
+    Empty views are kept: a region can have no uplifting news right now.
+    """
+    shared = catalog.extras + catalog.topic_extras
+    everything = [s for region in catalog.regions for s in region.topic_sources + region.sources] + shared
+
+    def weighted(sources, topic: str) -> List[NewsSource]:
+        on_topic = [s for s in sources if s.label == topic]
+        return ([NewsSource(name=s.name, url=s.url, weight=2.0) for s in on_topic]
+                + [NewsSource(name=s.name, url=s.url, weight=1.0) for s in sources if s.label != topic])
+
+    views = {}
+    for topic in catalog.topics:
+        tagged = {
+            name: [h for h in items if topic.id in tags_by_title.get(h["title"], ())]
+            for name, items in results_by_source.items()
+        }
+        for region in catalog.regions:
+            view = topic_view(region.id, topic.id)
+            views[view] = mix_headlines(weighted(region.topic_sources + region.sources + shared, topic.id), tagged, now, view=view)
+        view = topic_view(ALL_VIEW, topic.id)
+        views[view] = mix_headlines(weighted(everything, topic.id), tagged, now, view=view)
+    return views
+
+
+async def get_topic_views(
+    client: httpx.AsyncClient,
+    redis_client: aioredis.Redis,
+    results_by_source: Dict[str, List[Dict]],
+) -> Dict[str, List[Dict]]:
+    """
+    Builds every topic view from this cycle's news (results_by_source, from
+    get_fresh_views) and the topic feeds, and resolves their links.
+    Raises if the tagger is unavailable.
+    """
+    catalog = CATALOG
+    if not catalog.topics:
+        return {}
+    results = results_by_source | await _fetch_topic_feeds(client, catalog)
+    tags_by_title = await _tag(client, catalog, results)
+    views = build_topic_views(catalog, results, tags_by_title, time.time())
+    unique = list({id(h): h for items in views.values() for h in items}.values())
+    await _resolve_links(client, redis_client, unique)
+    return views
