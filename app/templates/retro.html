@@ -175,6 +175,7 @@
     <script id="views-data" type="application/json">{{ views | tojson }}</script>
     <script id="topics-data" type="application/json">{{ topics | tojson }}</script>
     <script id="paywalled-data" type="application/json">{{ paywalled | tojson }}</script>
+    <script id="home-data" type="application/json">{{ home_region | tojson }}</script>
     <script nonce="{{ csp_nonce }}">
         (function () {
             "use strict";
@@ -185,6 +186,9 @@
             var TOPICS = JSON.parse(document.getElementById("topics-data").textContent);
             var DEFAULT_VIEW = VIEWS[0].id;
             var DEFAULT_TOPIC = TOPICS[0].id;
+            // Starting region for visitors who haven't picked one: the server's guess from their country
+            var HOME_VIEW = JSON.parse(document.getElementById("home-data").textContent);
+            if (!VIEWS.some(function (v) { return v.id === HOME_VIEW; })) HOME_VIEW = DEFAULT_VIEW;
             var STALE_MS = 60000;  // Re-fetch a cached view in the background after this long
 
             // archive.ph/newest/<url> opens the latest snapshot directly (or archive.today's
@@ -465,7 +469,9 @@
                 renderBypass();
                 renderSort();
                 renderSiteIcons();
-                selectView(DEFAULT_VIEW, DEFAULT_TOPIC, true);
+                selectView(HOME_VIEW, DEFAULT_TOPIC, true);
+                forget("retroRegion");  // Back to following the visitor's location
+                forget("retroTopic");
                 render();
                 showNote("Back to the defaults.", 3);
             }
@@ -619,8 +625,10 @@
                 var changed = region !== current || topic !== currentTopic;
                 current = region;
                 currentTopic = topic;
-                write("retroRegion", region);
-                write("retroTopic", topic);
+                if (pushHistory) {  // Remember the user's own choices only, not the starting region
+                    write("retroRegion", region);
+                    write("retroTopic", topic);
+                }
                 if (pushHistory && changed) history.pushState({ region: region, topic: topic }, "", urlFor(region, topic));
                 document.title = region === DEFAULT_VIEW && topic === DEFAULT_TOPIC ? "news.txt" : "news.txt / " + viewName(region, topic);
                 renderTabs();
@@ -671,7 +679,7 @@
             // A view in the URL wins (shared links); otherwise reopen the last one viewed
             var params = new URLSearchParams(location.search);
             var linked = params.has("region") || params.has("topic");
-            var initialRegion = linked ? fromUrl("region", isView) || DEFAULT_VIEW : (isView(read("retroRegion")) ? read("retroRegion") : DEFAULT_VIEW);
+            var initialRegion = linked ? fromUrl("region", isView) || DEFAULT_VIEW : (isView(read("retroRegion")) ? read("retroRegion") : HOME_VIEW);
             var initialTopic = linked ? fromUrl("topic", isTopic) || DEFAULT_TOPIC : (isTopic(read("retroTopic")) ? read("retroTopic") : DEFAULT_TOPIC);
             history.replaceState({ region: initialRegion, topic: initialTopic }, "", urlFor(initialRegion, initialTopic));
             current = null;

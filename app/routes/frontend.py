@@ -13,6 +13,7 @@ from fastapi.templating import Jinja2Templates
 
 from config import ALL_VIEW, CATALOG, PAYWALLED_HOSTS, settings
 from deps import limiter
+from services.geo import region_for_country
 
 router = APIRouter()
 
@@ -38,7 +39,9 @@ async def root(request: Request):
     if "text/html" in accept_header or request.method == "HEAD":
         nonce = secrets.token_urlsafe(16)
         response = templates.TemplateResponse(
-            request, "retro.html", {"views": _VIEWS, "topics": _TOPICS, "paywalled": PAYWALLED_HOSTS, "csp_nonce": nonce},
+            request, "retro.html", {"views": _VIEWS, "topics": _TOPICS, "paywalled": PAYWALLED_HOSTS, "csp_nonce": nonce,
+             # Starting tab for visitors who haven't chosen one (country from Cloudflare)
+             "home_region": region_for_country(request.headers.get("cf-ipcountry"))},
         )
         response.headers["Content-Security-Policy"] = _CSP.format(nonce=nonce)
         return response

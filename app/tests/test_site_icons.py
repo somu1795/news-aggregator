@@ -48,5 +48,6 @@ async def test_serves_cached_icons_only(client, mock_redis):
     response = client.get("/site-icon/bbc.co.uk")
     assert response.status_code == 200 and response.content == PNG
     assert response.headers["content-type"] == "image/png" and "max-age=604800" in response.headers["cache-control"]
-    assert client.get("/site-icon/other.example").status_code == 404
+    missing = client.get("/site-icon/other.example")
+    assert missing.status_code == 404 and missing.headers["cache-control"] == "public, max-age=300"
     assert client.get("/site-icon/..%2Fetc").status_code == 404

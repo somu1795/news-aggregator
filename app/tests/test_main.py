@@ -324,3 +324,9 @@ async def test_get_headlines_does_not_wait_for_slow_redis(client, mock_redis, mo
 
     release.set()
     await stuck
+
+@pytest.mark.parametrize("country, region", [("IN", "asia"), ("GB", "europe"), ("BR", "americas"), ("T1", "all"), (None, "all")])
+def test_page_starts_on_the_visitors_region(client, country, region):
+    headers = {"Accept": "text/html", **({"CF-IPCountry": country} if country else {})}
+    page = client.get("/", headers=headers).text
+    assert json.loads(page.split('<script id="home-data" type="application/json">')[1].split("</script>")[0]) == region
