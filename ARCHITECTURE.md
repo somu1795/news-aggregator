@@ -205,7 +205,7 @@ After the main views are published, the refresher builds the topic views (`get_t
 
 1. **Topic feeds.** 46 feeds about one topic each: the Technology, Science, Sports and Entertainment sections of 10 Google News local editions (India and Singapore for Asia; UK; US and Canada; Nigeria, South Africa and Kenya; Australia and New Zealand), plus three Guardian environment feeds (nature) and three good-news outlets (uplifting), which belong to no region. They change slowly and are many, so they're fetched every `TOPIC_FEEDS_INTERVAL_SECONDS` (**30 min**) and reused in between. They appear only in topic views.
 2. **Tagging.** Every fetched headline (news, extras and topic feeds, about 3,500) goes to the tagger with its feed's **label**: the topic of a topic feed (or of Google News Science: `science`), `other` for the Google News national sections, or none. The tagger returns its tags (§6). A headline's tags are the tagger's plus its feed's topic, so a Sports section's items are always `sport`.
-3. **Views.** For each topic, one view per region (and "all") from the items tagged with it: the region's news and topic feeds, plus the extras and topic extras. They're mixed with `mix_headlines()` (same rules as above), except the weights: the news/extras mix doesn't apply to one topic (Hacker News has little sport). **Feeds about the topic lead and get twice the share** of the other sources, whose items were tagged by the model and are less precise. "All" draws from every region's sources.
+3. **Views.** For each topic, one view per region (and "all") from the items tagged with it: the region's news and topic feeds, plus the extras and topic extras. They're mixed with `mix_headlines()` (same rules as above), except the weights: the news/extras mix doesn't apply to one topic (Hacker News has little sport). **Feeds about the topic come first**, mixed equally; items the model tagged from other sources only fill the view (up to 50) when those run short. **Uplifting is feed-only**: model tags never add to it, since even its most confident ones were about half wrong on live news. "All" draws from every region's sources.
 4. **Links** are resolved as in Step 3, and all 36 views are published, **including empty ones** (a region can have no uplifting news right now; the page says so).
 
 ### Step 6 — Wait
@@ -238,7 +238,7 @@ Consequence: a newly published snapshot reaches users within about 5s, and the A
   - The last region and topic are remembered when the URL doesn't name them.
   - A tab that was already loaded switches instantly and refreshes in the background if older than a minute.
   - A slow response for one view can never overwrite another view's list.
-- Each item shows the title (without Google's " - Publisher" suffix), the domain, the source and age, plus "discuss" for Hacker News posts.
+- Each item shows the title (without Google's " - Publisher" suffix), the domain, the source and age, plus "discuss" for Hacker News posts (a feed's comments link is dropped when it's just the article itself).
 - Other controls:
   - `r` refreshes;
   - `d` toggles dark mode;
@@ -260,7 +260,7 @@ The tagger (`tagger/tagger.py`) gives each headline zero or more of `tech`, `sci
 
 **How it tags:**
 - **Embedding:** `bge-small-en-v1.5` (33M parameters, MIT licence), fine-tuned on the seed labels (below), run by OpenVINO on the Intel NPU. The NPU needs static shapes, so titles are padded to batches of 32 × 48 tokens. The first start compiles the model for the NPU (~1 min); the result is cached in the volume, so later starts take seconds.
-- **Classifier:** two logistic regressions on the embedding: one over the topics plus `other` (a tag when its probability is ≥ 0.5), one for uplifting or not (≥ 0.8). Uplifting is a tone, not a subject, so it can combine with a topic.
+- **Classifier:** two logistic regressions on the embedding: one over the topics plus `other` (a tag when its probability is ≥ 0.9), one for uplifting or not (≥ 0.8; not used for views, see Step 5). Uplifting is a tone, not a subject, so it can combine with a topic.
 - **Labels, no hand-labelling needed:** feeds imply labels. A Google News Sports section's items are `sport`, a good-news outlet's are `uplifting`, a national news section's are `other`. The bundled `tagger/data/seed.json` (3,250 such headlines) trains the first classifier; every refresh adds more.
 
 **Storage:** SQLite (`/data/tagger.db` in the `tagger_data` volume, WAL mode). One row per headline, by cleaned title: source, link, feed label, tags, the classifier version that tagged it, and its embedding (float16, 768 bytes). A headline is embedded only the first time it's seen; after a retrain, stored headlines are re-tagged from their stored embeddings without re-embedding. Each headline takes roughly 1 KB.
@@ -284,7 +284,7 @@ bge-small was chosen over EmbeddingGemma for memory (the tagger uses ~450 MB) an
 
 **Fine-tuning:** `tagger/finetune.py` trains the whole of bge-small (not just the classifier on top) on `seed.json`, then exports it to ONNX with fp16 weights. It needs a CUDA GPU (a desktop RTX 3060 Ti took ~20 s) and is deterministic: the same seed gives the same file, whose checksum the Dockerfile pins. On the NPU it scores F1 0.665 (base model 0.621) and 9.8% leak (8.9%: one more of the 123 hard-news headlines). Its NPU and CPU embeddings still match, so the CPU fallback is unaffected. The daily retrain keeps training only the classifier, on the fine-tuned embeddings. Replacing the model later needs care: stored embeddings come from the model that made them, so a new `model.onnx` would need every stored headline re-embedded first (not implemented).
 
-**Precision to expect:** with a macro F1 of 0.66, roughly 6 in 10 of the model's tags are right, and it misses a similar share. Topic-feed items are tagged by their feed and lead each topic view, so tabs start with precise items. Uplifting is the weakest topic, and its good-news feeds post only a few items a day.
+**Precision to expect:** the benchmark's best F1 (0.66) is at a 0.5 threshold, but there 1 in 4 topic tags on the evaluation set is wrong, and live news is mostly hard news, so wrong tags flooded the views. At 0.9, 4 in 5 are right (it finds 42% of topic stories) and 4% of hard news gets a tag (10% at 0.5). Topic views take feed items first anyway, so model tags mainly fill nature views and thin regions. Uplifting views come only from the three good-news feeds, which post a few items a day.
 
 | Tagger resource | Value |
 | --- | --- |

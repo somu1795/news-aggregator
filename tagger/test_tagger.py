@@ -51,6 +51,7 @@ def tagger(tmp_path, monkeypatch):
     (bundled / "seed.json").write_text(json.dumps(SEED))
     (bundled / "eval.json").write_text(json.dumps(EVAL))
     monkeypatch.setattr(tagger_module, "BUNDLED", bundled)
+    monkeypatch.setattr(tagger_module, "TOPIC_THRESHOLD", 0.5)  # The toy embedding's classifier is never very confident
     t = Tagger(FakeEmbedder(), tmp_path)
     t.start()
     return t

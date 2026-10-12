@@ -53,8 +53,9 @@ BUNDLED = Path(__file__).parent / "data"
 
 # NPUs need static input shapes; headlines fit in 48 tokens
 BATCH, MAX_TOKENS = 32, 48
-# Decision thresholds, tuned on the benchmark (see ARCHITECTURE.md)
-TOPIC_THRESHOLD, UPLIFTING_THRESHOLD = 0.5, 0.8
+# Decision thresholds. Live news is mostly hard news, so even a small false-positive
+# rate floods a topic view: topics favour precision (0.9 instead of the best-F1 0.5).
+TOPIC_THRESHOLD, UPLIFTING_THRESHOLD = 0.9, 0.8
 
 
 def clean_title(title: str, source: Optional[str] = None) -> str:

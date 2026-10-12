@@ -43,6 +43,13 @@ _FEED_HEADERS = {
 }
 
 
+def discussion_link(link: str, comments: str | None) -> str | None:
+    """The feed's comments URL, unless it's just the article itself (e.g. its "#comments" anchor)."""
+    if not comments or urlparse(comments)._replace(fragment="").geturl() == urlparse(link)._replace(fragment="").geturl():
+        return None
+    return comments
+
+
 async def fetch_and_parse_feed(
     client: httpx.AsyncClient,
     source_name: str,
@@ -74,7 +81,7 @@ async def fetch_and_parse_feed(
                         else time.time()
                     ),
                     "last_updated": time.time(),
-                    "comments": entry.get("comments"),
+                    "comments": discussion_link(entry.link, entry.get("comments")),
                 })
             logger.info("Fetched headlines from source", count=len(headlines), source=source_name)
             return headlines
@@ -333,6 +340,11 @@ async def _tag(client: httpx.AsyncClient, catalog: Catalog, results_by_source: D
     }
 
 
+# Topics whose model tags are too unreliable to show: "uplifting" is a tone, and
+# even its most confident tags were about half wrong on live news.
+FEED_ONLY_TOPICS = {"uplifting"}
+
+
 def build_topic_views(
     catalog: Catalog, results_by_source: Dict[str, List[Dict]], tags_by_title: Dict[str, Set[str]], now: float,
 ) -> Dict[str, List[Dict]]:
@@ -340,18 +352,25 @@ def build_topic_views(
     Builds one view per region (and "all") per topic, from the items tagged with
     that topic: the region's news and topic feeds, plus the extras and topic
     extras, which belong to no region. The news/extras mix of the main views
-    doesn't apply to a single topic (Hacker News has little sport). Instead,
+    doesn't apply to a single topic (Hacker News has little sport). Instead, the
     feeds about the topic (their items are tagged by their feed, so they're
-    precise) lead and get twice the share of the rest (tagged by the model).
+    precise) come first, mixed equally; items the model tagged from other feeds
+    only fill the view when those run short, and never for FEED_ONLY_TOPICS.
     Empty views are kept: a region can have no uplifting news right now.
     """
     shared = catalog.extras + catalog.topic_extras
     everything = [s for region in catalog.regions for s in region.topic_sources + region.sources] + shared
 
-    def weighted(sources, topic: str) -> List[NewsSource]:
-        on_topic = [s for s in sources if s.label == topic]
-        return ([NewsSource(name=s.name, url=s.url, weight=2.0) for s in on_topic]
-                + [NewsSource(name=s.name, url=s.url, weight=1.0) for s in sources if s.label != topic])
+    def equal(sources) -> List[NewsSource]:
+        return [NewsSource(name=s.name, url=s.url, weight=1.0) for s in sources]
+
+    def view_for(sources, topic: str, tagged, view: str) -> List[Dict]:
+        on_topic = mix_headlines(equal(s for s in sources if s.label == topic), tagged, now, view=view)
+        if topic in FEED_ONLY_TOPICS:
+            return on_topic
+        rest = mix_headlines(equal(s for s in sources if s.label != topic), tagged, now, view=view)
+        seen = {h["link"] for h in on_topic} | {_title_key(h) for h in on_topic}
+        return (on_topic + [h for h in rest if h["link"] not in seen and _title_key(h) not in seen])[:settings.MAX_HEADLINES]
 
     views = {}
     for topic in catalog.topics:
@@ -361,9 +380,9 @@ def build_topic_views(
         }
         for region in catalog.regions:
             view = topic_view(region.id, topic.id)
-            views[view] = mix_headlines(weighted(region.topic_sources + region.sources + shared, topic.id), tagged, now, view=view)
+            views[view] = view_for(region.topic_sources + region.sources + shared, topic.id, tagged, view)
         view = topic_view(ALL_VIEW, topic.id)
-        views[view] = mix_headlines(weighted(everything, topic.id), tagged, now, view=view)
+        views[view] = view_for(everything, topic.id, tagged, view)
     return views
 
 

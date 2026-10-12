@@ -223,10 +223,11 @@ TAGGER = f"{settings.TAGGER_URL}/tag"
 
 
 def fake_tagger(request):
-    """Tags every third story (by its number) as sport."""
+    """Tags every third story (by its number) as sport, every fifth as uplifting."""
     items = json.loads(request.content)["items"]
+    number = lambda item: int(item["title"].split()[-1])
     return httpx.Response(200, json={
-        "tags": [["sport"] if int(item["title"].split()[-1]) % 3 == 0 else [] for item in items],
+        "tags": [["sport"] * (number(item) % 3 == 0) + ["uplifting"] * (number(item) % 5 == 0) for item in items],
         "model": "test",
     })
 
@@ -248,9 +249,8 @@ async def test_topic_views_are_published(mock_redis, topic_catalog):
     asia_sport = await read_view(mock_redis, "asia:sport")
     assert asia_sport["region"] == "asia" and asia_sport["topic"] == "sport"
     titles = [h["title"] for h in asia_sport["data"]]
-    # The region's news tagged sport, plus every item of its sports feed (its label is a tag), which leads
-    assert {t for t in titles if t.startswith("sports.example")} == {f"sports.example story {i}" for i in range(5)}
-    assert titles[0] == "sports.example story 0"
+    # Every item of its sports feed (its label is a tag) first, then the region's news the model tagged sport
+    assert titles[:5] == [f"sports.example story {i}" for i in range(5)]
     assert all(int(t.split()[-1]) % 3 == 0 for t in titles if not t.startswith("sports.example"))
     assert any(t.startswith("in ") for t in titles) and any(t.startswith("hn.example") for t in titles)
     assert not any(t.startswith("gb ") for t in titles)
@@ -260,7 +260,8 @@ async def test_topic_views_are_published(mock_redis, topic_catalog):
     assert europe_sport and not any(t.startswith(("in ", "sports.example")) for t in europe_sport)
     all_sport = [h["title"] for h in (await read_view(mock_redis, "all:sport"))["data"]]
     assert any(t.startswith("in ") for t in all_sport) and any(t.startswith("gb ") for t in all_sport)
-    # Nothing is uplifting, but the view is published (empty) so the page can say so
+    # Uplifting comes only from feeds about it (none here), never from model tags; the
+    # view is still published (empty) so the page can say so
     assert (await read_view(mock_redis, "asia:uplifting"))["data"] == []
 
     # Topic feeds only feed topic views
@@ -293,3 +294,12 @@ async def test_topic_feeds_are_fetched_every_interval(mock_redis, topic_catalog)
     assert sum(call.request.url.host == "sports.example" for call in respx.calls) == 1
     # The second cycle still shows the topic feed's items
     assert any(h["title"].startswith("sports.example") for h in (await read_view(mock_redis, "asia:sport"))["data"])
+
+
+def test_comments_link_to_the_article_itself_is_dropped():
+    from services.feed_service import discussion_link
+    article = "https://mexiconewsdaily.com/news/story/"
+    assert discussion_link(article, article) is None
+    assert discussion_link(article, article + "#comments") is None
+    assert discussion_link(article, None) is None
+    assert discussion_link("https://hn.example/a", "https://news.ycombinator.com/item?id=1") == "https://news.ycombinator.com/item?id=1"
