@@ -6,6 +6,7 @@ variables and a .env file, providing a single, type-safe source of truth for all
 application settings. News sources live in a separate JSON file (`sources.json`)
 so they can be edited without touching code.
 """
+import hashlib
 import json
 from pathlib import Path
 from typing import List, Optional
@@ -71,6 +72,18 @@ class Catalog(BaseModel):
 ALL_VIEW = "all"
 OTHER_LABEL = "other"
 
+# Paywalled sites: the page can open them via an archive, and the summarizer
+# reads their articles from one when it can't read them directly.
+PAYWALLED_HOSTS = [
+    "nytimes.com", "wsj.com", "bloomberg.com", "economist.com",
+    "washingtonpost.com", "ft.com", "businessinsider.com", "theathletic.com",
+    "reuters.com", "thetimes.co.uk", "theatlantic.com",
+]
+
+
+def is_paywalled(host: str) -> bool:
+    return any(host == d or host.endswith("." + d) for d in PAYWALLED_HOSTS)
+
 
 def topic_view(view: str, topic: str) -> str:
     """Id of a region's (or "all"'s) view of one topic, e.g. "asia:sport"."""
@@ -117,7 +130,7 @@ class Settings(BaseSettings):
     METRICS_PORT: int = 9100  # Prometheus port exposed by the refresher process
 
     # --- Feed Fetching & Mixing Settings ---
-    MAX_HEADLINES: int = 50  # Per view (each region, and "all")
+    MAX_HEADLINES: int = 80  # Per view (each region, and "all")
     MAX_HEADLINE_AGE_HOURS: int = 48  # Older items are dropped
     MAX_PER_PUBLISHER: int = 3  # Cap per publisher in a view (single-publisher feeds are bounded by their weight instead)
     REQUEST_TIMEOUT: float = 10.0
@@ -127,6 +140,22 @@ class Settings(BaseSettings):
     # --- Tagger (topic views) ---
     TAGGER_URL: str = "http://tagger:8000"
     TAGGER_TIMEOUT: float = 90.0  # The first refresh embeds every headline (~5000)
+
+    # --- Site icons (publisher favicons on the page) ---
+    ICON_SOURCE_URL: str = "https://icons.duckduckgo.com/ip3/{host}.ico"
+    ICON_TTL_SECONDS: int = 7 * 86400
+    ICON_FAILED_TTL_SECONDS: int = 86400
+    ICON_REFRESH_TIMEOUT_SECONDS: int = 60  # Cap on the icon step of a refresh cycle
+
+    # --- Summarizer (article summaries) ---
+    # An Ollama server; empty disables summaries. Set it in .env (e.g. a GPU machine on the tailnet).
+    SUMMARIZER_LLM_URL: str = ""
+    SUMMARIZER_MODEL: str = "qwen3:8b"
+    SUMMARY_TOP_N: int = 20  # The first N items of every view get a summary
+    SUMMARY_TTL_SECONDS: int = 7 * 86400
+    SUMMARY_FAILED_TTL_SECONDS: int = 86400  # An article that couldn't be summarized isn't retried before this
+    SUMMARY_INTERVAL_SECONDS: int = 60  # How often the summarizer looks for new top items
+    SUMMARY_LLM_TIMEOUT: float = 180.0  # The first request also loads the model
 
     # --- News Sources ---
     SOURCES_FILE: str = "sources.json"  # Relative to this directory, or an absolute path
@@ -167,6 +196,11 @@ def load_catalog(path: Path) -> Catalog:
 settings = Settings()
 
 CATALOG = load_catalog(Path(__file__).parent / settings.SOURCES_FILE)
+
+
+def summary_key(link: str) -> str:
+    """Redis key holding an article's summary (or a failure marker), by its link."""
+    return "summary:" + hashlib.sha256(link.encode()).hexdigest()[:32]
 
 
 def snapshot_key(view: str) -> str:

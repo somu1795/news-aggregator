@@ -42,7 +42,10 @@ _FALLBACK_SEMAPHORE = asyncio.Semaphore(5)
 
 
 def _is_unresolved(url: str) -> bool:
-    return "news.google.com" in url
+    try:
+        return httpx.URL(url).host == "news.google.com"
+    except httpx.InvalidURL:
+        return False
 
 
 async def decode_with_signature(client: httpx.AsyncClient, url: str) -> Optional[str]:

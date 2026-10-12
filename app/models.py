@@ -15,6 +15,7 @@ class HeadlineItem(BaseModel):
     published: float
     last_updated: float
     comments: Optional[str] = None  # Discussion page, when the feed provides one (e.g. Hacker News)
+    summary: Optional[str] = None  # Machine-written summary of the article (top items only, see summarizer.py)
 
 
 class APIResponse(BaseModel):

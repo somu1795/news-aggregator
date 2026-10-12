@@ -117,10 +117,12 @@ from routes.headlines import router as headlines_router
 from routes.admin import router as admin_router
 from routes.health import router as health_router
 from routes.frontend import router as frontend_router
+from routes.site_icons import router as site_icons_router
 
 app.include_router(headlines_router)
 app.include_router(admin_router)
 app.include_router(health_router)
+app.include_router(site_icons_router)
 app.include_router(frontend_router)
 
 

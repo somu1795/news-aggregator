@@ -13,8 +13,8 @@ embedding, the label its feed implies (a Sports section -> "sport", a national
 news section -> "other", most feeds -> none) and the model's tags. A headline
 is embedded only the first time it is seen.
 
-Training: a logistic regression on the stored embeddings of every labelled
-headline (data/seed.json, then everything the feeds add). It is retrained every
+Training: a logistic regression on the stored embeddings of the newest
+TRAIN_MAX_ROWS labelled headlines (data/seed.json, then what the feeds add). It is retrained every
 RETRAIN_INTERVAL_HOURS; the new classifier replaces the current one only if it
 scores at least as well on the hand-labelled evaluation set (data/eval.json),
 which is never trained on.
@@ -49,6 +49,9 @@ MODEL_DIR = Path(os.environ.get("MODEL_DIR", "/models/bge-small-en-v1.5"))
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 DEVICE = os.environ.get("TAGGER_DEVICE", "NPU")
 RETRAIN_INTERVAL_HOURS = float(os.environ.get("RETRAIN_INTERVAL_HOURS", "24"))
+# Retraining uses the newest labelled headlines only: ~14,000 arrive a day, and all
+# of them (float32 embeddings) would outgrow the container's memory within months
+TRAIN_MAX_ROWS = int(os.environ.get("TRAIN_MAX_ROWS", "100000"))
 BUNDLED = Path(__file__).parent / "data"
 
 # NPUs need static input shapes; headlines fit in 48 tokens
@@ -259,7 +262,8 @@ class Tagger:
         db = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
         try:
             rows = [(t, label, blob) for t, label, blob in db.execute(
-                "SELECT title, label, embedding FROM headlines WHERE label IS NOT NULL") if t not in self.eval_titles]
+                "SELECT title, label, embedding FROM headlines WHERE label IS NOT NULL ORDER BY first_seen DESC LIMIT ?",
+                (TRAIN_MAX_ROWS,)) if t not in self.eval_titles]
         finally:
             db.close()
         candidate = train(from_blobs([blob for *_, blob in rows]), [label for _, label, _ in rows])

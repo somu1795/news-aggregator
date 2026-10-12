@@ -20,7 +20,7 @@ from models import APIResponse
 router = APIRouter()
 
 
-@router.get("/api/headlines", response_model=APIResponse)
+@router.api_route("/api/headlines", response_model=APIResponse, methods=["GET", "HEAD"])
 @limiter.limit(settings.API_RATE_LIMIT)
 async def get_headlines(request: Request, region: str = ALL_VIEW, topic: Optional[str] = None):
     if region not in CATALOG.view_ids:

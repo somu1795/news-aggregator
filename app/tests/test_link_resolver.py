@@ -122,3 +122,10 @@ async def test_decoder_rejects_google_or_malformed_results():
         assert await decode_with_signature(client, GOOGLE_URL) is None
         assert await decode_with_signature(client, GOOGLE_URL) is None
         assert await decode_with_signature(client, "https://news.google.com/topics/abc") is None
+
+
+def test_only_google_news_hosts_count_as_unresolved():
+    from services.link_resolver import _is_unresolved
+    assert _is_unresolved("https://news.google.com/rss/articles/abc")
+    assert not _is_unresolved("https://evil.example/?u=news.google.com")
+    assert not _is_unresolved("https://news.google.com.evil.example/a")

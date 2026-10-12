@@ -6,7 +6,8 @@ it fetches all feeds, resolves links, and publishes one snapshot per view
 ("all" and each region) to Redis at snapshot_key(view). Then, as a second
 phase, it has the tagger tag every headline and publishes one snapshot per
 region (and "all") per topic. The API only ever reads those snapshots, so
-user traffic never triggers upstream fetches.
+user traffic never triggers upstream fetches. Items carry their article
+summary when the summarizer (summarizer.py) has made one.
 
 If a refresh fails, or a view comes back empty, that view's previous snapshot
 is left in place: users keep getting slightly older headlines instead of errors.
@@ -15,6 +16,7 @@ published and the topic views keep their previous snapshots.
 """
 
 import asyncio
+import json
 import time
 from typing import Dict, List
 
@@ -23,12 +25,13 @@ import redis.asyncio as aioredis
 import structlog
 from prometheus_client import Counter, Gauge, Histogram, start_http_server
 
-from config import settings, snapshot_key
+from config import CATALOG, settings, snapshot_key, summary_key
 from logging_config import configure_logging
 from metrics import REFRESHES
 from models import APIResponse
 from services.feed_service import get_fresh_views, get_topic_views
 from services.redis_client import create_redis_client
+from services.site_icons import cache_icons
 
 logger = structlog.get_logger(__name__)
 
@@ -55,8 +58,18 @@ TOPIC_REFRESHES = Counter(
 )
 
 
+async def add_summaries(redis_client: aioredis.Redis, views: Dict[str, List[Dict]]) -> None:
+    """Sets each item's "summary" from the summarizer's store (summarizer.py), when it has one."""
+    items = [item for view_items in views.values() for item in view_items]
+    if not items:
+        return
+    for item, raw in zip(items, await redis_client.mget([summary_key(item["link"]) for item in items])):
+        item["summary"] = raw and json.loads(raw).get("text")
+
+
 async def publish(redis_client: aioredis.Redis, views: Dict[str, List[Dict]], fetched_at: float) -> None:
-    """Writes one snapshot per view. A view id is a region id or "region:topic"."""
+    """Writes one snapshot per view, with summaries. A view id is a region id or "region:topic"."""
+    await add_summaries(redis_client, views)
     async with redis_client.pipeline(transaction=False) as pipe:
         for view, items in views.items():
             region, _, topic = view.partition(":")
@@ -94,6 +107,7 @@ async def refresh_once(http_client: httpx.AsyncClient, redis_client: aioredis.Re
     LAST_REFRESH_SUCCESS.set(fetched_at)
     logger.info("Published headline snapshots", counts={view: len(items) for view, items in published.items()})
     await refresh_topics(http_client, redis_client, results_by_source)
+    await refresh_site_icons(http_client, redis_client)
     return len(published)
 
 
@@ -113,6 +127,17 @@ async def refresh_topics(
     TOPIC_REFRESHES.labels(result="success").inc()
     logger.info("Published topic snapshots", counts={view: len(items) for view, items in views.items()})
     return len(views)
+
+
+async def refresh_site_icons(http_client: httpx.AsyncClient, redis_client: aioredis.Redis) -> None:
+    """Caches the icons of every published item's website that hasn't got one yet; failures only cost the icons."""
+    try:
+        views = CATALOG.view_ids + CATALOG.topic_view_ids
+        snapshots = await redis_client.mget([snapshot_key(view) for view in views])
+        links = [item["link"] for raw in snapshots if raw for item in json.loads(raw)["data"]]
+        await asyncio.wait_for(cache_icons(http_client, redis_client, links), settings.ICON_REFRESH_TIMEOUT_SECONDS)
+    except Exception as e:
+        logger.warning("Site icons not refreshed", error=str(e) or type(e).__name__)
 
 
 async def wait_for_next_cycle(redis_client: aioredis.Redis) -> None:

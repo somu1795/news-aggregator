@@ -1,6 +1,19 @@
+# Applied to every service: bounded logs, no privilege escalation, no Linux capabilities
+x-hardened: &hardened
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
 services:
   app:
     init: true
+    <<: *hardened
     image: news-aggregator-app
     build:
       context: ./app
@@ -13,6 +26,7 @@ services:
       # One worker per CPU in APP_CPUS. Benchmarked: 4 workers on 4 CPUs match
       # 9 workers' throughput at half the memory; scale out with more containers.
       - UVICORN_WORKERS=${UVICORN_WORKERS:-4}
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
       - LOG_LEVEL=INFO
       # Lets /metrics aggregate all Uvicorn workers (see app/entrypoint.sh)
       - PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus-metrics
@@ -28,6 +42,7 @@ services:
         limits:
           cpus: '${APP_CPUS:-4}'
           memory: ${APP_MEM_LIMIT:-2G}
+          pids: 512
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8989/health"]
       interval: 10s   # Check every 10 seconds
@@ -43,12 +58,14 @@ services:
   # one replica; the API never fetches upstream itself.
   refresher:
     init: true
+    <<: *hardened
     image: news-aggregator-app
     build:
       context: ./app
       dockerfile: Dockerfile
     entrypoint: ["python", "refresher.py"]
     environment:
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
       - LOG_LEVEL=INFO
     volumes:
       # Edit sources.json and `docker compose restart refresher` — no rebuild needed.
@@ -58,6 +75,32 @@ services:
         limits:
           cpus: '1'
           memory: 512M
+          pids: 256
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # Summarizes the top articles of every view (see app/summarizer.py) with an
+  # Ollama server at SUMMARIZER_LLM_URL; without one it does nothing.
+  summarizer:
+    init: true
+    <<: *hardened
+    image: news-aggregator-app
+    entrypoint: ["python", "summarizer.py"]
+    environment:
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+      - LOG_LEVEL=INFO
+      - SUMMARIZER_LLM_URL=${SUMMARIZER_LLM_URL:-}
+      - SUMMARIZER_MODEL=${SUMMARIZER_MODEL:-qwen3:8b}
+    volumes:
+      - ./app/sources.json:/app/sources.json:ro
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 384M
+          pids: 256
     restart: unless-stopped
     depends_on:
       redis:
@@ -68,6 +111,7 @@ services:
   # and `group_add` and it runs on the CPU.
   tagger:
     init: true
+    <<: *hardened
     image: news-aggregator-tagger
     build: ./tagger
     devices:
@@ -84,6 +128,7 @@ services:
           cpus: '2'
           # ~450 MB in use; the first start (NPU compile + training) peaks at ~1.2 GB
           memory: 1536M
+          pids: 256
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=4)"]
       interval: 30s
@@ -94,6 +139,9 @@ services:
 
   caddy:
     init: true
+    <<: *hardened
+    # The caddy binary carries this file capability; without it the kernel refuses to run it
+    cap_add: [NET_BIND_SERVICE]
     image: news-aggregator-caddy
     build: ./caddy
     ports:
@@ -107,14 +155,26 @@ services:
     depends_on:
       app:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 256M
+          pids: 256
     restart: unless-stopped
 
   redis:
     image: redis:8.10.2-alpine
+    <<: *hardened
+    # Its entrypoint chowns /data and switches to the redis user
+    cap_add: [CHOWN, SETUID, SETGID]
     volumes:
       - redis_data:/data
       - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
-    command: redis-server /usr/local/etc/redis/redis.conf
+    environment:
+      - REDISCLI_AUTH=${REDIS_PASSWORD?You must set REDIS_PASSWORD in your .env file}  # For the healthcheck's redis-cli
+    # Must start with redis-server: only then does the image's entrypoint switch to the redis user
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf", "--requirepass", "${REDIS_PASSWORD}"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -124,7 +184,9 @@ services:
     deploy:
       resources:
         limits:
+          cpus: '1'
           memory: 300M # Set a hard limit slightly above Redis's maxmemory
+          pids: 128
 
 volumes:
   tagger_data:

@@ -5,7 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Headlines from Asia, Europe, the Americas, Africa and Oceania, plus science and Hacker News. Updated every few minutes.">
     <title>news.txt</title>
-    <style>
+    <link rel="icon" href="/favicon.ico" sizes="32x32">
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <meta name="theme-color" content="#f3efe4" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#120f0a" media="(prefers-color-scheme: dark)">
+    <style nonce="{{ csp_nonce }}">
         :root {
             --paper: #f3efe4;
             --ink: #1c1a16;
@@ -37,6 +43,7 @@
         }
 
         * { box-sizing: border-box; }
+        [hidden] { display: none !important; }  /* Elements styled with display (e.g. nav) must still hide */
         html { background: var(--paper); }
         body {
             margin: 0 auto;
@@ -77,6 +84,9 @@
         nav { display: flex; flex-wrap: wrap; gap: .25rem 1.25rem; color: var(--muted); }
         nav .key { text-decoration: underline; text-underline-offset: 3px; }
         nav .on { color: var(--ink); }
+        .advanced { margin-top: .5rem; font-size: .9em; }
+        .advanced .note { flex-basis: 100%; }
+        .site-icon { width: 1em; height: 1em; vertical-align: -0.125em; margin-right: .6ch; border-radius: 2px; }
         .regions { display: flex; flex-wrap: wrap; gap: .25rem 1.5ch; margin-top: .9rem; }
         .regions a { color: var(--muted); text-decoration: none; }
         .regions a:hover { color: var(--accent); }
@@ -102,6 +112,17 @@
         .meta a { color: var(--muted); }
         .meta a:hover { color: var(--accent); }
         .paywall { color: var(--accent); }
+        .meta button { color: var(--muted); text-decoration: underline; }
+        .meta button:hover { color: var(--accent); }
+        .summary {
+            grid-column: 2;
+            margin: .4rem 0 .1rem;
+            padding-left: 1.5ch;
+            border-left: 1px solid var(--muted);
+            max-width: 72ch;
+            font-size: .9em;
+        }
+        .summary small { display: block; color: var(--muted); font-size: .85em; margin-top: .2rem; }
 
         .notice { color: var(--muted); padding: 1rem 0; }
         .notice.error { color: var(--accent); }
@@ -124,9 +145,17 @@
             <nav aria-label="Controls">
                 <button id="refresh" title="Refresh (r)">[<span class="key">r</span>]efresh</button>
                 <button id="theme" title="Toggle dark mode (d)">[<span class="key">d</span>]ark</button>
-                <span id="bypass" title="Open paywalled sites via a bypass service">bypass:</span>
+                <button id="sort" title="Order: mix, newest, oldest, random (s)">[<span class="key">s</span>]ort: <span id="sort-mode">mix</span></button>
+                <button id="advanced-toggle" aria-controls="advanced" aria-expanded="false" title="More options (a)">[<span class="key">a</span>]dvanced</button>
             </nav>
         </div>
+        <nav class="advanced" id="advanced" aria-label="Advanced" hidden>
+            <button id="reset" title="Forget every setting on this device: region, topic, sort, theme, bypass, site icons, open summaries">reset</button>
+            <button id="install" title="Install news.txt as an app">install</button>
+            <button id="site-icons" aria-pressed="false" title="Show each website's icon before its headlines">site icons: off</button>
+            <span id="bypass" title="Open paywalled sites via a bypass service">bypass:</span>
+            <span class="note" id="advanced-note" aria-live="polite"></span>
+        </nav>
         <nav class="regions" id="regions" aria-label="Regions"></nav>
         <nav class="regions" id="topics" aria-label="Topics"></nav>
         <p class="status" id="status" aria-live="polite">connecting<span class="blink">...</span></p>
@@ -140,12 +169,13 @@
 
     <footer>
         <hr class="rule">
-        <p>-- end of transmission -- <a href="/archive">classic view</a></p>
+        <p>-- end of transmission --</p>
     </footer>
 
     <script id="views-data" type="application/json">{{ views | tojson }}</script>
     <script id="topics-data" type="application/json">{{ topics | tojson }}</script>
-    <script>
+    <script id="paywalled-data" type="application/json">{{ paywalled | tojson }}</script>
+    <script nonce="{{ csp_nonce }}">
         (function () {
             "use strict";
 
@@ -163,11 +193,7 @@
                 { id: "none", name: "off", prefix: null },
                 { id: "archive", name: "archive", prefix: "https://archive.ph/newest/" }
             ];
-            var PAYWALLED = [
-                "nytimes.com", "wsj.com", "bloomberg.com", "economist.com",
-                "washingtonpost.com", "ft.com", "businessinsider.com", "theathletic.com",
-                "reuters.com", "thetimes.co.uk", "theatlantic.com"
-            ];
+            var PAYWALLED = JSON.parse(document.getElementById("paywalled-data").textContent);
 
             var list = document.getElementById("list");
             var statusEl = document.getElementById("status");
@@ -176,6 +202,12 @@
             var topicsEl = document.getElementById("topics");
             var refreshBtn = document.getElementById("refresh");
             var themeBtn = document.getElementById("theme");
+            var sortBtn = document.getElementById("sort");
+            var advancedEl = document.getElementById("advanced");
+            var advancedBtn = document.getElementById("advanced-toggle");
+            var installBtn = document.getElementById("install");
+            var siteIconsBtn = document.getElementById("site-icons");
+            var advancedNote = document.getElementById("advanced-note");
             var bypassEl = document.getElementById("bypass");
 
             // Per-view state, by viewKey(): { data, fetchedAt, loadedAt, loading, error }
@@ -189,13 +221,14 @@
                 return views[key];
             }
 
-            // Preferences are shared with the classic view where the meaning is the same
+            // Paywall bypass for links to paywalled sites (see PAYWALLED), off by default
             var bypass = read("bypassService") || "none";
             if (!BYPASS_SERVICES.some(function (s) { return s.id === bypass; })) bypass = "none";  // e.g. a saved "12ft"
 
             // --- Storage (may be unavailable in private windows) ---
             function read(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
             function write(key, value) { try { localStorage.setItem(key, value); } catch (e) { /* ignore */ } }
+            function forget(key) { try { localStorage.removeItem(key); } catch (e) { /* ignore */ } }
 
             function labelOf(id) {
                 var match = VIEWS.filter(function (v) { return v.id === id; })[0];
@@ -309,10 +342,6 @@
                 if (s < 86400) return Math.floor(s / 3600) + "h ago";
                 return Math.floor(s / 86400) + "d ago";
             }
-            function clock(seconds) {
-                var d = new Date(seconds * 1000);
-                return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
-            }
             function cleanTitle(title, source) {
                 // Google News appends " - Publisher"; the publisher is already shown below the title
                 var suffix = " - " + source;
@@ -336,6 +365,121 @@
             }
 
             // --- Rendering (always of the current view) ---
+            // Order of the list. "mix" is the server's: each feed's own ranking, interleaved by weight.
+            var SORTS = ["mix", "newest", "oldest", "random"];
+            var sortMode = SORTS.indexOf(read("retroSort")) >= 0 ? read("retroSort") : "mix";
+            var shuffleKeys = {};  // Link -> random number; kept while "random" stays selected, so refreshes don't reshuffle
+
+            function sorted(items) {
+                var copy = items.slice();
+                if (sortMode === "newest") copy.sort(function (a, b) { return b.published - a.published; });
+                else if (sortMode === "oldest") copy.sort(function (a, b) { return a.published - b.published; });
+                else if (sortMode === "random") {
+                    copy.forEach(function (item) { if (!(item.link in shuffleKeys)) shuffleKeys[item.link] = Math.random(); });
+                    copy.sort(function (a, b) { return shuffleKeys[a.link] - shuffleKeys[b.link]; });
+                }
+                return copy;
+            }
+
+            function cycleSort() {
+                sortMode = SORTS[(SORTS.indexOf(sortMode) + 1) % SORTS.length];
+                if (sortMode === "random") shuffleKeys = {};  // A fresh shuffle each time it's chosen
+                write("retroSort", sortMode);
+                renderSort();
+                render();
+            }
+
+            function renderSort() {
+                document.getElementById("sort-mode").textContent = sortMode;
+                sortBtn.classList.toggle("on", sortMode !== "mix");
+            }
+
+            // --- Advanced: reset, install, site icons ---
+            function toggleAdvanced() {
+                advancedEl.hidden = !advancedEl.hidden;
+                advancedBtn.classList.toggle("on", !advancedEl.hidden);
+                advancedBtn.setAttribute("aria-expanded", String(!advancedEl.hidden));
+                showNote("");
+            }
+
+            // A short message in the advanced row, cleared after `seconds`
+            var noteTimer = null;
+            function showNote(text, seconds) {
+                clearTimeout(noteTimer);
+                advancedNote.textContent = text;
+                if (text) noteTimer = setTimeout(function () { advancedNote.textContent = ""; }, seconds * 1000);
+            }
+
+            // Each website's icon before its headlines, served from our own domain (/site-icon/<domain>)
+            var siteIcons = read("retroSiteIcons") === "on";
+            function renderSiteIcons() {
+                siteIconsBtn.textContent = "site icons: " + (siteIcons ? "on" : "off");
+                siteIconsBtn.classList.toggle("on", siteIcons);
+                siteIconsBtn.setAttribute("aria-pressed", String(siteIcons));
+            }
+            function toggleSiteIcons() {
+                siteIcons = !siteIcons;
+                write("retroSiteIcons", siteIcons ? "on" : "off");
+                renderSiteIcons();
+                render();
+            }
+
+            // The browser offers installing (beforeinstallprompt) only when it can and the app isn't installed yet
+            var installPrompt = null;
+            function isInstalled() {
+                return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+            }
+            function renderInstall() {
+                installBtn.textContent = isInstalled() ? "installed" : "install";
+                installBtn.disabled = isInstalled();
+            }
+            function install() {
+                if (!installPrompt) {
+                    showNote("This browser isn't offering to install right now (it may already be installed). " +
+                        "Use its menu instead: Install app, or Share \u2192 Add to Home Screen on iPhone.", 12);
+                    return;
+                }
+                installPrompt.prompt();
+                installPrompt.userChoice.then(function () { installPrompt = null; renderInstall(); });
+            }
+            window.addEventListener("beforeinstallprompt", function (event) {
+                event.preventDefault();  // Shown from the install button instead
+                installPrompt = event;
+                renderInstall();
+            });
+            window.addEventListener("appinstalled", function () {
+                installPrompt = null;
+                showNote("Installed.", 4);
+                renderInstall();
+            });
+
+            function resetAll() {
+                ["retroRegion", "retroTopic", "retroSort", "retroTheme", "bypassService", "retroSiteIcons"].forEach(forget);  // bypassService: shared with the old classic page
+                openSummaries = {};
+                sortMode = "mix";
+                shuffleKeys = {};
+                siteIcons = false;
+                bypass = "none";
+                document.documentElement.removeAttribute("data-theme");
+                applyTheme(null);
+                renderBypass();
+                renderSort();
+                renderSiteIcons();
+                selectView(DEFAULT_VIEW, DEFAULT_TOPIC, true);
+                render();
+                showNote("Back to the defaults.", 3);
+            }
+
+            // Open summaries, by link: they stay open when the list is re-rendered
+            var openSummaries = {};
+
+            function setSummaryOpen(summary, toggle, link, open) {
+                summary.hidden = !open;
+                toggle.textContent = open ? "hide summary" : "summary";
+                toggle.setAttribute("aria-expanded", String(open));
+                if (open) openSummaries[link] = true; else delete openSummaries[link];
+            }
+
             function render() {
                 var state = stateOf(current, currentTopic);
                 list.textContent = "";
@@ -349,7 +493,7 @@
                     return;
                 }
                 var service = BYPASS_SERVICES.filter(function (s) { return s.id === bypass; })[0];
-                state.data.forEach(function (item, i) {
+                sorted(state.data).forEach(function (item, i) {
                     var href = safeUrl(item.link);
                     if (!href) return;
                     var host = hostOf(href);
@@ -362,6 +506,17 @@
                     num.textContent = (i + 1) + ".";
 
                     var body = document.createElement("div");
+                    if (siteIcons && host) {
+                        var icon = document.createElement("img");
+                        icon.className = "site-icon";
+                        icon.src = "/site-icon/" + encodeURIComponent(host);
+                        icon.alt = "";
+                        icon.width = 16;
+                        icon.height = 16;
+                        icon.loading = "lazy";
+                        icon.addEventListener("error", function () { this.remove(); });  // No icon cached for that site
+                        body.appendChild(icon);
+                    }
                     body.appendChild(link(href, cleanTitle(item.title, item.source), "title"));
                     if (host) {
                         var domain = document.createElement("span");
@@ -378,6 +533,25 @@
                         meta.appendChild(document.createTextNode(" \u00b7 "));
                         meta.appendChild(link(comments, "discuss"));
                     }
+                    var summary = null;
+                    if (item.summary) {
+                        summary = document.createElement("p");
+                        summary.className = "summary";
+                        summary.id = "summary-" + i;
+                        summary.textContent = item.summary;
+                        var note = document.createElement("small");
+                        note.textContent = "machine summary \u00b7 may contain errors";
+                        summary.appendChild(note);
+                        var toggle = document.createElement("button");
+                        toggle.type = "button";
+                        toggle.setAttribute("aria-controls", summary.id);
+                        setSummaryOpen(summary, toggle, item.link, !!openSummaries[item.link]);
+                        toggle.addEventListener("click", function (summary, toggle, link) {
+                            return function () { setSummaryOpen(summary, toggle, link, summary.hidden); };
+                        }(summary, toggle, item.link));
+                        meta.appendChild(document.createTextNode(" \u00b7 "));
+                        meta.appendChild(toggle);
+                    }
                     if (bypassed) {
                         var mark = document.createElement("span");
                         mark.className = "paywall";
@@ -388,6 +562,7 @@
                     li.appendChild(num);
                     li.appendChild(body);
                     li.appendChild(meta);
+                    if (summary) li.appendChild(summary);
                     list.appendChild(li);
                 });
             }
@@ -400,7 +575,7 @@
                     return;
                 }
                 statusEl.textContent = label + " \u00b7 " + state.data.length + " items \u00b7 updated " +
-                    clock(state.fetchedAt) + " (" + ago(state.fetchedAt) + ")" + (state.loading ? " \u00b7 refreshing..." : "");
+                    ago(state.fetchedAt) + (state.loading ? " \u00b7 refreshing..." : "");
             }
 
             // --- Data ---
@@ -464,6 +639,11 @@
             // --- Wiring ---
             refreshBtn.addEventListener("click", function () { load(current, currentTopic); });
             themeBtn.addEventListener("click", toggleTheme);
+            sortBtn.addEventListener("click", cycleSort);
+            advancedBtn.addEventListener("click", toggleAdvanced);
+            document.getElementById("reset").addEventListener("click", resetAll);
+            installBtn.addEventListener("click", install);
+            siteIconsBtn.addEventListener("click", toggleSiteIcons);
             window.addEventListener("popstate", function () {
                 selectView(fromUrl("region", isView) || DEFAULT_VIEW, fromUrl("topic", isTopic) || DEFAULT_TOPIC, false);
             });
@@ -472,6 +652,8 @@
                 if (event.target && /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName)) return;
                 if (event.key === "r") load(current, currentTopic);
                 else if (event.key === "d") toggleTheme();
+                else if (event.key === "s") cycleSort();
+                else if (event.key === "a") toggleAdvanced();
                 else if (event.key === "t" || event.key === "T") {
                     var index = TOPICS.map(function (t) { return t.id; }).indexOf(currentTopic);
                     var step = event.key === "t" ? 1 : TOPICS.length - 1;  // Shift+t goes back
@@ -483,6 +665,9 @@
             setInterval(updateStatus, 30000);  // Keep "updated Xm ago" honest
 
             renderBypass();
+            renderSort();
+            renderSiteIcons();
+            renderInstall();
             // A view in the URL wins (shared links); otherwise reopen the last one viewed
             var params = new URLSearchParams(location.search);
             var linked = params.has("region") || params.has("topic");

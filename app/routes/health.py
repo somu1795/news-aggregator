@@ -35,7 +35,7 @@ else:
     _metrics_registry = REGISTRY
 
 
-@router.get("/health", include_in_schema=False)
+@router.api_route("/health", methods=["GET", "HEAD"], include_in_schema=False)
 async def health_check(request: Request, response: Response):
     snapshot = await request.app.state.headlines_cache.get(ALL_VIEW)
     age = round(time.time() - snapshot.fetched_at) if snapshot else None

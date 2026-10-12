@@ -13,6 +13,8 @@
 - **High Concurrency Ready**: Each API worker serves an in-memory copy of the snapshot, re-synced from Redis every few seconds, and keeps serving it through Redis or upstream outages.
 - **Regional News Without a Home-Country Bias**: Tabs for Asia, Europe, the Americas, Africa and Oceania, each built from that region's own local news (Google News local editions' national sections, BBC regional feeds and local outlets such as ABC, RNZ, Politico Europe and AllAfrica). Every tab keeps the same mix: 50% news (that region's, or all regions equally on the home page), 30% science and 20% Hacker News.
 - **Topic Tabs**: Every region can be filtered to uplifting, tech, science, nature, culture or sport news. A small model (`bge-small-en-v1.5`, fine-tuned once on a GPU by `tagger/finetune.py`) runs on the host's Intel NPU in its own `tagger` container (or on the CPU without one). It's trained on labels the feeds themselves imply (a Sports section is sport) and retrains itself daily on every headline it has stored.
+- **Article Summaries**: The top 20 stories of every tab get a short summary, shown in place under the headline. A `summarizer` service extracts each article's text and has an LLM (Ollama, e.g. on a GPU machine on your network) summarize it. Optional: set `SUMMARIZER_LLM_URL` in `.env`.
+- **Reading Controls**: Sort each tab by the default mix, newest, oldest or random; an *advanced* row has **reset** (back to the defaults), **install** (installs the site as an app; it has a web app manifest and icons) and **site icons** (each website's icon before its headlines, served from the site's own domain).
 - **Configurable Sources and Weighting**: Regions, topics, their feeds and each feed's share are defined in `app/sources.json`; the page's tabs follow the file.
 - **Balanced, Stable Mix**: Sources are interleaved by weight so every part of the page has the configured mix; stale items, duplicates and over-represented publishers are dropped, and the order only changes when the news does.
 - **Resilient Fetching**: Automatically retries failed requests to RSS feeds; a failed refresh keeps the previous headlines.
@@ -78,12 +80,15 @@ The application will be available at `http://<your-host-ip>:7001` (or whichever 
 
 If you are deploying this behind a public VPS proxy (e.g., Cloudflare -> VPS Caddy -> Tailscale -> App), you must correctly configure proxy headers to ensure the real client IP is passed and rate limiting works accurately.
 
-1. **VPS Public Caddyfile**:
-   Do NOT use `header_up X-Forwarded-For {remote_host}` as this will override the true client IP with the Cloudflare edge IP. Instead, pass Cloudflare's specific header:
+1. **VPS Public Caddyfile**: the VPS must send the client IP it actually sees, and drop the client's own IP headers. Otherwise anyone can bypass the rate limit by sending a made-up `CF-Connecting-IP` or `X-Forwarded-For`:
    ```caddyfile
-   header_up X-Real-IP {http.request.header.CF-Connecting-IP}
-   header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}
+   reverse_proxy <this host>:7001 {
+       header_up X-Real-IP {remote_host}
+       header_up X-Forwarded-For {remote_host}
+       header_up -CF-Connecting-IP
+   }
    ```
+   Only if the VPS itself sits behind Cloudflare (proxied DNS) may it forward `CF-Connecting-IP` instead, and then it must accept connections from Cloudflare's IP ranges only.
 2. **Internal App Caddyfile**:
    `caddy/Caddyfile` trusts forwarded client-IP headers (`CF-Connecting-IP`, `X-Real-IP`, `X-Forwarded-For`) only from `trusted_proxies`: private ranges and the Tailscale subnet (`100.64.0.0/10`). If your proxy connects from another address, add it there. Caddy then overwrites `X-Real-IP` with the resolved client IP.
 3. **Application Layer**:
@@ -102,10 +107,12 @@ Regions, news sources and their weights are defined in `app/sources.json` (forma
 | `ADMIN_API_KEY`    | A secret key to protect administrative endpoints. **Required.**          | `changeme`   |
 | `UVICORN_WORKERS`  | Uvicorn worker processes per container; keep equal to `APP_CPUS`.       | `4`          |
 | `CADDY_HTTP_PORT`  | The external port Caddy will listen on.                                  | `7001`       |
-| `API_RATE_LIMIT`   | Rate limit per client IP for `/`, `/archive` and `/api/headlines`.       | `100/minute` |
+| `API_RATE_LIMIT`   | Rate limit per client IP for `/` and `/api/headlines`.                   | `100/minute` |
 | `APP_CPUS`         | Max CPU cores for each app container.                                    | `4`          |
 | `APP_MEM_LIMIT`    | Max memory for each app container (e.g., `512m`, `2G`).                  | `2G`         |
 | `RENDER_GID`       | Host group id owning the NPU (`getent group render`), for the tagger.    | `991`        |
+| `REDIS_PASSWORD`   | Password for Redis. **Required.** Generate with `openssl rand -hex 24`.  | none         |
+| `SUMMARIZER_LLM_URL` | Ollama server for article summaries, e.g. `http://<host>:11434`; empty disables them. | empty |
 
 ## Running Tests
 
@@ -146,8 +153,9 @@ Because requests are served from memory and never fetch upstream, a single app c
 ## API Endpoints
 
 - `GET /`: Serves the main page (minimalist retro design with region and topic tabs).
-- `GET /archive`: Serves the previous ("classic") page, kept temporarily. (`/retro` redirects to `/`.)
+- `/archive` and `/retro` (old URLs) redirect to `/`.
 - `GET /api/headlines?region=<view>&topic=<topic>`: Returns the latest snapshot for `all` (default) or a region (`asia`, `europe`, `americas`, `africa`, `oceania`), optionally for one topic (`uplifting`, `tech`, `science`, `nature`, `culture`, `sport`): `region`, `topic`, `data`, `fetched_at`, `expires_at`. 404 for an unknown region or topic; 503 with `Retry-After` only before that view's first refresh.
+- `GET /site-icon/<domain>`: A website's icon, when the refresher has cached it (404 otherwise).
 - `GET /health`: Health check. Reports `healthy`, `degraded` (Redis down but still serving), or `unhealthy`, plus the headlines' age.
 - `POST /admin/cache/clear`: Triggers an immediate refresh (requires `X-API-Key`). Current headlines stay available meanwhile.
 - `GET /metrics`: Prometheus metrics endpoint (blocked at Caddy).

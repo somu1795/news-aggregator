@@ -303,3 +303,35 @@ def test_comments_link_to_the_article_itself_is_dropped():
     assert discussion_link(article, article + "#comments") is None
     assert discussion_link(article, None) is None
     assert discussion_link("https://hn.example/a", "https://news.ycombinator.com/item?id=1") == "https://news.ycombinator.com/item?id=1"
+
+
+def test_region_topic_views_put_their_own_stories_first():
+    from services.feed_service import build_topic_views
+    catalog = Catalog(
+        regions=[
+            {"id": r, "label": r, "sources": [{"name": f"{r} news", "url": f"https://{r}.example/rss", "weight": 1.0}],
+             "topic_sources": [{"name": f"{r} tech", "url": f"https://{r}.example/tech", "label": "tech"}]}
+            for r in ("asia", "europe")
+        ],
+        extras=[],
+        topics=[{"id": "tech", "label": "Tech"}],
+        topic_extras=[{"name": "Shared tech", "url": "https://shared.example/rss", "label": "tech"}],
+    )
+    now = time.time()
+
+    def story(title, host):
+        return {"title": title, "link": f"https://{host}/{title.replace(' ', '-')}", "source": host, "published": now}
+
+    results = {
+        "asia tech": [story("Global chip launch", "techcrunch.com"), story("Singapore startup raises funds", "sg.example")],
+        "europe tech": [story("Global chip launch", "techcrunch.com"), story("UK telecom outage", "uk.example")],
+        "Shared tech": [story("Open source release", "shared.example")],
+    }
+    tags = {h["title"]: {"tech"} for items in results.values() for h in items}
+    views = build_topic_views(catalog, results, tags, now)
+
+    asia = [h["title"] for h in views["asia:tech"]]
+    # The region's own stories first, then the shared feed's, then the story both regions have
+    assert asia == ["Singapore startup raises funds", "Open source release", "Global chip launch"]
+    assert [h["title"] for h in views["europe:tech"]] == ["UK telecom outage", "Open source release", "Global chip launch"]
+    assert "Global chip launch" in [h["title"] for h in views["all:tech"]]

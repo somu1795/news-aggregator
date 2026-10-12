@@ -33,7 +33,7 @@ So request volume costs almost nothing upstream or in Redis, and users keep gett
 | Docker network                                         ▼                           |
 |                                     +-----------------------------------+          |
 |                                     |  app  (FastAPI/Uvicorn, 4 workers)|          |
-|                                     |  - serves /, /archive and         |          |
+|                                     |  - serves / and                   |          |
 |                                     |    /api/headlines?region=…        |          |
 |                                     |  - in-memory copy of every view,  |          |
 |                                     |    re-synced from Redis every 5s  |          |
@@ -97,7 +97,7 @@ So request volume costs almost nothing upstream or in Redis, and users keep gett
     - `feed_service.py`: fetching, per-view mixing, link resolution orchestration.
     - `redirect.py`: the custom Google News resolver.
     - `link_resolver.py`: custom resolver first, then the fallback.
-  - **`templates/`**: `retro.html` (main page) and `index.html` (classic page at `/archive`, to be removed).
+  - **`templates/`**: `retro.html` (the page) and the error pages.
   - **`middleware/`**: content-negotiated error pages (HTML for browsers, JSON for API clients).
 
 ### Refresher (`refresher` service)
@@ -107,6 +107,20 @@ So request volume costs almost nothing upstream or in Redis, and users keep gett
 ### Tagger (`tagger` service)
 - `tagger/tagger.py`, its own image (Ubuntu 24.04, OpenVINO and Intel's NPU user-space driver). Internal only: `POST /tag`, `GET /health`. See §6.
 - Runs on the Intel NPU (`/dev/accel`); falls back to the CPU if the NPU can't be used.
+
+### Summarizer (`summarizer` service)
+- Runs `summarizer.py` from the app image. **One replica.** Optional: without `SUMMARIZER_LLM_URL` it idles.
+- Every minute it reads the published snapshots and takes the first 20 items of every view without a summary: the main views first, then the topic views, top positions first.
+- For each, it fetches the article, extracts its text (trafilatura; at most 6,000 characters) and asks an **Ollama** server for 2–3 sentences, using only the article's facts. The model is `qwen3:8b` (thinking off), and the server is a desktop GPU (RTX 3060 Ti) on the tailnet. Ollama loads the model on demand and frees the GPU two minutes after the last request.
+- The summary is stored in Redis at `summary:<hash of link>` for 7 days. The refresher adds it to the item (`summary`) when it next publishes, so summaries appear within one refresh of being made.
+- Articles that can't be used are marked and not retried for a day. That covers HTTP errors, non-HTML pages and less than 600 characters of text (paywall teasers, videos). Measured: text came out of 50 of the 60 top stories in the main views; 7 refused the fetch (403).
+- Paywalled sites (`PAYWALLED_HOSTS` in `config.py`, the same list the page's bypass uses) are read from their latest archive.ph snapshot when the direct fetch fails. New articles often have no snapshot yet, so those are retried every 3 hours. Measured: 8 of 12 paywalled top stories could be read (the NYT via the archive); FT and Reuters had no snapshots.
+- When the LLM server is unreachable (the desktop is off), nothing is summarized and nothing is marked. It retries every minute, logging only when availability changes.
+
+### Site icons
+- After each refresh, the refresher caches the icon of every website in the published views that it doesn't have yet. It fetches them from DuckDuckGo's icon service (`ICON_SOURCE_URL`) and keeps them in Redis for 7 days; a site without one is retried after a day.
+- The app serves them at `/site-icon/<domain>` (cached by browsers for 7 days). It only reads Redis and never fetches, so visitors' browsers contact neither the websites nor the icon service.
+- Measured on the first cycle: 112 of 126 websites had an icon.
 
 ### Redis (`redis` service, Redis 8)
 - Holds one snapshot per view (`headlines:all`, `headlines:asia`, `headlines:asia:sport`, … — up to about 20 KB each), the resolved-URL cache and rate-limit counters.
@@ -170,7 +184,7 @@ Fetching:
 4. **Skip duplicates and over-represented publishers:**
    - an item is a duplicate if its link, or its title (case and punctuation ignored, Google's " - Publisher" suffix removed), was already taken; the first occurrence wins;
    - at most `MAX_PER_PUBLISHER` (**3**) items per publisher. The publisher is the publisher name for Google items and the link's domain for direct links. **A feed whose items all come from one publisher** (e.g. ABC Australia's own feed) is exempt, because its weight already bounds its share.
-5. **Redistribute unused slots.** A source that runs out drops out of the rotation, and the others fill up to `MAX_HEADLINES` (**50**) in proportion to their weights.
+5. **Redistribute unused slots.** A source that runs out drops out of the rotation, and the others fill up to `MAX_HEADLINES` (**80**) in proportion to their weights.
 
 The result is **deterministic**: the same feeds give the same order, so lists only change when the news changes. Each view logs a `Mixed headlines` line with counts per source and items dropped as stale, duplicate or over the cap.
 
@@ -205,7 +219,7 @@ After the main views are published, the refresher builds the topic views (`get_t
 
 1. **Topic feeds.** 46 feeds about one topic each: the Technology, Science, Sports and Entertainment sections of 10 Google News local editions (India and Singapore for Asia; UK; US and Canada; Nigeria, South Africa and Kenya; Australia and New Zealand), plus three Guardian environment feeds (nature) and three good-news outlets (uplifting), which belong to no region. They change slowly and are many, so they're fetched every `TOPIC_FEEDS_INTERVAL_SECONDS` (**30 min**) and reused in between. They appear only in topic views.
 2. **Tagging.** Every fetched headline (news, extras and topic feeds, about 3,500) goes to the tagger with its feed's **label**: the topic of a topic feed (or of Google News Science: `science`), `other` for the Google News national sections, or none. The tagger returns its tags (§6). A headline's tags are the tagger's plus its feed's topic, so a Sports section's items are always `sport`.
-3. **Views.** For each topic, one view per region (and "all") from the items tagged with it: the region's news and topic feeds, plus the extras and topic extras. They're mixed with `mix_headlines()` (same rules as above), except the weights: the news/extras mix doesn't apply to one topic (Hacker News has little sport). **Feeds about the topic come first**, mixed equally; items the model tagged from other sources only fill the view (up to 50) when those run short. **Uplifting is feed-only**: model tags never add to it, since even its most confident ones were about half wrong on live news. "All" draws from every region's sources.
+3. **Views.** For each topic, one view per region (and "all") from the items tagged with it: the region's news and topic feeds, plus the extras and topic extras. They're mixed with `mix_headlines()` (same rules as above), except the weights: the news/extras mix doesn't apply to one topic (Hacker News has little sport). **Feeds about the topic come first**, mixed equally: in a region's view, the region's own topic feeds, then the shared ones (extras, topic extras), which are the same in every region. Items the model tagged from other sources only fill the view (up to 80) when those run short. **Global stories stay out of region views:** a story found in two or more regions' own feeds (e.g. the same TechCrunch story in several Google News Technology editions) is shown only in "all", so region tabs don't repeat each other; what still repeats across regions is the shared feeds' items, after the region's own. **Uplifting is feed-only**: model tags never add to it, since even its most confident ones were about half wrong on live news. "All" draws from every region's sources.
 4. **Links** are resolved as in Step 3, and all 36 views are published, **including empty ones** (a region can have no uplifting news right now; the page says so).
 
 ### Step 6 — Wait
@@ -238,16 +252,17 @@ Consequence: a newly published snapshot reaches users within about 5s, and the A
   - The last region and topic are remembered when the URL doesn't name them.
   - A tab that was already loaded switches instantly and refreshes in the background if older than a minute.
   - A slow response for one view can never overwrite another view's list.
-- Each item shows the title (without Google's " - Publisher" suffix), the domain, the source and age, plus "discuss" for Hacker News posts (a feed's comments link is dropped when it's just the article itself).
+- Each item shows the title (without Google's " - Publisher" suffix), the domain, the source and age, plus "discuss" for Hacker News posts (a feed's comments link is dropped when it's just the article itself) and "summary" for items with one, which opens it under the item, labelled as a machine summary (it stays open across refreshes).
 - Other controls:
   - `r` refreshes;
-  - `d` toggles dark mode;
-  - "bypass: archive" opens known paywalled sites via `archive.ph/newest/<url>`, which goes straight to the latest snapshot.
+  - `a` (or [a]dvanced) shows a second row: **reset** (forgets every setting on this device: region, topic, sort, theme, bypass, site icons, and closes open summaries), **install** (the browser's own install prompt, when it offers one; the site has a web app manifest, so Chrome can install it), **site icons** (off by default: each website's icon before its headlines, at text size), and **bypass** (off by default; "archive" opens known paywalled sites via `archive.ph/newest/<url>`, which goes straight to the latest snapshot);
+  - `s` (or [s]ort) cycles the order: **mix** (the server's: each feed's own ranking, interleaved by weight), newest first, oldest first, or random (reshuffled each time it's chosen, kept across refreshes); remembered;
+  - `d` toggles dark mode.
 
 | Endpoint | Response |
 | --- | --- |
 | `GET /` | Main page for browsers; small JSON status for API clients. |
-| `GET /archive` | The previous ("classic") page, kept temporarily; shows the "all" view. |
+| `GET /archive`, `GET /retro` | Old URLs; redirect to `/`. |
 | `GET /retro` | Old evaluation URL; `301` redirect to `/`. |
 | `GET /api/headlines?region=<view>&topic=<topic>` | Snapshot JSON for `all` (default) or a region id, and optionally one topic: `region`, `topic` (null for a main view), `data` (each item: `title`, `link`, `source`, `published`, `last_updated`, `comments` or null), `fetched_at`, `expires_at`. **404** for an unknown region or topic (the message lists valid ones). **503 with `Retry-After: 10`** only before that view's first snapshot exists. |
 | `GET /health` | `healthy` / `degraded` / `unhealthy`, plus the "all" view's `headlines.age_seconds` and `headlines.stale` (see §8). |
@@ -297,7 +312,7 @@ bge-small was chosen over EmbeddingGemma for memory (the tagger uses ~450 MB) an
 | Aspect | Behaviour |
 | --- | --- |
 | Limit | `API_RATE_LIMIT`, default **100 requests per minute per client IP**, fixed window. |
-| Routes limited | `GET /`, `GET /archive` and `GET /api/headlines` (all regions share one counter), each route with its own counter. `/health`, `/metrics`, `/admin/*` and the `/retro` redirect are not limited. |
+| Routes limited | `GET /` and `GET /api/headlines` (all regions share one counter), each route with its own counter. `/health`, `/metrics`, `/admin/*` and the `/retro` redirect are not limited. |
 | Client identity | The `X-Real-IP` header, which Caddy always overwrites with the IP it resolved. Clients connecting from untrusted addresses can't influence it; trusted proxies (LAN, Docker, Tailscale) forward the real visitor IP. |
 | When exceeded | `429` with `{"error": "Rate limit exceeded: 100 per 1 minute"}`. |
 | Storage | Counters live in Redis, so limits are shared across all workers and containers. Checks use 0.5s timeouts and no retries. |
@@ -305,6 +320,15 @@ bge-small was chosen over EmbeddingGemma for memory (the tagger uses ~450 MB) an
 | Implementation note | Limits are applied per route with `@limiter.limit`. slowapi's middleware is not used because it can't see routes inside FastAPI's included routers and silently skips them. |
 
 A visitor makes 2 requests per page load plus 1 per region viewed, so 100/minute is far above human use. Users behind one shared IP (e.g. an office NAT) share a budget; raise `API_RATE_LIMIT` if that matters.
+
+## 7b. Security Hardening
+
+- **Fetching links from outside** (the summarizer reads any top story's link; anyone can post one to Hacker News): only public internet addresses are fetched, checked again at every redirect (`services/safe_fetch.py`). Private, loopback, link-local and Tailscale (100.64/10) addresses are refused, so a crafted link can't make the server read the LAN or the tailnet. Summaries containing a link are discarded, since an article could try to steer the model.
+- **Page:** a Content-Security-Policy with a fresh nonce per response allows only the page's own inline script and style, images and requests from its own origin, and no framing. Feed text, summaries and titles are inserted as text, never HTML; links must be http(s) and open with `noopener`.
+- **Client IP:** the rate limit keys on the IP Caddy resolves from trusted proxies only. The proxy in front (VPS or Cloudflare) must overwrite client-supplied IP headers; see the README.
+- **Containers:** every service has CPU, memory and process limits, rotated logs (10 MB × 3), `no-new-privileges`, and no Linux capabilities (Redis keeps the three its entrypoint needs to switch user). Redis requires a password (`REDIS_PASSWORD`) and is reachable only inside the Docker network.
+- **Admin endpoint:** disabled unless `ADMIN_API_KEY` is set; the key is compared in constant time.
+- **Tagger growth:** retraining uses the newest `TRAIN_MAX_ROWS` (100,000) labelled headlines, so its memory stays bounded as headlines accumulate (~14,000 a day).
 
 ## 8. Failure Behaviour
 
@@ -375,7 +399,9 @@ A visitor makes 2 requests per page load plus 1 per region viewed, so 100/minute
 | `TOPIC_REFRESH_TIMEOUT_SECONDS` | 150 | Cap on the topic phase; on timeout the topic views keep their previous snapshots. |
 | `TOPIC_FEEDS_INTERVAL_SECONDS` | 1800 | How often the topic feeds are re-fetched. |
 | `TAGGER_URL` / `TAGGER_TIMEOUT` | `http://tagger:8000` / 90 | The tagger, and the timeout of one tagging request. |
-| `MAX_HEADLINES` | 50 | Headlines per view (each region, and "all"). |
+| `SUMMARIZER_LLM_URL` / `SUMMARIZER_MODEL` | empty / `qwen3:8b` | The Ollama server (empty disables summaries) and its model. Set in `.env`. |
+| `SUMMARY_TOP_N` / `SUMMARY_TTL_SECONDS` / `SUMMARY_FAILED_TTL_SECONDS` | 20 / 7 days / 1 day | Items per view that get a summary; how long a summary, and a failed article, are kept. |
+| `MAX_HEADLINES` | 80 | Headlines per view (each region, and "all"). |
 | `MAX_HEADLINE_AGE_HOURS` | 48 | Items older than this are dropped before mixing. |
 | `MAX_PER_PUBLISHER` | 3 | Maximum items from one publisher in a view (single-publisher feeds are bounded by their weight instead). |
 | `REQUEST_TIMEOUT` | 10.0 | Per upstream HTTP request (seconds). |

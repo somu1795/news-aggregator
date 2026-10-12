@@ -107,3 +107,12 @@ def test_eval_headlines_are_never_trained_on(tagger, monkeypatch):
     monkeypatch.setattr(tagger_module, "train", lambda X, labels: trained.append(len(labels)) or tagger.classifier)
     tagger.retrain()
     assert trained == [len(SEED)]
+
+
+def test_retrain_uses_only_the_newest_labelled_headlines(tagger, monkeypatch):
+    tagger.tag([Item(title="Brand new sports story", label="sport")])
+    trained = []
+    monkeypatch.setattr(tagger_module, "TRAIN_MAX_ROWS", 3)
+    monkeypatch.setattr(tagger_module, "train", lambda X, labels: trained.append(labels) or tagger.classifier)
+    tagger.retrain()
+    assert len(trained[0]) == 3 and trained[0][0] == "sport"  # Newest first, capped

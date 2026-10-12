@@ -350,27 +350,41 @@ def build_topic_views(
 ) -> Dict[str, List[Dict]]:
     """
     Builds one view per region (and "all") per topic, from the items tagged with
-    that topic: the region's news and topic feeds, plus the extras and topic
-    extras, which belong to no region. The news/extras mix of the main views
-    doesn't apply to a single topic (Hacker News has little sport). Instead, the
-    feeds about the topic (their items are tagged by their feed, so they're
-    precise) come first, mixed equally; items the model tagged from other feeds
-    only fill the view when those run short, and never for FEED_ONLY_TOPICS.
+    that topic. The news/extras mix of the main views doesn't apply to a single
+    topic (Hacker News has little sport). Instead, items come in this order:
+
+    1. The feeds about the topic (their items are tagged by their feed, so
+       they're precise), mixed equally. In a region's view: first the stories
+       only that region's own feeds have, then the shared feeds (extras, topic
+       extras), which are the same in every region, then global stories: those
+       in two or more regions' own feeds (e.g. a TechCrunch story in several
+       Google News Technology editions). So region views start with what's
+       particular to the region, and repeat each other only further down.
+    2. Items the model tagged from other feeds, in the same order, only to
+       fill the view, and never for FEED_ONLY_TOPICS.
+
     Empty views are kept: a region can have no uplifting news right now.
     """
     shared = catalog.extras + catalog.topic_extras
-    everything = [s for region in catalog.regions for s in region.topic_sources + region.sources] + shared
+    own = {region.id: region.topic_sources + region.sources for region in catalog.regions}
+    everything = [s for sources in own.values() for s in sources] + shared
 
     def equal(sources) -> List[NewsSource]:
         return [NewsSource(name=s.name, url=s.url, weight=1.0) for s in sources]
 
-    def view_for(sources, topic: str, tagged, view: str) -> List[Dict]:
-        on_topic = mix_headlines(equal(s for s in sources if s.label == topic), tagged, now, view=view)
-        if topic in FEED_ONLY_TOPICS:
-            return on_topic
-        rest = mix_headlines(equal(s for s in sources if s.label != topic), tagged, now, view=view)
-        seen = {h["link"] for h in on_topic} | {_title_key(h) for h in on_topic}
-        return (on_topic + [h for h in rest if h["link"] not in seen and _title_key(h) not in seen])[:settings.MAX_HEADLINES]
+    def view_for(groups, topic: str, view: str) -> List[Dict]:
+        """groups: (sources, their tagged items), in order of preference."""
+        lists = [mix_headlines(equal(s for s in sources if s.label == topic), items, now, view=view) for sources, items in groups]
+        if topic not in FEED_ONLY_TOPICS:
+            lists += [mix_headlines(equal(s for s in sources if s.label != topic), items, now, view=view) for sources, items in groups]
+        seen, combined = set(), []
+        for items in lists:
+            for h in items:
+                keys = {h["link"], _title_key(h)}
+                if seen.isdisjoint(keys):
+                    seen |= keys
+                    combined.append(h)
+        return combined[:settings.MAX_HEADLINES]
 
     views = {}
     for topic in catalog.topics:
@@ -378,11 +392,17 @@ def build_topic_views(
             name: [h for h in items if topic.id in tags_by_title.get(h["title"], ())]
             for name, items in results_by_source.items()
         }
+        regions_of = Counter(
+            key for sources in own.values()
+            for key in {_title_key(h) for s in sources for h in tagged.get(s.name, [])}
+        )
+        regional = {name: [h for h in items if regions_of[_title_key(h)] < 2] for name, items in tagged.items()}
+        global_ = {name: [h for h in items if regions_of[_title_key(h)] >= 2] for name, items in tagged.items()}
         for region in catalog.regions:
             view = topic_view(region.id, topic.id)
-            views[view] = view_for(region.topic_sources + region.sources + shared, topic.id, tagged, view)
+            views[view] = view_for([(own[region.id], regional), (shared, tagged), (own[region.id], global_)], topic.id, view)
         view = topic_view(ALL_VIEW, topic.id)
-        views[view] = view_for(everything, topic.id, tagged, view)
+        views[view] = view_for([(everything, tagged)], topic.id, view)
     return views
 
 

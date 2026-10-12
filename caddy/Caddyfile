@@ -27,6 +27,20 @@
 	@metrics path /metrics
 	respond @metrics "Forbidden" 403
 
+	# Site icons and the web app manifest are static files baked into this image (caddy/static)
+	@icons path /favicon.svg /favicon.ico /apple-touch-icon.png /icon-192.png /icon-512.png
+	handle @icons {
+		root * /srv/static
+		header Cache-Control "public, max-age=604800"
+		file_server
+	}
+	handle /manifest.webmanifest {
+		root * /srv/static
+		header Content-Type application/manifest+json
+		header Cache-Control "public, max-age=86400"
+		file_server
+	}
+
 	# Reverse proxy all other requests to the 'app' service.
 	# Caddy automatically discovers and load-balances across all scaled 'app' containers.
 	reverse_proxy app:8989 {

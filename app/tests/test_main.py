@@ -87,20 +87,27 @@ def test_root_endpoint_html(client):
     topics = json.loads(response.text.split('<script id="topics-data" type="application/json">')[1].split("</script>")[0])
     assert [t["id"] for t in topics] == ["everything"] + [t.id for t in CATALOG.topics]
 
-def test_archive_serves_classic_page(client):
-    response = client.get("/archive")
-    assert response.status_code == 200
-    assert "<h1>Latest News</h1>" in response.text
-
-def test_old_retro_url_redirects_home(client):
-    response = client.get("/retro", follow_redirects=False)
+@pytest.mark.parametrize("path", ["/retro", "/archive"])
+def test_old_urls_redirect_home(client, path):
+    response = client.get(path, follow_redirects=False)
     assert response.status_code == 301
     assert response.headers["location"] == "/"
 
-@pytest.mark.parametrize("path", ["/", "/archive"])
-def test_paywall_bypass_links(client, path):
+def test_page_has_a_content_security_policy(client):
+    response = client.get("/", headers={"Accept": "text/html"})
+    csp = response.headers["content-security-policy"]
+    nonce = csp.split("script-src 'nonce-")[1].split("'")[0]
+    assert f'<script nonce="{nonce}">' in response.text and f'<style nonce="{nonce}">' in response.text
+    assert "unsafe-inline" not in csp and "frame-ancestors 'none'" in csp
+    assert client.get("/", headers={"Accept": "text/html"}).headers["content-security-policy"] != csp  # Fresh per response
+
+@pytest.mark.parametrize("path", ["/", "/api/headlines", "/health"])
+def test_head_requests(client, path):
+    assert client.head(path).status_code != 405
+
+def test_paywall_bypass_links(client):
     """archive.today links go straight to the newest snapshot; the defunct 12ft.io is gone."""
-    page = client.get(path, headers={"Accept": "text/html"}).text
+    page = client.get("/", headers={"Accept": "text/html"}).text
     assert "https://archive.ph/newest/" in page
     assert "12ft.io/" not in page
 
