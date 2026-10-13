@@ -435,7 +435,7 @@
                 { id: "30m", ms: 1800000 }, { id: "1h", ms: 3600000 }];
             var autoRefresh = AUTO_REFRESH.filter(function (p) { return p.id === read("retroAutoRefresh"); })[0] || AUTO_REFRESH[0];
             function renderAutoRefresh() {
-                autoRefreshBtn.textContent = "auto refresh: " + autoRefresh.id;
+                autoRefreshBtn.textContent = "auto refresh: " + autoRefresh.id.padEnd(3, " ");  // Same width for every period, so the row doesn't reflow
                 autoRefreshBtn.classList.toggle("on", autoRefresh.ms > 0);
             }
             function cycleAutoRefresh() {
