@@ -705,17 +705,20 @@
                     });
             }
 
-            function selectView(region, topic, pushHistory) {
+            function selectView(region, topic, byUser) {
                 if (!isView(region)) region = DEFAULT_VIEW;
                 if (!isTopic(topic)) topic = DEFAULT_TOPIC;
                 var changed = region !== current || topic !== currentTopic;
                 current = region;
                 currentTopic = topic;
-                if (pushHistory) {  // Remember the user's own choices only, not the starting region
+                if (byUser) {  // Remember the user's own choices only, not the starting region
                     write("retroRegion", region);
                     write("retroTopic", topic);
                 }
-                if (pushHistory && changed) history.pushState({ region: region, topic: topic }, "", urlFor(region, topic));
+                // The address follows the tab (refresh and shared links open it) without adding history
+                // entries: Back leaves the site, as it should in the installed app, instead of stepping
+                // back through every tab visited
+                if (byUser && changed) history.replaceState({ region: region, topic: topic }, "", urlFor(region, topic));
                 document.title = region === DEFAULT_VIEW && topic === DEFAULT_TOPIC ? "news.txt" : "news.txt / " + viewName(region, topic);
                 renderTabs();
                 render();

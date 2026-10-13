@@ -269,7 +269,7 @@ Consequence: a newly published snapshot reaches users within about 5s, and the A
 ### The main page (`/`)
 - Minimalist retro design: monospace; light "paper" and dark amber themes, following the OS setting until toggled.
 - **Region tabs**: `all · asia · europe · americas · africa · oceania`, and below them **topic tabs**: `everything · uplifting · tech · science · nature · culture · sport`. Any region combines with any topic; "everything" is the region's main view.
-  - Tabs are real links (`/?region=asia&topic=sport`): shareable, open in a new tab, back/forward work.
+  - Tabs are real links (`/?region=asia&topic=sport`): shareable and open in a new tab. Switching tabs updates the address in place (`history.replaceState`), so refresh and shared links open the current tab, but it adds no history entries: Back leaves the site (in the installed app too) instead of stepping back through every tab visited.
   - Clicking switches in place without reloading.
   - Number keys `1`–`6` switch regions (keeping the topic); `t` / `Shift+t` cycle topics.
   - The last region and topic are remembered when the URL doesn't name them.
