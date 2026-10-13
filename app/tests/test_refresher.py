@@ -335,3 +335,26 @@ def test_region_topic_views_put_their_own_stories_first():
     assert asia == ["Singapore startup raises funds", "Open source release", "Global chip launch"]
     assert [h["title"] for h in views["europe:tech"]] == ["UK telecom outage", "Open source release", "Global chip launch"]
     assert "Global chip launch" in [h["title"] for h in views["all:tech"]]
+
+
+def test_a_topic_can_keep_older_stories():
+    from services.feed_service import build_topic_views
+    catalog = Catalog(
+        regions=[{"id": "asia", "label": "Asia", "sources": [{"name": "news", "url": "https://n.example/rss", "weight": 1.0}]}],
+        extras=[],
+        topics=[{"id": "uplifting", "label": "Uplifting", "max_age_hours": 168}, {"id": "tech", "label": "Tech"}],
+        topic_extras=[{"name": "Good news", "url": "https://g.example/rss", "label": "uplifting"},
+                      {"name": "Tech news", "url": "https://t.example/rss", "label": "tech"}],
+    )
+    now = time.time()
+
+    def story(title, days_old):
+        return {"title": title, "link": f"https://x.example/{title}", "source": "X", "published": now - days_old * 86400}
+
+    results = {"Good news": [story("good-today", 0), story("good-5-days", 5), story("good-9-days", 9)],
+               "Tech news": [story("tech-today", 0), story("tech-5-days", 5)]}
+    tags = {"good-today": {"uplifting"}, "good-5-days": {"uplifting"}, "good-9-days": {"uplifting"},
+            "tech-today": {"tech"}, "tech-5-days": {"tech"}}
+    views = build_topic_views(catalog, results, tags, now)
+    assert [h["title"] for h in views["asia:uplifting"]] == ["good-today", "good-5-days"]  # 7 days
+    assert [h["title"] for h in views["asia:tech"]] == ["tech-today"]  # The default 48 hours

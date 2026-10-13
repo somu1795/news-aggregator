@@ -34,6 +34,9 @@ class TopicSource(BaseModel):
 class Topic(BaseModel):
     id: str = Field(pattern=r"^[a-z]+$")  # Must be one of the tagger's topics (tagger/tagger.py TOPICS)
     label: str
+    # Its views keep stories this long instead of MAX_HEADLINE_AGE_HOURS (e.g. good news
+    # doesn't go stale, and its few feeds publish a handful of stories a day)
+    max_age_hours: Optional[int] = None
 
 
 class Region(BaseModel):
@@ -120,7 +123,7 @@ class Settings(BaseSettings):
     LOCAL_CACHE_SECONDS: float = 5.0  # How long each API worker reuses its in-memory snapshot
 
     # --- Refresher Settings ---
-    # 37 feeds per cycle (18 from Google News): every 5 minutes keeps upstream load polite
+    # 84 feeds per cycle (18 from Google News): every 5 minutes keeps upstream load polite
     REFRESH_INTERVAL_SECONDS: int = 300
     REFRESH_TIMEOUT_SECONDS: int = 270  # Hard cap on a single refresh cycle (both phases)
     TOPIC_REFRESH_TIMEOUT_SECONDS: int = 150  # Cap on the topic views phase (tagging, link resolution)

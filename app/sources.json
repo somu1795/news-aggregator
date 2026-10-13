@@ -2,7 +2,8 @@
   "topics": [
     {
       "id": "uplifting",
-      "label": "Uplifting"
+      "label": "Uplifting",
+      "max_age_hours": 168
     },
     {
       "id": "tech",
@@ -33,53 +34,128 @@
         {
           "name": "Google News India",
           "url": "https://news.google.com/rss/topics/CAAqJQgKIh9DQkFTRVFvSUwyMHZNRE55YXpBU0JXVnVMVWxPS0FBUAE?hl=en-IN&gl=IN&ceid=IN:en",
-          "weight": 0.2,
+          "weight": 0.12,
           "label": "other"
         },
         {
           "name": "Google News Singapore",
           "url": "https://news.google.com/rss/topics/CAAqJQgKIh9DQkFTRVFvSUwyMHZNRFowTW5RU0JXVnVMVk5IS0FBUAE?hl=en-SG&gl=SG&ceid=SG:en",
-          "weight": 0.12,
+          "weight": 0.06,
           "label": "other"
         },
         {
           "name": "Google News Philippines",
           "url": "https://news.google.com/rss/topics/CAAqJQgKIh9DQkFTRVFvSUwyMHZNRFYyT0dNU0JXVnVMVkJJS0FBUAE?hl=en-PH&gl=PH&ceid=PH:en",
-          "weight": 0.12,
+          "weight": 0.06,
           "label": "other"
         },
         {
           "name": "Google News Pakistan",
           "url": "https://news.google.com/rss/topics/CAAqJQgKIh9DQkFTRVFvSUwyMHZNRFZ6WWpFU0JXVnVMVkJMS0FBUAE?hl=en-PK&gl=PK&ceid=PK:en",
-          "weight": 0.1,
+          "weight": 0.05,
           "label": "other"
         },
         {
           "name": "Google News Malaysia",
           "url": "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSkwyMHZNRGx3Yld0MkVnVmxiaTFOV1NnQVAB?hl=en-MY&gl=MY&ceid=MY:en",
-          "weight": 0.08,
+          "weight": 0.04,
           "label": "other"
         },
         {
           "name": "Google News Israel",
           "url": "https://news.google.com/rss/topics/CAAqJQgKIh9DQkFTRVFvSUwyMHZNRE56Y0hvU0JXVnVMVWxNS0FBUAE?hl=en-IL&gl=IL&ceid=IL:en",
-          "weight": 0.08,
+          "weight": 0.04,
           "label": "other"
         },
         {
           "name": "BBC Asia",
           "url": "https://feeds.bbci.co.uk/news/world/asia/rss.xml",
-          "weight": 0.1
+          "weight": 0.06
         },
         {
           "name": "BBC Middle East",
           "url": "https://feeds.bbci.co.uk/news/world/middle_east/rss.xml",
-          "weight": 0.1
+          "weight": 0.05
         },
         {
           "name": "Al Jazeera",
           "url": "https://www.aljazeera.com/xml/rss/all.xml",
-          "weight": 0.1
+          "weight": 0.06
+        },
+        {
+          "name": "Kyodo News",
+          "url": "https://english.kyodonews.net/list/feed/rss4kyodonews-fzone",
+          "weight": 0.05
+        },
+        {
+          "name": "Japan Times",
+          "url": "https://www.japantimes.co.jp/feed/",
+          "weight": 0.04
+        },
+        {
+          "name": "Yonhap",
+          "url": "https://en.yna.co.kr/RSS/news.xml",
+          "weight": 0.05
+        },
+        {
+          "name": "Korea Times",
+          "url": "https://www.koreatimes.co.kr/www/rss/nation.xml",
+          "weight": 0.03
+        },
+        {
+          "name": "SCMP Asia",
+          "url": "https://www.scmp.com/rss/3/feed",
+          "weight": 0.05
+        },
+        {
+          "name": "Hong Kong Free Press",
+          "url": "https://hongkongfp.com/feed/",
+          "weight": 0.02
+        },
+        {
+          "name": "Focus Taiwan",
+          "url": "https://feeds.feedburner.com/rsscna/engnews/",
+          "weight": 0.03
+        },
+        {
+          "name": "Antara",
+          "url": "https://en.antaranews.com/rss/news.xml",
+          "weight": 0.03
+        },
+        {
+          "name": "VnExpress International",
+          "url": "https://e.vnexpress.net/rss/news.rss",
+          "weight": 0.03
+        },
+        {
+          "name": "Bangkok Post",
+          "url": "https://www.bangkokpost.com/rss/data/topstories.xml",
+          "weight": 0.02
+        },
+        {
+          "name": "Rappler",
+          "url": "https://www.rappler.com/feed/",
+          "weight": 0.02
+        },
+        {
+          "name": "The National",
+          "url": "https://www.thenationalnews.com/arc/outboundfeeds/rss/?outputType=xml",
+          "weight": 0.03
+        },
+        {
+          "name": "Arab News",
+          "url": "https://www.arabnews.com/rss.xml",
+          "weight": 0.02
+        },
+        {
+          "name": "Middle East Eye",
+          "url": "https://www.middleeasteye.net/rss",
+          "weight": 0.02
+        },
+        {
+          "name": "Times of Central Asia",
+          "url": "https://timesca.com/feed/",
+          "weight": 0.02
         }
       ],
       "topic_sources": [
@@ -122,6 +198,11 @@
           "name": "Google News Singapore Entertainment",
           "url": "https://news.google.com/rss/headlines/section/topic/ENTERTAINMENT?hl=en-SG&gl=SG&ceid=SG:en",
           "label": "culture"
+        },
+        {
+          "name": "The Better India",
+          "url": "https://thebetterindia.com/feed/",
+          "label": "uplifting"
         }
       ]
     },
@@ -132,39 +213,109 @@
         {
           "name": "Google News UK",
           "url": "https://news.google.com/rss/topics/CAAqJQgKIh9DQkFTRVFvSUwyMHZNRGR6YzJNU0JXVnVMVWRDS0FBUAE?hl=en-GB&gl=GB&ceid=GB:en",
-          "weight": 0.25,
+          "weight": 0.19,
           "label": "other"
         },
         {
           "name": "Google News Ireland",
           "url": "https://news.google.com/rss/topics/CAAqJQgKIh9DQkFTRVFvSUwyMHZNRE55ZERrU0JXVnVMVWxGS0FBUAE?hl=en-IE&gl=IE&ceid=IE:en",
-          "weight": 0.15,
+          "weight": 0.07,
           "label": "other"
         },
         {
           "name": "Politico Europe",
           "url": "https://www.politico.eu/feed/",
-          "weight": 0.2
+          "weight": 0.12
         },
         {
           "name": "BBC Europe",
           "url": "https://feeds.bbci.co.uk/news/world/europe/rss.xml",
-          "weight": 0.15
+          "weight": 0.1
+        },
+        {
+          "name": "France 24 Europe",
+          "url": "https://www.france24.com/en/europe/rss",
+          "weight": 0.06
         },
         {
           "name": "Kyiv Independent",
           "url": "https://kyivindependent.com/news-archive/rss/",
-          "weight": 0.1
+          "weight": 0.06
         },
         {
           "name": "The Local France",
           "url": "https://feeds.thelocal.com/rss/fr",
-          "weight": 0.075
+          "weight": 0.03
         },
         {
           "name": "The Local Germany",
           "url": "https://feeds.thelocal.com/rss/de",
-          "weight": 0.075
+          "weight": 0.03
+        },
+        {
+          "name": "The Local Sweden",
+          "url": "https://feeds.thelocal.com/rss/se",
+          "weight": 0.02
+        },
+        {
+          "name": "The Local Spain",
+          "url": "https://feeds.thelocal.com/rss/es",
+          "weight": 0.02
+        },
+        {
+          "name": "The Local Italy",
+          "url": "https://feeds.thelocal.com/rss/it",
+          "weight": 0.02
+        },
+        {
+          "name": "The Local Switzerland",
+          "url": "https://feeds.thelocal.com/rss/ch",
+          "weight": 0.02
+        },
+        {
+          "name": "ANSA English",
+          "url": "https://www.ansa.it/english/news/english_nr_rss.xml",
+          "weight": 0.05
+        },
+        {
+          "name": "Portugal Resident",
+          "url": "https://www.portugalresident.com/feed/",
+          "weight": 0.02
+        },
+        {
+          "name": "Notes from Poland",
+          "url": "https://notesfrompoland.com/feed/",
+          "weight": 0.04
+        },
+        {
+          "name": "Balkan Insight",
+          "url": "https://balkaninsight.com/feed/",
+          "weight": 0.04
+        },
+        {
+          "name": "Romania Insider",
+          "url": "https://www.romania-insider.com/feed",
+          "weight": 0.02
+        },
+        {
+          "name": "Yle News",
+          "url": "https://yle.fi/rss/t/18-34837/en",
+          "weight": 0.03
+        },
+        {
+          "name": "ERR News",
+          "url": "https://news.err.ee/rss",
+          "weight": 0.02
+        },
+        {
+          "name": "LSM Latvia",
+          "url": "https://eng.lsm.lv/rss/",
+          "weight": 0.02
+        },
+        {
+          "name": "LRT Lithuania",
+          "url": "https://www.lrt.lt/en/news-in-english?rss",
+          "weight": 0.02
         }
       ],
       "topic_sources": [
@@ -197,39 +348,69 @@
         {
           "name": "Google News US",
           "url": "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSkwyMHZNRGxqTjNjd0VnVmxiaTFWVXlnQVAB?hl=en-US&gl=US&ceid=US:en",
-          "weight": 0.25,
+          "weight": 0.22,
           "label": "other"
         },
         {
           "name": "Google News Canada",
           "url": "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSkwyMHZNR1F3TmpCbkVnVmxiaTFEUVNnQVAB?hl=en-CA&gl=CA&ceid=CA:en",
-          "weight": 0.2,
+          "weight": 0.14,
           "label": "other"
         },
         {
           "name": "BBC Latin America",
           "url": "https://feeds.bbci.co.uk/news/world/latin_america/rss.xml",
-          "weight": 0.15
+          "weight": 0.12
         },
         {
           "name": "BBC US & Canada",
           "url": "https://feeds.bbci.co.uk/news/world/us_and_canada/rss.xml",
-          "weight": 0.1
+          "weight": 0.06
         },
         {
           "name": "Latin Times",
           "url": "https://www.latintimes.com/rss",
-          "weight": 0.1
+          "weight": 0.06
         },
         {
           "name": "Mexico News Daily",
           "url": "https://mexiconewsdaily.com/feed/",
-          "weight": 0.1
+          "weight": 0.07
         },
         {
           "name": "MercoPress",
           "url": "https://en.mercopress.com/rss/",
-          "weight": 0.1
+          "weight": 0.06
+        },
+        {
+          "name": "Buenos Aires Times",
+          "url": "https://www.batimes.com.ar/feed",
+          "weight": 0.04
+        },
+        {
+          "name": "Buenos Aires Herald",
+          "url": "https://buenosairesherald.com/feed",
+          "weight": 0.03
+        },
+        {
+          "name": "Colombia One",
+          "url": "https://colombiaone.com/feed/",
+          "weight": 0.06
+        },
+        {
+          "name": "Jamaica Gleaner",
+          "url": "https://jamaica-gleaner.com/feed/rss.xml",
+          "weight": 0.06
+        },
+        {
+          "name": "Jamaica Observer",
+          "url": "https://www.jamaicaobserver.com/feed/",
+          "weight": 0.05
+        },
+        {
+          "name": "Agência Brasil",
+          "url": "https://agenciabrasil.ebc.com.br/en/rss/ultimasnoticias/feed.xml",
+          "weight": 0.03
         }
       ],
       "topic_sources": [
@@ -282,42 +463,77 @@
         {
           "name": "Google News South Africa",
           "url": "https://news.google.com/rss/topics/CAAqJQgKIh9DQkFTRVFvSUwyMHZNR2g2YkhvU0JXVnVMVnBCS0FBUAE?hl=en-ZA&gl=ZA&ceid=ZA:en",
-          "weight": 0.2,
+          "weight": 0.12,
           "label": "other"
         },
         {
           "name": "Google News Nigeria",
           "url": "https://news.google.com/rss/topics/CAAqJQgKIh9DQkFTRVFvSUwyMHZNRFZqWjNZU0JXVnVMVTVIS0FBUAE?hl=en-NG&gl=NG&ceid=NG:en",
-          "weight": 0.2,
+          "weight": 0.12,
           "label": "other"
         },
         {
           "name": "Google News Kenya",
           "url": "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSkwyMHZNREU1Y21jMUVnVmxiaTFMUlNnQVAB?hl=en-KE&gl=KE&ceid=KE:en",
-          "weight": 0.15,
+          "weight": 0.1,
           "label": "other"
         },
         {
           "name": "Google News Ghana",
           "url": "https://news.google.com/rss/topics/CAAqJQgKIh9DQkFTRVFvSUwyMHZNRE0xWkdzU0JXVnVMVWRJS0FBUAE?hl=en-GH&gl=GH&ceid=GH:en",
-          "weight": 0.1,
+          "weight": 0.06,
           "label": "other"
         },
         {
           "name": "Google News Uganda",
           "url": "https://news.google.com/rss/topics/CAAqJQgKIh9DQkFTRVFvSUwyMHZNRGQwY0RJU0JXVnVMVlZIS0FBUAE?hl=en-UG&gl=UG&ceid=UG:en",
-          "weight": 0.1,
+          "weight": 0.05,
           "label": "other"
         },
         {
           "name": "AllAfrica",
           "url": "https://allafrica.com/tools/headlines/rdf/latest/headlines.rdf",
-          "weight": 0.15
+          "weight": 0.13
         },
         {
           "name": "BBC Africa",
           "url": "https://feeds.bbci.co.uk/news/world/africa/rss.xml",
-          "weight": 0.1
+          "weight": 0.09
+        },
+        {
+          "name": "Egypt Independent",
+          "url": "https://www.egyptindependent.com/feed/",
+          "weight": 0.06
+        },
+        {
+          "name": "North Africa Post",
+          "url": "https://northafricapost.com/feed",
+          "weight": 0.06
+        },
+        {
+          "name": "Daily Maverick",
+          "url": "https://www.dailymaverick.co.za/dmrss/",
+          "weight": 0.07
+        },
+        {
+          "name": "Premium Times",
+          "url": "https://www.premiumtimesng.com/feed",
+          "weight": 0.04
+        },
+        {
+          "name": "The Africa Report",
+          "url": "https://www.theafricareport.com/feed/",
+          "weight": 0.04
+        },
+        {
+          "name": "Business Daily Africa",
+          "url": "https://www.businessdailyafrica.com/bd/rss.xml",
+          "weight": 0.03
+        },
+        {
+          "name": "Radio Dabanga",
+          "url": "https://www.dabangasudan.org/en/feed",
+          "weight": 0.03
         }
       ],
       "topic_sources": [
@@ -390,29 +606,54 @@
         {
           "name": "Google News Australia",
           "url": "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSkwyMHZNR05vWjJoNUVnVmxiaTFCVlNnQVAB?hl=en-AU&gl=AU&ceid=AU:en",
-          "weight": 0.3,
+          "weight": 0.24,
           "label": "other"
         },
         {
           "name": "Google News New Zealand",
           "url": "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSkwyMHZNR04wZDE5aUVnVmxiaTFPV2lnQVAB?hl=en-NZ&gl=NZ&ceid=NZ:en",
-          "weight": 0.25,
+          "weight": 0.18,
           "label": "other"
         },
         {
           "name": "ABC Australia",
           "url": "https://www.abc.net.au/news/feed/51120/rss.xml",
-          "weight": 0.2
+          "weight": 0.15
         },
         {
           "name": "RNZ",
           "url": "https://www.rnz.co.nz/rss/national.xml",
-          "weight": 0.15
+          "weight": 0.12
         },
         {
           "name": "BBC Australia",
           "url": "https://feeds.bbci.co.uk/news/world/australia/rss.xml",
-          "weight": 0.1
+          "weight": 0.06
+        },
+        {
+          "name": "Guardian Australia",
+          "url": "https://www.theguardian.com/australia-news/rss",
+          "weight": 0.08
+        },
+        {
+          "name": "RNZ Pacific",
+          "url": "https://www.rnz.co.nz/rss/pacific.xml",
+          "weight": 0.07
+        },
+        {
+          "name": "Islands Business",
+          "url": "https://islandsbusiness.com/feed/",
+          "weight": 0.04
+        },
+        {
+          "name": "PNG Post-Courier",
+          "url": "https://www.postcourier.com.pg/feed/",
+          "weight": 0.04
+        },
+        {
+          "name": "Asia Pacific Report",
+          "url": "https://asiapacificreport.nz/feed/",
+          "weight": 0.02
         }
       ],
       "topic_sources": [
@@ -502,6 +743,46 @@
       "name": "Reasons to be Cheerful",
       "url": "https://reasonstobecheerful.world/feed/",
       "label": "uplifting"
+    },
+    {
+      "name": "Optimist Daily",
+      "url": "https://www.optimistdaily.com/feed/",
+      "label": "uplifting"
+    },
+    {
+      "name": "Upworthy",
+      "url": "https://www.upworthy.com/feeds/feed.rss",
+      "label": "uplifting"
+    },
+    {
+      "name": "Good Good Good",
+      "url": "https://www.goodgoodgood.co/articles/rss.xml",
+      "label": "uplifting"
+    },
+    {
+      "name": "DailyGood",
+      "url": "https://www.dailygood.org/feed/",
+      "label": "uplifting"
+    },
+    {
+      "name": "Sunny Skyz",
+      "url": "https://www.sunnyskyz.com/rss_tebow.php",
+      "label": "uplifting"
+    },
+    {
+      "name": "Not All News Is Bad",
+      "url": "https://notallnewsisbad.com/feed/",
+      "label": "uplifting"
+    },
+    {
+      "name": "Squirrel News",
+      "url": "https://squirrel-news.net/feed/",
+      "label": "uplifting"
+    },
+    {
+      "name": "Mongabay",
+      "url": "https://news.mongabay.com/feed/",
+      "label": "nature"
     }
   ]
 }

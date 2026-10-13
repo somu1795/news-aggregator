@@ -10,7 +10,7 @@ import calendar
 import re
 import time
 from collections import Counter
-from typing import Dict, List, Set
+from typing import Dict, List, Optional, Set
 from urllib.parse import urlparse
 
 import feedparser
@@ -20,7 +20,7 @@ import lxml.html
 import redis.asyncio as aioredis
 import structlog
 
-from config import ALL_VIEW, CATALOG, OTHER_LABEL, Catalog, NewsSource, TopicSource, settings, topic_view
+from config import ALL_VIEW, CATALOG, OTHER_LABEL, Catalog, NewsSource, Topic, TopicSource, settings, topic_view
 from metrics import FEED_FETCH_FAILURES
 from services.link_resolver import resolve_link
 
@@ -145,13 +145,13 @@ def _title_key(headline: Dict) -> str:
 
 def mix_headlines(
     sources: List[NewsSource], results_by_source: Dict[str, List[Dict]], now: float, view: str = "",
-    cap_publishers: bool = True,
+    cap_publishers: bool = True, max_age_hours: Optional[int] = None,
 ) -> List[Dict]:
     """
     Builds the final list by interleaving sources according to their weights.
 
     - Each source keeps its own feed order (Google's ranking, HN's front-page rank).
-    - Items older than MAX_HEADLINE_AGE_HOURS are dropped.
+    - Items older than max_age_hours (default MAX_HEADLINE_AGE_HOURS) are dropped.
     - Duplicates (same link or same normalized title) are dropped, first one wins.
     - At most MAX_PER_PUBLISHER items per publisher. A feed whose items all come
       from one publisher (e.g. ABC Australia's own feed) is exempt: its share is
@@ -162,7 +162,7 @@ def mix_headlines(
       and the order is deterministic between refreshes.
     - A source that runs out drops out of the rotation and the others fill its slots.
     """
-    min_published = now - settings.MAX_HEADLINE_AGE_HOURS * 3600
+    min_published = now - (max_age_hours or settings.MAX_HEADLINE_AGE_HOURS) * 3600
     fresh = {
         source.name: [h for h in results_by_source.get(source.name, []) if h["published"] >= min_published]
         for source in sources
@@ -390,11 +390,13 @@ def build_topic_views(
     def equal(sources) -> List[NewsSource]:
         return [NewsSource(name=s.name, url=s.url, weight=1.0) for s in sources]
 
-    def view_for(groups, topic: str, view: str) -> List[Dict]:
+    def view_for(groups, topic: Topic, view: str) -> List[Dict]:
         """groups: (sources, their tagged items), in order of preference."""
-        lists = [mix_headlines(equal(s for s in sources if s.label == topic), items, now, view=view) for sources, items in groups]
-        if topic not in FEED_ONLY_TOPICS:
-            lists += [mix_headlines(equal(s for s in sources if s.label != topic), items, now, view=view) for sources, items in groups]
+        def mixed(sources, items):
+            return mix_headlines(equal(sources), items, now, view=view, max_age_hours=topic.max_age_hours)
+        lists = [mixed([s for s in sources if s.label == topic.id], items) for sources, items in groups]
+        if topic.id not in FEED_ONLY_TOPICS:
+            lists += [mixed([s for s in sources if s.label != topic.id], items) for sources, items in groups]
         seen, combined = set(), []
         for items in lists:
             for h in items:
@@ -418,9 +420,9 @@ def build_topic_views(
         global_ = {name: [h for h in items if regions_of[_title_key(h)] >= 2] for name, items in tagged.items()}
         for region in catalog.regions:
             view = topic_view(region.id, topic.id)
-            views[view] = view_for([(own[region.id], regional), (shared, tagged), (own[region.id], global_)], topic.id, view)
+            views[view] = view_for([(own[region.id], regional), (shared, tagged), (own[region.id], global_)], topic, view)
         view = topic_view(ALL_VIEW, topic.id)
-        views[view] = view_for([(everything, tagged)], topic.id, view)
+        views[view] = view_for([(everything, tagged)], topic, view)
     return views
 
 
