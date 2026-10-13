@@ -3,26 +3,18 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link href="https://fonts.googleapis.com/css2?family=Roboto+Slab:wght@400;700&display=swap" rel="stylesheet">
     <title>Error</title>
-    <style>
-        body {
-            font-family: 'Roboto Slab', serif;
-            background-color: #f4f4f4;
-            color: #333;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            margin: 0;
-            text-align: center;
-        }
-        h1 { font-size: 2.5em; color: #d32f2f; }
-        p { font-size: 1.2em; color: #666; }
-    </style>
+    <link rel="stylesheet" href="/static/retro.css">
 </head>
 <body>
-    <h1>Something went wrong.</h1>
-    <p>We're sorry, but we encountered an error. Please try again later.</p>
+    <header>
+        <h1>NEWS.TXT<span class="cursor blink">_</span></h1>
+        <hr class="rule">
+    </header>
+    <main>
+        <p class="notice error">Something went wrong.</p>
+        <p>We're sorry, but we encountered an error. Please try again later.</p>
+        <p><a href="/">back to the headlines</a></p>
+    </main>
 </body>
 </html>

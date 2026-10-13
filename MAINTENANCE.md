@@ -47,7 +47,6 @@ What in this project is written by hand and ages, how often to look at it, and a
 | Google link resolution | `app/services/redirect.py`, `app/services/link_resolver.py` | `redirect_fallbacks_total` rises, or headlines link to `news.google.com` |
 | archive.ph | `app/summarizer.py` `ARCHIVE`, the page's bypass option | Archive reads fail, the bypass links stop opening |
 | Site icon service (DuckDuckGo) | `app/config.py` `ICON_SOURCE_URL` | Icons stop appearing |
-| Google Fonts on error pages | `app/templates/404.html`, `500.html`, `error.html` | Error pages lose their font |
 | Summary prompt | `app/summarizer.py` `PROMPT` | Summaries get worse, or the model changes |
 | Tagger thresholds (topic 0.9, uplifting 0.8, grouping 0.92) | `tagger/tagger.py` | Topic tabs or grouping visibly worse |
 | Security policy, trusted proxies | `app/routes/frontend.py`, `caddy/Caddyfile` | When the setup in front of Caddy changes |

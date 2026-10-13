@@ -339,6 +339,14 @@ def test_404_error_as_html(client):
     assert response.status_code == 404
     assert "text/html" in response.headers['content-type']
     assert "Sorry, the page you are looking for could not be found." in response.text
+    assert_site_styled_error_page(response)
+
+def assert_site_styled_error_page(response):
+    """The site's own stylesheet and nothing else: no fonts or anything from other sites, under a policy."""
+    assert '<link rel="stylesheet" href="/static/retro.css">' in response.text
+    assert "https://" not in response.text and "<style" not in response.text and "<script" not in response.text
+    assert response.headers["content-security-policy"].startswith("default-src 'none'; style-src 'self';")
+    assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
 
 def test_404_error_as_json(client):
     """Tests that a 404 error returns a JSON response for API clients."""
@@ -356,6 +364,7 @@ def test_500_error_in_endpoint_as_html(client):
     assert "text/html" in response.headers['content-type']
     # Check for text from the templates/500.html template
     assert "An unexpected server error occurred." in response.text
+    assert_site_styled_error_page(response)
 
 def test_500_error_in_template_rendering_as_html(client):
     """Tests that a template rendering failure returns the static fallback error page."""
@@ -368,7 +377,8 @@ def test_500_error_in_template_rendering_as_html(client):
     assert response.status_code == 500
     assert "text/html" in response.headers['content-type']
     # Check for text from the static templates/error.html template
-    assert "<h1>Something went wrong.</h1>" in response.text
+    assert "Something went wrong." in response.text
+    assert_site_styled_error_page(response)
 
 # --- Test Docs Endpoint ---
 

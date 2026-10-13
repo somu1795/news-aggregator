@@ -25,6 +25,9 @@ logger = structlog.get_logger(__name__)
 
 templates = Jinja2Templates(directory="templates")
 
+# Error pages use the page's stylesheet (static/retro.css) and nothing else
+_CSP = "default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+
 
 class SmartExceptionMiddleware:
     """Pure ASGI middleware for content-negotiated error handling."""
@@ -82,16 +85,18 @@ class SmartExceptionMiddleware:
             try:
                 # Try to render the rich error template first
                 template_name = "404.html" if status_code == 404 else "500.html"
-                return templates.TemplateResponse(
+                response = templates.TemplateResponse(
                     request,
                     template_name,
                     {"detail": detail},
                     status_code=status_code,
                 )
+                response.headers["Content-Security-Policy"] = _CSP
+                return response
             except Exception as template_exc:
-                # If templating fails, serve the static, self-contained error page
+                # If templating fails, serve the static error page
                 logger.error("Template rendering failed", template=template_name, error=str(template_exc))
-                return FileResponse("templates/error.html", status_code=500)
+                return FileResponse("templates/error.html", status_code=500, headers={"Content-Security-Policy": _CSP})
 
         # Fallback for non-HTML clients (APIs)
         return JSONResponse(
