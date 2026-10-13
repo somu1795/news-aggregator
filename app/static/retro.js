@@ -295,9 +295,9 @@
         return (text || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
     }
     function allViews() {
-        var views = [];
-        VIEWS.forEach(function (v) { TOPICS.forEach(function (t) { views.push([v.id, t.id]); }); });
-        return views;
+        var pairs = [];
+        VIEWS.forEach(function (v) { TOPICS.forEach(function (t) { pairs.push([v.id, t.id]); }); });
+        return pairs;
     }
     function loadSearchIndex() {
         if (search.loading || (search.index && Date.now() - search.loadedAt < SEARCH_STALE_MS)) return;
@@ -332,9 +332,9 @@
             updateStatus();
         });
     }
-    function whereLabel(views) {
+    function whereLabel(inViews) {
         var regions = [], topics = [];
-        views.forEach(function (view) {
+        inViews.forEach(function (view) {
             var region = labelOf(view[0]).toLowerCase(), topic = topicLabel(view[1]).toLowerCase();
             if (view[0] !== DEFAULT_VIEW && regions.indexOf(region) < 0) regions.push(region);
             if (view[1] !== DEFAULT_TOPIC && topics.indexOf(topic) < 0) topics.push(topic);
@@ -504,174 +504,184 @@
     // Open lists of other outlets' headlines, by link (as for summaries)
     var openRelated = Object.create(null);
 
-    function setRelatedOpen(related, toggle, link, open) {
+    function setRelatedOpen(related, toggle, itemLink, open) {
         related.hidden = !open;
         toggle.textContent = open ? "hide sources" : "+" + related.children.length + " sources";
         toggle.setAttribute("aria-expanded", String(open));
-        if (open) openRelated[link] = true; else delete openRelated[link];
+        if (open) openRelated[itemLink] = true; else delete openRelated[itemLink];
     }
 
-    function setSummaryOpen(summary, toggle, link, open) {
+    function setSummaryOpen(summary, toggle, itemLink, open) {
         summary.hidden = !open;
         toggle.textContent = open ? "hide summary" : "summary";
         toggle.setAttribute("aria-expanded", String(open));
-        if (open) openSummaries[link] = true; else delete openSummaries[link];
+        if (open) openSummaries[itemLink] = true; else delete openSummaries[itemLink];
     }
 
     function render() {
-        var state = stateOf(current, currentTopic);
         list.textContent = "";
         notice.hidden = true;
-        var items;
-        if (searching()) {
-            if (!search.index) return;  // Still loading; the status line says so
-            items = searchResults();
-            if (!items.length) {
-                showNotice("nothing matches \u201c" + search.query.trim() + "\u201d in any tab.", false);
-                return;
-            }
-        } else {
-            if (state.data === null) {
-                if (state.error) showNotice("could not load " + viewName(current, currentTopic) + ": " + state.error, true);
-                return;
-            }
-            if (!state.data.length) {
-                showNotice("no headlines for " + viewName(current, currentTopic) + " right now.", false);
-                return;
-            }
-            items = state.data;
-        }
+        var items = itemsToShow();
+        if (!items) return;
         var service = BYPASS_SERVICES.filter(function (s) { return s.id === bypass; })[0];
         var words = highlightWords();
         sorted(items).forEach(function (item, i) {
-            var href = safeUrl(item.link);
-            if (!href) return;
-            var host = hostOf(href);
-            var bypassed = !!(service && service.prefix && isPaywalled(host));
-            if (bypassed) href = service.prefix + href;
-
-            var li = document.createElement("li");
-            var num = document.createElement("span");
-            num.className = "num";
-            num.textContent = (i + 1) + ".";
-
-            var body = document.createElement("div");
-            if (siteIcons && host) {
-                var icon = document.createElement("img");
-                icon.className = "site-icon";
-                icon.src = "/site-icon/" + encodeURIComponent(host);
-                icon.alt = "";
-                icon.width = 16;
-                icon.height = 16;
-                icon.loading = "lazy";
-                icon.addEventListener("error", function () { this.remove(); });  // No icon cached for that site
-                body.appendChild(icon);
-            }
-            var titleLink = link(href, "", "title");
-            titleLink.appendChild(highlighted(cleanTitle(item.title, item.source), words));
-            body.appendChild(titleLink);
-            if (host) {
-                var domain = document.createElement("span");
-                domain.className = "domain";
-                domain.textContent = " (" + host + ")";
-                body.appendChild(domain);
-            }
-
-            var meta = document.createElement("div");
-            meta.className = "meta";
-            meta.appendChild(highlighted(item.source, words));
-            meta.appendChild(document.createTextNode(" \u00b7 " + ago(item.published)));
-            if (item.where) {  // A search result: the tabs it's in
-                meta.appendChild(document.createTextNode(" \u00b7 "));
-                var where = document.createElement("span");
-                where.className = "where";
-                where.textContent = item.where;
-                meta.appendChild(where);
-            }
-            var comments = item.comments && safeUrl(item.comments);
-            if (comments) {
-                meta.appendChild(document.createTextNode(" \u00b7 "));
-                meta.appendChild(link(comments, "discuss"));
-            }
-            var summary = null;
-            if (item.summary) {
-                summary = document.createElement("p");
-                summary.className = "summary";
-                summary.id = "summary-" + i;
-                summary.appendChild(highlighted(item.summary, words));
-                var note = document.createElement("small");
-                note.textContent = "machine summary \u00b7 may contain errors";
-                summary.appendChild(note);
-                var toggle = document.createElement("button");
-                toggle.type = "button";
-                toggle.setAttribute("aria-controls", summary.id);
-                setSummaryOpen(summary, toggle, item.link, !!openSummaries[item.link]);
-                toggle.addEventListener("click", function (summary, toggle, link) {
-                    return function () { setSummaryOpen(summary, toggle, link, summary.hidden); };
-                }(summary, toggle, item.link));
-                meta.appendChild(document.createTextNode(" \u00b7 "));
-                meta.appendChild(toggle);
-            }
-            // Other outlets' headlines about the same story, folded under this one by the server
-            var related = null;
-            if (item.related && item.related.length) {
-                related = document.createElement("ul");
-                related.className = "related";
-                related.id = "related-" + i;
-                item.related.forEach(function (other) {
-                    var otherHref = safeUrl(other.link);
-                    if (!otherHref) return;
-                    if (service && service.prefix && isPaywalled(hostOf(otherHref))) otherHref = service.prefix + otherHref;
-                    var row = document.createElement("li");
-                    var otherLink = link(otherHref, "");
-                    otherLink.appendChild(highlighted(cleanTitle(other.title, other.source), words));
-                    row.appendChild(otherLink);
-                    var from = document.createElement("span");
-                    from.textContent = " \u00b7 " + other.source;
-                    row.appendChild(from);
-                    var otherComments = other.comments && safeUrl(other.comments);
-                    if (otherComments) {
-                        row.appendChild(document.createTextNode(" \u00b7 "));
-                        row.appendChild(link(otherComments, "discuss", "discuss"));
-                    }
-                    related.appendChild(row);
-                });
-                if (related.children.length) {
-                    var relatedToggle = document.createElement("button");
-                    relatedToggle.type = "button";
-                    relatedToggle.setAttribute("aria-controls", related.id);
-                    setRelatedOpen(related, relatedToggle, item.link, !!openRelated[item.link]);
-                    relatedToggle.addEventListener("click", function (related, toggle, link) {
-                        return function () { setRelatedOpen(related, toggle, link, related.hidden); };
-                    }(related, relatedToggle, item.link));
-                    meta.appendChild(document.createTextNode(" \u00b7 "));
-                    meta.appendChild(relatedToggle);
-                } else {
-                    related = null;
-                }
-            }
-            if (bypassed) {
-                var mark = document.createElement("span");
-                mark.className = "paywall";
-                mark.textContent = " \u00b7 via " + service.name;
-                meta.appendChild(mark);
-            }
-
-            li.appendChild(num);
-            li.appendChild(body);
-            li.appendChild(meta);
-            // A result found only in its summary: show where, so it's clear why it's here
-            var snippetText = item.inSummaryOnly && item.summary && snippetOf(item.summary, words);
-            if (snippetText) {
-                var snippet = document.createElement("p");
-                snippet.className = "snippet";
-                snippet.appendChild(highlighted(snippetText, words));
-                li.appendChild(snippet);
-            }
-            if (summary) li.appendChild(summary);
-            if (related) li.appendChild(related);
-            list.appendChild(li);
+            var li = renderItem(item, i, service, words);
+            if (li) list.appendChild(li);
         });
+    }
+
+    // The open view's items, or the search results; null if there's nothing to list (with a notice saying why)
+    function itemsToShow() {
+        if (searching()) {
+            if (!search.index) return null;  // Still loading; the status line says so
+            var results = searchResults();
+            if (results.length) return results;
+            showNotice("nothing matches “" + search.query.trim() + "” in any tab.", false);
+            return null;
+        }
+        var state = stateOf(current, currentTopic);
+        if (state.data === null) {
+            if (state.error) showNotice("could not load " + viewName(current, currentTopic) + ": " + state.error, true);
+            return null;
+        }
+        if (state.data.length) return state.data;
+        showNotice("no headlines for " + viewName(current, currentTopic) + " right now.", false);
+        return null;
+    }
+
+    // One item: its headline, a line of details and buttons, and what the buttons open
+    function renderItem(item, i, service, words) {
+        var href = safeUrl(item.link);
+        if (!href) return null;
+        var host = hostOf(href);
+        var shown = viaBypass(href, service);
+
+        var li = document.createElement("li");
+        var num = document.createElement("span");
+        num.className = "num";
+        num.textContent = (i + 1) + ".";
+        li.appendChild(num);
+        li.appendChild(headline(item, shown, host, words));
+
+        var meta = document.createElement("div");
+        meta.className = "meta";
+        meta.appendChild(highlighted(item.source, words));
+        meta.appendChild(document.createTextNode(" · " + ago(item.published)));
+        if (item.where) {  // A search result: the tabs it's in
+            var where = document.createElement("span");
+            where.className = "where";
+            where.textContent = item.where;
+            appendPart(meta, where);
+        }
+        var comments = item.comments && safeUrl(item.comments);
+        if (comments) appendPart(meta, link(comments, "discuss"));
+        var summary = item.summary ? summaryOf(item, i, words) : null;
+        if (summary) appendPart(meta, summary.toggle);
+        var related = relatedOf(item, i, service, words);
+        if (related) appendPart(meta, related.toggle);
+        if (shown !== href) {
+            var mark = document.createElement("span");
+            mark.className = "paywall";
+            mark.textContent = " · via " + service.name;
+            meta.appendChild(mark);
+        }
+        li.appendChild(meta);
+
+        // A result found only in its summary: show where, so it's clear why it's here
+        var snippetText = item.inSummaryOnly && item.summary && snippetOf(item.summary, words);
+        if (snippetText) {
+            var snippet = document.createElement("p");
+            snippet.className = "snippet";
+            snippet.appendChild(highlighted(snippetText, words));
+            li.appendChild(snippet);
+        }
+        if (summary) li.appendChild(summary.block);
+        if (related) li.appendChild(related.block);
+        return li;
+    }
+
+    // The website's icon (with site icons on), the linked title and the domain
+    function headline(item, href, host, words) {
+        var body = document.createElement("div");
+        if (siteIcons && host) {
+            var icon = document.createElement("img");
+            icon.className = "site-icon";
+            icon.src = "/site-icon/" + encodeURIComponent(host);
+            icon.alt = "";
+            icon.width = 16;
+            icon.height = 16;
+            icon.loading = "lazy";
+            icon.addEventListener("error", function () { this.remove(); });  // No icon cached for that site
+            body.appendChild(icon);
+        }
+        var titleLink = link(href, "", "title");
+        titleLink.appendChild(highlighted(cleanTitle(item.title, item.source), words));
+        body.appendChild(titleLink);
+        if (host) {
+            var domain = document.createElement("span");
+            domain.className = "domain";
+            domain.textContent = " (" + host + ")";
+            body.appendChild(domain);
+        }
+        return body;
+    }
+
+    // The item's machine summary and the button that opens it: { block, toggle }
+    function summaryOf(item, i, words) {
+        var block = document.createElement("p");
+        block.className = "summary";
+        block.id = "summary-" + i;
+        block.appendChild(highlighted(item.summary, words));
+        var note = document.createElement("small");
+        note.textContent = "machine summary · may contain errors";
+        block.appendChild(note);
+        var toggle = document.createElement("button");
+        toggle.type = "button";
+        toggle.setAttribute("aria-controls", block.id);
+        setSummaryOpen(block, toggle, item.link, !!openSummaries[item.link]);
+        toggle.addEventListener("click", function () { setSummaryOpen(block, toggle, item.link, block.hidden); });
+        return { block: block, toggle: toggle };
+    }
+
+    // Other outlets' headlines about the same story (folded under this one by the server) and the
+    // button that opens them: { block, toggle }, or null if there are none
+    function relatedOf(item, i, service, words) {
+        if (!item.related || !item.related.length) return null;
+        var block = document.createElement("ul");
+        block.className = "related";
+        block.id = "related-" + i;
+        item.related.forEach(function (other) {
+            var otherHref = safeUrl(other.link);
+            if (!otherHref) return;
+            var row = document.createElement("li");
+            var otherLink = link(viaBypass(otherHref, service), "");
+            otherLink.appendChild(highlighted(cleanTitle(other.title, other.source), words));
+            row.appendChild(otherLink);
+            var from = document.createElement("span");
+            from.textContent = " · " + other.source;
+            row.appendChild(from);
+            var otherComments = other.comments && safeUrl(other.comments);
+            if (otherComments) appendPart(row, link(otherComments, "discuss", "discuss"));
+            block.appendChild(row);
+        });
+        if (!block.children.length) return null;
+        var toggle = document.createElement("button");
+        toggle.type = "button";
+        toggle.setAttribute("aria-controls", block.id);
+        setRelatedOpen(block, toggle, item.link, !!openRelated[item.link]);
+        toggle.addEventListener("click", function () { setRelatedOpen(block, toggle, item.link, block.hidden); });
+        return { block: block, toggle: toggle };
+    }
+
+    // A link to a paywalled site goes through the bypass service, when one is chosen
+    function viaBypass(href, service) {
+        return service.prefix && isPaywalled(hostOf(href)) ? service.prefix + href : href;
+    }
+
+    function appendPart(line, node) {  // " · " and the next part of a line
+        line.appendChild(document.createTextNode(" · "));
+        line.appendChild(node);
     }
 
     function updateStatus() {
@@ -743,9 +753,9 @@
         // The address follows the tab (refresh and shared links open it). By default it's updated in
         // place, so Back leaves the site; with back action "last tab", each switch is a history entry
         if (byUser && changed) {
-            var state = { region: region, topic: topic };
-            if (backToLastTab) history.pushState(state, "", urlFor(region, topic));
-            else history.replaceState(state, "", urlFor(region, topic));
+            var entry = { region: region, topic: topic };
+            if (backToLastTab) history.pushState(entry, "", urlFor(region, topic));
+            else history.replaceState(entry, "", urlFor(region, topic));
         }
         document.title = region === DEFAULT_VIEW && topic === DEFAULT_TOPIC ? "news.txt" : "news.txt / " + viewName(region, topic);
         renderTabs();
