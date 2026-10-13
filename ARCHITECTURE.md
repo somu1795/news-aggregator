@@ -175,7 +175,14 @@ How the sources were chosen (all measured live):
 
 Fetching:
 - All feeds are fetched **concurrently**, at most 15 requests in flight. Redirects are followed, so a moved feed keeps working.
-- Each request has a `REQUEST_TIMEOUT` of **10s** and up to `FETCH_RETRIES` = **3** attempts, with exponential backoff (1s, then 2s).
+- Each request has a `REQUEST_TIMEOUT` of **10s** and up to `FETCH_RETRIES` = **3** attempts on network errors, with exponential backoff (1s, then 2s).
+- **Polite polling** (`fetch_and_parse_feed()`; the refresher is one long-lived process, so it remembers each feed between cycles):
+  - **Per-feed interval:** a fetch that brings new headlines keeps the feed on every cycle; one that brings nothing new skips a cycle, then waits twice as long each time (10, 20, then at most `FEED_MAX_INTERVAL_SECONDS`, **30 min**). In between, the feed's last headlines are reused without a request. Busy feeds (Google News sections) stay at 5 minutes; slow ones (BBC regional, The Local, Pacific outlets) drift to 20–30 minutes.
+  - **Conditional requests:** the feed's `ETag` and `Last-Modified` are sent back (`If-None-Match`, `If-Modified-Since`), so an unchanged feed answers `304 Not Modified` with no body.
+  - **Host backoff:** a `429` or `503` pauses **every feed on that host** (all Google News feeds together) for its `Retry-After`, or 10 minutes doubling up to 2 hours (`FEED_BACKOFF_SECONDS`, `FEED_BACKOFF_MAX_SECONDS`), with no retries. Meanwhile the feeds' last headlines are reused; with no new Google items there are also no new Google links to resolve.
+  - **Jitter:** each request starts after a random delay of up to `FEED_JITTER_SECONDS` (**10s**), so they don't all go out at once.
+  - A feed that can't be fetched keeps its last headlines (they still age out after 48 hours) instead of dropping out of its views.
+  - Counted in `feed_fetches_total{result}`: `fetched`, `not_modified`, `not_due`, `backed_off`, `failed`.
 - A feed counts as **failed** after all attempts fail, or if its XML is so malformed that no entries can be parsed. A failed feed contributes nothing and increments `feed_fetch_failures_total{source}`; everything else is unaffected.
 - Each entry becomes a headline:
   - `title` and `link`;
@@ -240,7 +247,7 @@ After the main views are published, the refresher builds the topic views (`get_t
 
 ### Step 6 — Wait
 - The refresher sleeps `REFRESH_INTERVAL_SECONDS` (**5 minutes**) after each cycle; cycles take a few seconds.
-- **Why 5 minutes:** each cycle requests 84 feeds, 18 of them from Google News (plus, every 30 minutes, 55 topic feeds, 40 of them Google News sections). Doing that every minute from one IP risks Google rate-limiting or blocking it, which would also break link resolution. Most feeds update only a few times an hour anyway.
+- **Why 5 minutes:** the catalog has 84 feeds, 18 of them from Google News (plus 55 topic feeds, 40 of them Google News sections, fetched every 30 minutes). Every 5 minutes keeps busy feeds fresh; slow feeds are fetched less often by their own interval (Step 1), so a cycle requests only the feeds that are due. Doing it every minute from one IP would risk Google rate-limiting or blocking it, which would also break link resolution.
 - `POST /admin/cache/clear` (with `X-API-Key`) wakes the refresher immediately. Repeated requests collapse into one refresh, and the current snapshots stay available meanwhile.
 - If Redis is unreachable while waiting, the refresher sleeps the interval and tries again.
 
@@ -431,7 +438,8 @@ A visitor makes 2 requests per page load plus 1 per region viewed, so 100/minute
 | `MAX_HEADLINE_AGE_HOURS` | 48 | Items older than this are dropped before mixing. |
 | `MAX_PER_PUBLISHER` | 3 | Maximum items from one publisher in a view (single-publisher feeds are bounded by their weight instead). |
 | `REQUEST_TIMEOUT` | 10.0 | Per upstream HTTP request (seconds). |
-| `FETCH_RETRIES` / `BACKOFF_BASE` | 3 / 2 | Attempts per feed / link and the exponential backoff base. |
+| `FETCH_RETRIES` / `BACKOFF_BASE` | 3 / 2 | Attempts per feed / link on network errors and the exponential backoff base. |
+| `FEED_MAX_INTERVAL_SECONDS` / `FEED_BACKOFF_SECONDS` / `FEED_BACKOFF_MAX_SECONDS` / `FEED_JITTER_SECONDS` | 1800 / 600 / 7200 / 10 | Polite polling (§4 Step 1): the longest interval of a quiet feed; a host's pause after 429/503 without Retry-After (doubling), and its cap; the random delay before each request. |
 | `LOCAL_CACHE_SECONDS` | 5.0 | How long a worker reuses its in-memory copy of a view before re-reading Redis. |
 | `STALE_AFTER_SECONDS` | 900 | Age at which `/health` reports the "all" snapshot as stale. |
 | `HEADLINES_KEY` | `headlines` | Redis key prefix; snapshots live at `headlines:<view>`. |

@@ -29,6 +29,11 @@ FEED_FETCH_FAILURES = Counter(
     "Feed fetches that failed after all retries",
     ["source"],
 )
+FEED_FETCHES = Counter(
+    "feed_fetches_total",
+    "Feed fetch decisions: fetched, not_modified (304), not_due (its interval), backed_off (host paused after 429/503), failed",
+    ["result"],
+)
 REDIRECT_RESOLUTIONS = Counter(
     "redirect_resolutions_total",
     "Google News link resolution outcomes (custom resolver)",

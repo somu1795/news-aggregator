@@ -145,6 +145,11 @@ class Settings(BaseSettings):
     MAX_PER_PUBLISHER: int = 3  # Cap per publisher in a view (single-publisher feeds are bounded by their weight instead)
     REQUEST_TIMEOUT: float = 10.0
     FETCH_RETRIES: int = 3
+    # Polite polling (services/feed_service.py fetch_and_parse_feed)
+    FEED_MAX_INTERVAL_SECONDS: int = 1800  # A feed that keeps bringing nothing new is fetched at most this rarely
+    FEED_BACKOFF_SECONDS: int = 600  # A host that answers 429/503 without Retry-After is paused this long, doubling
+    FEED_BACKOFF_MAX_SECONDS: int = 7200
+    FEED_JITTER_SECONDS: float = 10.0  # Each request starts after a random delay of up to this
     BACKOFF_BASE: int = 2
 
     # --- Tagger (topic views) ---

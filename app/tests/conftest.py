@@ -25,6 +25,15 @@ from config import settings
 pytestmark = pytest.mark.asyncio
 
 
+@pytest.fixture(autouse=True)
+def fresh_feed_state(monkeypatch):
+    """Each test starts with no remembered feeds or paused hosts, and no request jitter."""
+    from services import feed_service
+    monkeypatch.setattr(feed_service, "_feeds", {})
+    monkeypatch.setattr(feed_service, "_backoff", {})
+    monkeypatch.setattr(settings, "FEED_JITTER_SECONDS", 0.0)
+
+
 @pytest_asyncio.fixture(scope="function")
 async def mock_redis():
     """Fixture to provide a mock redis client for each test function."""
