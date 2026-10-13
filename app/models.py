@@ -13,6 +13,7 @@ class RelatedItem(BaseModel):
     title: str
     link: str
     source: str
+    comments: Optional[str] = None  # Its discussion page, when its feed has one (e.g. Hacker News)
 
 
 class HeadlineItem(BaseModel):

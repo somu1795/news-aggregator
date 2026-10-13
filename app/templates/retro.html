@@ -620,6 +620,11 @@
                             var from = document.createElement("span");
                             from.textContent = " \u00b7 " + other.source;
                             row.appendChild(from);
+                            var otherComments = other.comments && safeUrl(other.comments);
+                            if (otherComments) {
+                                row.appendChild(document.createTextNode(" \u00b7 "));
+                                row.appendChild(link(otherComments, "discuss"));
+                            }
                             related.appendChild(row);
                         });
                         if (related.children.length) {

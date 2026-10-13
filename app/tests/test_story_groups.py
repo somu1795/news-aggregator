@@ -73,3 +73,31 @@ async def test_related_headlines_are_capped(monkeypatch):
     async with httpx.AsyncClient() as client:
         grouped = await group_stories(client, {"all": items})
     assert len(grouped["all"]) == 1 and len(grouped["all"][0]["related"]) == 2
+
+
+@respx.mock
+async def test_the_same_article_adds_no_row_but_its_discussion_is_kept():
+    nyt = {**item("Worlds More Habitable Than Earth", "NYT"), "link": "https://www.nytimes.com/2026/space.html"}
+    hn = {"title": "Worlds more habitable than Earth?", "link": "https://www.nytimes.com/2026/space.html#x",
+          "source": "Hacker News", "comments": "https://news.ycombinator.com/item?id=1"}
+    other = {"title": "Planets better for life than ours", "link": "https://bbc.example/planets", "source": "BBC",
+             "comments": "https://news.ycombinator.com/item?id=2"}
+    tagger_groups({nyt["title"]: 0, hn["title"]: 0, other["title"]: 0})
+    async with httpx.AsyncClient() as client:
+        story = (await group_stories(client, {"all": [nyt, hn, other]}))["all"][0]
+    assert story["comments"] == "https://news.ycombinator.com/item?id=1"  # HN's thread, on the story itself
+    assert story["related"] == [{"title": other["title"], "link": other["link"], "source": "BBC",
+                                 "comments": "https://news.ycombinator.com/item?id=2"}]
+    assert "comments" not in nyt  # The shared item is untouched
+
+
+@respx.mock
+async def test_the_same_article_is_shown_once_even_when_the_headlines_differ():
+    article = {**item("Habitable worlds found", "NYT"), "link": "https://www.nytimes.com/2026/space.html"}
+    hn = {"title": "Show me the planets", "link": "https://www.nytimes.com/2026/space.html/",
+          "source": "Hacker News", "comments": "https://news.ycombinator.com/item?id=1"}
+    respx.post(f"{settings.TAGGER_URL}/group").mock(side_effect=httpx.ConnectError("down"))  # No model groups at all
+    async with httpx.AsyncClient() as client:
+        grouped = (await group_stories(client, {"all": [article, hn]}))["all"]
+    assert [i["title"] for i in grouped] == ["Habitable worlds found"]
+    assert grouped[0]["comments"] == "https://news.ycombinator.com/item?id=1"
