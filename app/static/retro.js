@@ -22,6 +22,8 @@
 
     var list = document.getElementById("list");
     var statusEl = document.getElementById("status");
+    var statusAgeEl = document.getElementById("status-age");
+    var statusBusyEl = document.getElementById("status-busy");
     var notice = document.getElementById("notice");
     var regionsEl = document.getElementById("regions");
     var topicsEl = document.getElementById("topics");
@@ -686,21 +688,32 @@
 
     function updateStatus() {
         if (search.active) {
-            if (!search.index) statusEl.textContent = "search \u00b7 loading every tab...";
-            else if (!searching()) statusEl.textContent = "search \u00b7 type to search " + search.index.length + " headlines in every tab";
-            else statusEl.textContent = "search \u00b7 " + search.count + (search.count === 1 ? " result" : " results") +
+            if (!search.index) setStatus("search \u00b7 loading every tab...");
+            else if (!searching()) setStatus("search \u00b7 type to search " + search.index.length + " headlines in every tab");
+            else setStatus("search \u00b7 " + search.count + (search.count === 1 ? " result" : " results") +
                 (search.count > SEARCH_LIMIT ? " (showing " + SEARCH_LIMIT + ")" : "") +
-                " in " + search.index.length + " headlines";
+                " in " + search.index.length + " headlines");
             return;
         }
         var state = stateOf(current, currentTopic);
         var label = viewName(current, currentTopic);
         if (state.data === null) {
-            statusEl.textContent = state.error ? label + " \u00b7 offline" : "loading " + label + "...";
+            setStatus(state.error ? label + " \u00b7 offline" : "loading " + label + "...");
             return;
         }
-        statusEl.textContent = label + " \u00b7 " + state.data.length + " items \u00b7 updated " +
-            ago(state.fetchedAt) + (state.loading ? " \u00b7 refreshing..." : "");
+        setStatus(label + " \u00b7 " + state.data.length + " items", " \u00b7 updated " + ago(state.fetchedAt),
+            state.loading ? " \u00b7 refreshing..." : "");
+    }
+
+    // The status line's three parts. Screen readers announce changes to the first and last (aria-live),
+    // not to its age, which changes every minute
+    function setStatus(text, age, busy) {
+        setText(statusEl, text);
+        setText(statusAgeEl, age || "");
+        setText(statusBusyEl, busy || "");
+    }
+    function setText(el, text) {  // Unchanged text isn't rewritten, so it isn't announced again
+        if (el.textContent !== text) el.textContent = text;
     }
 
     // --- Data ---
@@ -712,6 +725,7 @@
         if (isCurrent()) { refreshBtn.disabled = true; updateStatus(); }
         var url = "/api/headlines?region=" + encodeURIComponent(region) +
             (topic === DEFAULT_TOPIC ? "" : "&topic=" + encodeURIComponent(topic));
+        var redraw = true;
         state.promise = fetch(url, { headers: { "Accept": "application/json" } })
             .then(function (response) {
                 return response.json().catch(function () { return {}; }).then(function (body) {
@@ -720,19 +734,26 @@
                 });
             })
             .then(function (body) {
-                state.data = Array.isArray(body.data) ? body.data : [];
-                state.fetchedAt = body.fetched_at || Date.now() / 1000;
+                var fetchedAt = body.fetched_at || Date.now() / 1000;
+                // The same snapshot again (e.g. a refresh before the next one is out): the list stays as it
+                // is, so reading position, keyboard focus and selected text in it aren't lost
+                redraw = state.data === null || fetchedAt !== state.fetchedAt;
+                if (redraw) {
+                    state.data = Array.isArray(body.data) ? body.data : [];
+                    state.fetchedAt = fetchedAt;
+                }
                 state.loadedAt = Date.now();
                 state.error = null;
             })
             .catch(function (error) {
                 state.error = error.message;  // Keep any data we already have
+                redraw = state.data === null;  // Only to say it couldn't load
             })
             .then(function () {
                 state.loading = false;
                 if (isCurrent()) {  // Ignore responses for a view the user has left
                     refreshBtn.disabled = false;
-                    render();
+                    if (redraw) render();
                     updateStatus();
                 }
             });

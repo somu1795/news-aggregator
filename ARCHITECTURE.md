@@ -275,6 +275,7 @@ Consequence: a newly published snapshot reaches users within about 5s, and the A
   - Number keys `1`–`6` switch regions (keeping the topic); `t` / `Shift+t` cycle topics.
   - The last region and topic are remembered when the URL doesn't name them.
   - A tab that was already loaded switches instantly and refreshes in the background if older than a minute.
+  - A refresh that brings the same snapshot (one isn't out yet) leaves the list as it is, so reading position, keyboard focus and selected text stay. Screen readers announce the status line's view, item count and "refreshing...", but not its age ("updated 3m ago"), which changes every minute.
   - A slow response for one view can never overwrite another view's list.
 - Each item shows the title (without Google's " - Publisher" suffix), the domain, the source and age, plus "discuss" for Hacker News posts (a feed's comments link is dropped when it's just the article itself) and "summary" for items with one, which opens it under the item, labelled as a machine summary (it stays open across refreshes). A story that other outlets in the view also carry shows "+N sources", which opens their headlines (linked, with their source) under it.
 - Other controls:
