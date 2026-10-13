@@ -150,9 +150,10 @@
             </nav>
         </div>
         <nav class="advanced" id="advanced" aria-label="Advanced" hidden>
-            <button id="reset" title="Forget every setting on this device: region, topic, sort, theme, bypass, site icons, open summaries">reset</button>
+            <button id="reset" title="Forget every setting on this device: region, topic, sort, theme, bypass, site icons, auto refresh, open summaries">reset</button>
             <button id="install" title="Install news.txt as an app">install</button>
             <button id="site-icons" aria-pressed="false" title="Show each website's icon before its headlines">site icons: off</button>
+            <button id="auto-refresh" title="Refresh the open tab by itself: off, 5m, 15m, 30m, 1h">auto refresh: off</button>
             <span id="bypass" title="Open paywalled sites via a bypass service">bypass:</span>
             <span class="note" id="advanced-note" aria-live="polite"></span>
         </nav>
@@ -211,6 +212,7 @@
             var advancedBtn = document.getElementById("advanced-toggle");
             var installBtn = document.getElementById("install");
             var siteIconsBtn = document.getElementById("site-icons");
+            var autoRefreshBtn = document.getElementById("auto-refresh");
             var advancedNote = document.getElementById("advanced-note");
             var bypassEl = document.getElementById("bypass");
 
@@ -428,6 +430,25 @@
                 render();
             }
 
+            // Auto refresh: re-fetch the open view once it's older than the chosen period, only while the page is visible
+            var AUTO_REFRESH = [{ id: "off", ms: 0 }, { id: "5m", ms: 300000 }, { id: "15m", ms: 900000 },
+                { id: "30m", ms: 1800000 }, { id: "1h", ms: 3600000 }];
+            var autoRefresh = AUTO_REFRESH.filter(function (p) { return p.id === read("retroAutoRefresh"); })[0] || AUTO_REFRESH[0];
+            function renderAutoRefresh() {
+                autoRefreshBtn.textContent = "auto refresh: " + autoRefresh.id;
+                autoRefreshBtn.classList.toggle("on", autoRefresh.ms > 0);
+            }
+            function cycleAutoRefresh() {
+                autoRefresh = AUTO_REFRESH[(AUTO_REFRESH.indexOf(autoRefresh) + 1) % AUTO_REFRESH.length];
+                write("retroAutoRefresh", autoRefresh.id);
+                renderAutoRefresh();
+                autoRefreshIfDue();
+            }
+            function autoRefreshIfDue() {
+                if (!autoRefresh.ms || document.hidden) return;
+                if (Date.now() - stateOf(current, currentTopic).loadedAt >= autoRefresh.ms) load(current, currentTopic);
+            }
+
             // The browser offers installing (beforeinstallprompt) only when it can and the app isn't installed yet
             var installPrompt = null;
             function isInstalled() {
@@ -458,17 +479,19 @@
             });
 
             function resetAll() {
-                ["retroRegion", "retroTopic", "retroSort", "retroTheme", "bypassService", "retroSiteIcons"].forEach(forget);  // bypassService: shared with the old classic page
+                ["retroRegion", "retroTopic", "retroSort", "retroTheme", "bypassService", "retroSiteIcons", "retroAutoRefresh"].forEach(forget);  // bypassService: shared with the old classic page
                 openSummaries = {};
                 sortMode = "mix";
                 shuffleKeys = {};
                 siteIcons = false;
+                autoRefresh = AUTO_REFRESH[0];
                 bypass = "none";
                 document.documentElement.removeAttribute("data-theme");
                 applyTheme(null);
                 renderBypass();
                 renderSort();
                 renderSiteIcons();
+                renderAutoRefresh();
                 selectView(HOME_VIEW, DEFAULT_TOPIC, true);
                 forget("retroRegion");  // Back to following the visitor's location
                 forget("retroTopic");
@@ -652,6 +675,8 @@
             document.getElementById("reset").addEventListener("click", resetAll);
             installBtn.addEventListener("click", install);
             siteIconsBtn.addEventListener("click", toggleSiteIcons);
+            autoRefreshBtn.addEventListener("click", cycleAutoRefresh);
+            document.addEventListener("visibilitychange", autoRefreshIfDue);  // Catch up on returning to the tab
             window.addEventListener("popstate", function () {
                 selectView(fromUrl("region", isView) || DEFAULT_VIEW, fromUrl("topic", isTopic) || DEFAULT_TOPIC, false);
             });
@@ -670,11 +695,15 @@
                 else if (/^[1-9]$/.test(event.key) && VIEWS[Number(event.key) - 1]) selectView(VIEWS[Number(event.key) - 1].id, currentTopic, true);
             });
             window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () { applyTheme(); });
-            setInterval(updateStatus, 30000);  // Keep "updated Xm ago" honest
+            setInterval(function () {
+                updateStatus();  // Keep "updated Xm ago" honest
+                autoRefreshIfDue();
+            }, 30000);
 
             renderBypass();
             renderSort();
             renderSiteIcons();
+            renderAutoRefresh();
             renderInstall();
             // A view in the URL wins (shared links); otherwise reopen the last one viewed
             var params = new URLSearchParams(location.search);
