@@ -204,6 +204,11 @@
           "url": "https://thebetterindia.com/feed/",
           "label": "uplifting",
           "max_items": 15
+        },
+        {
+          "name": "Mongabay India",
+          "url": "https://india.mongabay.com/feed/",
+          "label": "nature"
         }
       ]
     },
@@ -454,6 +459,11 @@
           "name": "Google News Canada Entertainment",
           "url": "https://news.google.com/rss/headlines/section/topic/ENTERTAINMENT?hl=en-CA&gl=CA&ceid=CA:en",
           "label": "culture"
+        },
+        {
+          "name": "Inside Climate News",
+          "url": "https://insideclimatenews.org/feed/",
+          "label": "nature"
         }
       ]
     },

@@ -26,6 +26,7 @@ import structlog
 from config import ALL_VIEW, CATALOG, OTHER_LABEL, Catalog, NewsSource, Topic, TopicSource, settings, topic_view
 from metrics import FEED_FETCH_FAILURES, FEED_FETCHES
 from services.link_resolver import resolve_link
+from services.places import item_regions
 
 logger = structlog.get_logger(__name__)
 
@@ -493,11 +494,13 @@ def build_topic_views(
 
     1. The feeds about the topic (their items are tagged by their feed, so
        they're precise), mixed equally. In a region's view: first the stories
-       only that region's own feeds have, then the shared feeds (extras, topic
-       extras), which are the same in every region, then global stories: those
-       in two or more regions' own feeds (e.g. a TechCrunch story in several
-       Google News Technology editions). So region views start with what's
-       particular to the region, and repeat each other only further down.
+       only that region's own feeds have; then the shared feeds' (extras, topic
+       extras: worldwide outlets like Mongabay) stories about that region,
+       i.e. naming one of its places (services/places.py); then their stories
+       that name no place; then global stories: those in two or more regions'
+       own feeds (e.g. a TechCrunch story in several Google News Technology
+       editions). A shared feed's story about another region is left out, so
+       region views don't all show the same worldwide outlets.
     2. Items the model tagged from other feeds, in the same order, only to
        fill the view, and never for FEED_ONLY_TOPICS.
 
@@ -539,9 +542,14 @@ def build_topic_views(
         )
         regional = {name: [h for h in items if regions_of[_title_key(h)] < 2] for name, items in tagged.items()}
         global_ = {name: [h for h in items if regions_of[_title_key(h)] >= 2] for name, items in tagged.items()}
+        shared_tagged = {s.name: tagged.get(s.name, []) for s in shared}
+        placeless = {name: [h for h in items if not item_regions(h)] for name, items in shared_tagged.items()}
         for region in catalog.regions:
+            about = {name: [h for h in items if region.id in item_regions(h)] for name, items in shared_tagged.items()}
             view = topic_view(region.id, topic.id)
-            views[view] = view_for([(own[region.id], regional), (shared, tagged), (own[region.id], global_)], topic, view)
+            views[view] = view_for(
+                [(own[region.id], regional), (shared, about), (shared, placeless), (own[region.id], global_)], topic, view,
+            )
         view = topic_view(ALL_VIEW, topic.id)
         views[view] = view_for([(everything, tagged)], topic, view)
     return views
