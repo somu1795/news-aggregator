@@ -233,7 +233,7 @@ After the main views are published, the refresher builds the topic views (`get_t
 1. A browser loads `/`; the page reads the region and topic lists embedded in it and calls `/api/headlines?region=<view>[&topic=<topic>]`.
 2. Caddy resolves the client IP, sets `X-Real-IP`, compresses and forwards to an app container.
 3. The rate limiter checks that client's counter (§7).
-4. The worker returns its **in-memory snapshot** of that view, pre-serialized, with `Cache-Control: public, max-age=<seconds until expires_at>`.
+4. The worker returns its **in-memory snapshot** of that view, pre-serialized, with `Cache-Control: public, max-age=<seconds until expires_at>`, and `CDN-Cache-Control` for Cloudflare: at least 60 s, `stale-while-revalidate=60` and `stale-if-error=86400` (an edge copy keeps being served for a day if the origin is unreachable).
 5. **Snapshot sync rules (per worker, per view):**
    - Every worker loads all views at startup.
    - A worker re-reads a view from Redis when its copy is older than `LOCAL_CACHE_SECONDS` (**5s**); only one request per view per worker does the read.

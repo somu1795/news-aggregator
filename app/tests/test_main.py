@@ -130,6 +130,8 @@ async def test_get_headlines_serves_snapshot(client, mock_redis):
     assert response.headers["cache-control"].startswith("public, max-age=")
     max_age = int(response.headers["cache-control"].split("=")[1])
     assert 0 < max_age <= settings.REFRESH_INTERVAL_SECONDS
+    edge = response.headers["cdn-cache-control"]  # Cloudflare keeps it at least a minute, and serves stale on errors
+    assert f"max-age={max(max_age, 60)}," in edge and "stale-if-error=86400" in edge
 
     data = response.json()
     assert len(data["data"]) == 1
