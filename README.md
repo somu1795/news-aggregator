@@ -125,6 +125,24 @@ Regions, news sources and their weights are defined in `app/sources.json` (forma
 | `REDIS_PASSWORD`   | Password for Redis. **Required.** Generate with `openssl rand -hex 24`.  | none         |
 | `SUMMARIZER_LLM_URL` | Ollama server for article summaries, e.g. `http://<host>:11434`; empty disables them. | empty |
 
+## Backup and Restore
+
+`scripts/backup.sh` runs daily at 03:30 UTC from the `pi` user's crontab and writes to both media disks (`/mnt/media/app_bkp/news_aggregator` and `/mnt/mediatoshiba/app_bkp/news_aggregator`; its log is `backup.log` in the first). Each run saves a dated, compressed archive with a checksum:
+
+- the **project folder** as it is: code, `.git` (including commits not pushed yet), `.env` (secrets: keep the backup disks private), and untracked notes;
+- **Redis's** snapshot (`dump.rdb`: published views, summaries, resolved links, site icons, which sites need the browser);
+- the **tagger's** database (every stored headline, its labels and embeddings; copied with SQLite's online backup) and classifier.
+
+It also saves each **Docker image** the stack runs on, once per version (`images/`), so a restore needs no downloads. It keeps the newest 14 archives and the images they use, and refuses to run if a destination folder is missing (an unmounted disk). Not backed up, as they rebuild themselves: the NPU compile cache, Byparr's GeoIP database, Caddy's volumes. A run takes a few seconds (about a minute when images changed); an archive is about 30 MB, the images about 2.2 GB.
+
+**Restore** on this machine or a new one (Docker installed; for the tagger, the NPU driver and the `render` group, or set `TAGGER_DEVICE=CPU`; Tailscale for the summarizer's LLM):
+
+```bash
+/mnt/media/app_bkp/news_aggregator/restore.sh   # The latest archive into ~/news-aggregator
+```
+
+It verifies the checksums, unpacks the project, loads the images, puts the data into fresh volumes and starts the stack. The Cloudflare Tunnel reconnects with the token from `.env`, so the site is back at the same address. Give `restore.sh` an archive and a folder to restore an older one elsewhere. The project folder and its volumes must not exist yet (`docker compose down -v` removes the volumes of a broken install). Tested: a restore from the backup took 21 seconds, served the backed-up views and summaries at once, and the tagger kept its history and classifier.
+
 ## Running Tests
 
 The tests don't need Docker or a running Redis (they use `fakeredis` and `respx`). They also run in CI before images are built.
