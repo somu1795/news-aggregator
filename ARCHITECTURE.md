@@ -111,11 +111,25 @@ So request volume costs almost nothing upstream or in Redis, and users keep gett
 ### Summarizer (`summarizer` service)
 - Runs `summarizer.py` from the app image. **One replica.** Optional: without `SUMMARIZER_LLM_URL` it idles.
 - Every minute it reads the published snapshots and takes the first 20 items of every view without a summary: the main views first, then the topic views, top positions first.
-- For each, it fetches the article, extracts its text (trafilatura; at most 6,000 characters) and asks an **Ollama** server for 2–3 sentences, using only the article's facts. The model is `qwen3:8b` (thinking off), and the server is a desktop GPU (RTX 3060 Ti) on the tailnet. Ollama loads the model on demand and frees the GPU two minutes after the last request.
-- The summary is stored in Redis at `summary:<hash of link>` for 7 days. The refresher adds it to the item (`summary`) when it next publishes, so summaries appear within one refresh of being made.
-- Articles that can't be used are marked and not retried for a day. That covers HTTP errors, non-HTML pages and less than 600 characters of text (paywall teasers, videos). Measured: text came out of 50 of the 60 top stories in the main views; 7 refused the fetch (403).
-- Paywalled sites (`PAYWALLED_HOSTS` in `config.py`, the same list the page's bypass uses) are read from their latest archive.ph snapshot when the direct fetch fails. New articles often have no snapshot yet, so those are retried every 3 hours. Measured: 8 of 12 paywalled top stories could be read (the NYT via the archive); FT and Reuters had no snapshots.
-- When the LLM server is unreachable (the desktop is off), nothing is summarized and nothing is marked. It retries every minute, logging only when availability changes.
+- For each, it reads the article's text (trafilatura; at most 6,000 characters; a precise extraction first, then a looser one if that finds too little) and asks an **Ollama** server for 2–3 sentences, using only the article's facts. The model is `qwen3:8b` (thinking off), and the server is a desktop GPU (RTX 3060 Ti) on the tailnet. Ollama loads the model on demand and frees the GPU two minutes after the last request.
+- The summary is stored in Redis at `summary:<hash of link>` for 7 days, with how its text was read (`via`). The refresher adds it to the item (`summary`) when it next publishes, so summaries appear within one refresh of being made.
+- **Reading the article**, each step only if the previous ones failed:
+  1. **direct**: a plain request (public addresses only, see §7b);
+  2. **browser**: headless Chromium (`browser` service, FlareSolverr), which gets through bot checks that refuse plain requests (Cloudflare challenges, AWS WAF's HTTP 202). A site that blocked a plain request (401/402/403/429/503, or a `cf-mitigated`, `x-datadome` or `x-amzn-waf-action` header) is remembered for 7 days (`browser-host:<host>`) and its articles go straight to the browser; after that the next article tries a plain request again, and the site is remembered again if it's refused;
+  3. **feed**: the text the feed itself carried for the article. The refresher keeps it for every published item with at least 600 characters (`feed-text:<hash of link>`, 2 days);
+  4. **archive**: the latest archive.ph snapshot.
+
+  Paywalled sites (`PAYWALLED_HOSTS` in `config.py`, the same list the page's bypass uses) go direct, archive, then feed: a browser doesn't get past a paywall. Articles none of these can read (or with less than 600 characters of text) are marked and retried after 3 hours; links to non-public addresses are marked for a day and never reach the browser.
+- Measured on the 153 top stories that the direct fetch alone couldn't read: 121 became readable (browser 100, direct after the looser extraction 8, archive 7, feed 2…). Still unreadable: sites whose bot checks also stop a real browser (phys.org's own check, Forbes' DataDome, Akamai on Sky and News Corp sites) and paywalled articles without a snapshot. A browser page takes ~10 s (up to ~50 s).
+- Counts per method are logged every pass and exported as `summarizer_article_reads_total{method}` on the summarizer's metrics port (9100, inside the Docker network).
+- When the LLM server is unreachable (the desktop is off), nothing is fetched, summarized or marked: each pass first checks the server. It retries every minute, logging only when availability changes.
+
+### Headless browser (`browser` and `browser-egress` services)
+- `browser` is FlareSolverr (pinned image): a headless Chromium behind a small HTTP API, used only by the summarizer. Pages run their own JavaScript in it, so it is cut off from everything else:
+  - it sits only on the `browser` network, which is `internal` (no internet). Raw connections from it to the internet, the LAN or the tailnet fail, and the stack's other containers (Redis, app) don't even resolve;
+  - the summarizer has it load every page through `browser-egress`, a Smokescreen proxy (`smokescreen/Dockerfile`, built from a pinned, verified commit). The proxy connects to public internet addresses only: private, loopback, link-local, Docker and Tailscale/CGNAT (100.64/10) addresses are refused, after DNS and at every redirect. Tested: the LAN, the tailnet, a public URL redirecting into the LAN, and container names were all refused;
+  - `browser-egress` is the only container on both `browser` and `egress` (its own network to the internet).
+- Limits: 1.5 CPUs, 1 GB, 512 processes, 256 MB shared memory; ~230 MB while loading a page.
 
 ### Site icons
 - After each refresh, the refresher caches the icon of every website in the published views that it doesn't have yet. It fetches them from DuckDuckGo's icon service (`ICON_SOURCE_URL`) and keeps them in Redis for 7 days; a site without one is retried after a day.
@@ -124,7 +138,7 @@ So request volume costs almost nothing upstream or in Redis, and users keep gett
 
 ### Redis (`redis` service, Redis 8)
 - Holds one snapshot per view (`headlines:all`, `headlines:asia`, `headlines:asia:sport`, … — up to about 20 KB each), the resolved-URL cache and rate-limit counters.
-- `maxmemory 256mb` with `maxmemory-policy volatile-lru`: only keys with a TTL (resolved URLs, rate-limit counters) can be evicted. Snapshots have no TTL and are never evicted.
+- `maxmemory 512mb` (container limit 640 MB) with `maxmemory-policy volatile-lru`: only keys with a TTL (resolved URLs, rate-limit counters, summaries, feed texts, icons) can be evicted, so it is kept well above use (~15 MB). Snapshots have no TTL and are never evicted.
 - RDB persistence (`save 300 1`, `save 60 1000`, plus a save on graceful shutdown) keeps snapshots across restarts, so the API serves immediately after a reboot.
 
 ## 4. How Data Is Collected
@@ -323,7 +337,7 @@ A visitor makes 2 requests per page load plus 1 per region viewed, so 100/minute
 
 ## 7b. Security Hardening
 
-- **Fetching links from outside** (the summarizer reads any top story's link; anyone can post one to Hacker News): only public internet addresses are fetched, checked again at every redirect (`services/safe_fetch.py`). Private, loopback, link-local and Tailscale (100.64/10) addresses are refused, so a crafted link can't make the server read the LAN or the tailnet. Summaries containing a link are discarded, since an article could try to steer the model.
+- **Fetching links from outside** (the summarizer reads any top story's link; anyone can post one to Hacker News): only public internet addresses are fetched, checked again at every redirect (`services/safe_fetch.py`). Private, loopback, link-local and Tailscale (100.64/10) addresses are refused, so a crafted link can't make the server read the LAN or the tailnet. Summaries containing a link are discarded, since an article could try to steer the model. The headless browser that reads bot-protected sites can't make that check itself, so it has no network access except a proxy that enforces it (see the headless browser in §3).
 - **Page:** a Content-Security-Policy with a fresh nonce per response allows only the page's own inline script and style, images and requests from its own origin, and no framing. Feed text, summaries and titles are inserted as text, never HTML; links must be http(s) and open with `noopener`.
 - **Client IP:** the rate limit keys on the IP Caddy resolves from trusted proxies only. Through the Cloudflare Tunnel (`cloudflared` service), Cloudflare sets `CF-Connecting-IP` and rejects client-supplied ones (error 1000), and a forged `X-Forwarded-For` is ignored because `CF-Connecting-IP` comes first. Any other proxy in front (e.g. a VPS) must overwrite client-supplied IP headers; see the README.
 - **Headers:** Caddy sets HSTS, `X-Content-Type-Options`, `X-Frame-Options` and `Referrer-Policy` on every response.
@@ -402,6 +416,10 @@ A visitor makes 2 requests per page load plus 1 per region viewed, so 100/minute
 | `TAGGER_URL` / `TAGGER_TIMEOUT` | `http://tagger:8000` / 90 | The tagger, and the timeout of one tagging request. |
 | `SUMMARIZER_LLM_URL` / `SUMMARIZER_MODEL` | empty / `qwen3:8b` | The Ollama server (empty disables summaries) and its model. Set in `.env`. |
 | `SUMMARY_TOP_N` / `SUMMARY_TTL_SECONDS` / `SUMMARY_FAILED_TTL_SECONDS` | 20 / 7 days / 1 day | Items per view that get a summary; how long a summary, and a failed article, are kept. |
+| `SUMMARY_RETRY_SECONDS` | 3 hours | When an article no step could read is tried again. |
+| `SUMMARIZER_BROWSER_URL` / `SUMMARIZER_BROWSER_PROXY` | set in `docker-compose.yml` | The headless browser and the public-only proxy it must use; empty disables the browser step. |
+| `BROWSER_HOST_TTL_SECONDS` | 7 days | How long a site that blocked a plain request goes straight to the browser. |
+| `FEED_TEXT_TTL_SECONDS` | 2 days | How long the feed's own text of a published item is kept. |
 | `MAX_HEADLINES` | 80 | Headlines per view (each region, and "all"). |
 | `MAX_HEADLINE_AGE_HOURS` | 48 | Items older than this are dropped before mixing. |
 | `MAX_PER_PUBLISHER` | 3 | Maximum items from one publisher in a view (single-publisher feeds are bounded by their weight instead). |

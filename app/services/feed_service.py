@@ -15,6 +15,8 @@ from urllib.parse import urlparse
 
 import feedparser
 import httpx
+import lxml.etree
+import lxml.html
 import redis.asyncio as aioredis
 import structlog
 
@@ -41,6 +43,21 @@ _FEED_HEADERS = {
     "Accept": "application/xml,application/xhtml+xml,text/html;q=0.9, text/plain;q=0.8,*/*;q=0.5",
     "Accept-Language": "en-US,en;q=0.5",
 }
+
+
+def feed_text(entry) -> str:
+    """
+    The article text the feed itself carries (its full content, or a teaser), as
+    plain text. The summarizer falls back on it when the article page can't be read.
+    """
+    html = max([c.get("value") or "" for c in entry.get("content", [])] + [entry.get("summary") or ""], key=len)
+    if not html.strip():
+        return ""
+    try:
+        text = lxml.html.fromstring(html).text_content()
+    except (ValueError, lxml.etree.ParserError):
+        return ""
+    return re.sub(r"\s+", " ", text).strip()[:settings.SUMMARY_MAX_TEXT_CHARS]
 
 
 def discussion_link(link: str, comments: str | None) -> str | None:
@@ -82,6 +99,7 @@ async def fetch_and_parse_feed(
                     ),
                     "last_updated": time.time(),
                     "comments": discussion_link(entry.link, entry.get("comments")),
+                    "feed_text": feed_text(entry),  # Not published (the API's model has no such field)
                 })
             logger.info("Fetched headlines from source", count=len(headlines), source=source_name)
             return headlines

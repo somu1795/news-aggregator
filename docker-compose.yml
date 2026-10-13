@@ -93,8 +93,11 @@ services:
       - LOG_LEVEL=INFO
       - SUMMARIZER_LLM_URL=${SUMMARIZER_LLM_URL:-}
       - SUMMARIZER_MODEL=${SUMMARIZER_MODEL:-qwen3:8b}
+      - SUMMARIZER_BROWSER_URL=http://browser:8191
+      - SUMMARIZER_BROWSER_PROXY=http://browser-egress:4750
     volumes:
       - ./app/sources.json:/app/sources.json:ro
+    networks: [default, browser]
     deploy:
       resources:
         limits:
@@ -105,6 +108,47 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+
+  # Headless Chromium (FlareSolverr) that reads articles from sites whose bot checks
+  # refuse plain requests. Pages run their own JavaScript, so it is cut off from
+  # everything: it sits only on the internal `browser` network (no internet, no LAN,
+  # no other containers but the summarizer and its proxy), and the summarizer has it
+  # load every page through browser-egress.
+  browser:
+    init: true
+    <<: *hardened
+    image: ghcr.io/flaresolverr/flaresolverr:v3.5.2
+    environment:
+      - LOG_LEVEL=warning
+      - TZ=UTC
+    networks: [browser]
+    shm_size: 256m  # Chromium's shared memory; Docker's default 64 MB crashes tabs
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 1G
+          pids: 512
+    restart: unless-stopped
+
+  # The browser's only way out: an HTTP(S) proxy (Smokescreen) that connects to public
+  # internet addresses only. It refuses private, loopback, link-local, Docker and
+  # Tailscale/CGNAT (100.64.0.0/10) addresses, also after DNS and at every redirect,
+  # so no page can reach the LAN, the tailnet or this host.
+  browser-egress:
+    init: true
+    <<: *hardened
+    image: news-aggregator-smokescreen
+    build: ./smokescreen
+    command: ["--listen-ip", "0.0.0.0", "--listen-port", "4750", "--timeout", "30s"]
+    networks: [browser, egress]
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+          pids: 128
+    restart: unless-stopped
 
   # Tags headlines by topic for the topic views (see tagger/tagger.py), on the
   # host's Intel NPU. On a host without one (no /dev/accel), remove `devices`
@@ -205,8 +249,16 @@ services:
       resources:
         limits:
           cpus: '1'
-          memory: 300M # Set a hard limit slightly above Redis's maxmemory
+          memory: 640M # Set a hard limit above Redis's maxmemory (512mb in redis.conf)
           pids: 128
+
+networks:
+  default:
+  # The browser's network: internal, so nothing on it reaches the internet directly
+  browser:
+    internal: true
+  # browser-egress's way out, shared with nothing else
+  egress:
 
 volumes:
   tagger_data:

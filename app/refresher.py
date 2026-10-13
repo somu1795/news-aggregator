@@ -25,7 +25,7 @@ import redis.asyncio as aioredis
 import structlog
 from prometheus_client import Counter, Gauge, Histogram, start_http_server
 
-from config import CATALOG, settings, snapshot_key, summary_key
+from config import CATALOG, feed_text_key, settings, snapshot_key, summary_key
 from logging_config import configure_logging
 from metrics import REFRESHES
 from models import APIResponse
@@ -67,9 +67,22 @@ async def add_summaries(redis_client: aioredis.Redis, views: Dict[str, List[Dict
         item["summary"] = raw and json.loads(raw).get("text")
 
 
+async def store_feed_texts(redis_client: aioredis.Redis, views: Dict[str, List[Dict]]) -> None:
+    """Keeps the feed's own text of each published item that has enough of it, for the summarizer to fall back on."""
+    texts = {item["link"]: item["feed_text"] for items in views.values() for item in items
+             if len(item.get("feed_text") or "") >= settings.SUMMARY_MIN_TEXT_CHARS}
+    if not texts:
+        return
+    async with redis_client.pipeline(transaction=False) as pipe:
+        for link, text in texts.items():
+            pipe.set(feed_text_key(link), text, ex=settings.FEED_TEXT_TTL_SECONDS, nx=True)  # Kept from first sight
+        await pipe.execute()
+
+
 async def publish(redis_client: aioredis.Redis, views: Dict[str, List[Dict]], fetched_at: float) -> None:
     """Writes one snapshot per view, with summaries. A view id is a region id or "region:topic"."""
     await add_summaries(redis_client, views)
+    await store_feed_texts(redis_client, views)
     async with redis_client.pipeline(transaction=False) as pipe:
         for view, items in views.items():
             region, _, topic = view.partition(":")

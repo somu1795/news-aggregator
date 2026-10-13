@@ -156,6 +156,16 @@ class Settings(BaseSettings):
     SUMMARY_FAILED_TTL_SECONDS: int = 86400  # An article that couldn't be summarized isn't retried before this
     SUMMARY_INTERVAL_SECONDS: int = 60  # How often the summarizer looks for new top items
     SUMMARY_LLM_TIMEOUT: float = 180.0  # The first request also loads the model
+    SUMMARY_MIN_TEXT_CHARS: int = 600  # Less is usually a paywall teaser or a video page
+    SUMMARY_MAX_TEXT_CHARS: int = 6000  # ~1,500 tokens: enough for the gist, keeps prompts fast
+    SUMMARY_RETRY_SECONDS: int = 3 * 3600  # Blocks and missing archive snapshots are often temporary
+    # A headless browser (FlareSolverr) for sites that block plain requests, and the
+    # proxy it must use (Smokescreen: public addresses only). Empty disables it.
+    SUMMARIZER_BROWSER_URL: str = ""
+    SUMMARIZER_BROWSER_PROXY: str = ""
+    SUMMARY_BROWSER_TIMEOUT: float = 60.0  # Per page, challenge included
+    BROWSER_HOST_TTL_SECONDS: int = 7 * 86400  # A blocking site goes straight to the browser for this long
+    FEED_TEXT_TTL_SECONDS: int = 2 * 86400  # The feed's own text of published items, for the summarizer
 
     # --- News Sources ---
     SOURCES_FILE: str = "sources.json"  # Relative to this directory, or an absolute path
@@ -201,6 +211,16 @@ CATALOG = load_catalog(Path(__file__).parent / settings.SOURCES_FILE)
 def summary_key(link: str) -> str:
     """Redis key holding an article's summary (or a failure marker), by its link."""
     return "summary:" + hashlib.sha256(link.encode()).hexdigest()[:32]
+
+
+def feed_text_key(link: str) -> str:
+    """Redis key holding the text the feed itself carried for an article, by its link."""
+    return "feed-text:" + hashlib.sha256(link.encode()).hexdigest()[:32]
+
+
+def browser_host_key(host: str) -> str:
+    """Redis key marking a site that blocks plain requests (its articles are read with the browser)."""
+    return f"browser-host:{host}"
 
 
 def snapshot_key(view: str) -> str:

@@ -4,33 +4,46 @@ Background article summarizer.
 Runs as its own container (a single replica). Every SUMMARY_INTERVAL_SECONDS it
 reads the published snapshots and summarizes the first SUMMARY_TOP_N items of
 every view that don't have a summary yet: the main views first, then the topic
-views, top positions first. For each, it fetches the article, extracts its text
-and asks an LLM (an Ollama server at SUMMARIZER_LLM_URL) for 2-3 sentences.
-Summaries are stored in Redis at summary_key(link) for SUMMARY_TTL_SECONDS; the
-refresher adds them to the items it publishes.
+views, top positions first. For each, it reads the article's text and asks an
+LLM (an Ollama server at SUMMARIZER_LLM_URL) for 2-3 sentences. Summaries are
+stored in Redis at summary_key(link) for SUMMARY_TTL_SECONDS, with how the text
+was read; the refresher adds them to the items it publishes.
 
-The LLM server may be a machine that's often off: then nothing is summarized
-and the summarizer checks again next interval. Articles that can't be fetched
-or have too little text (paywalls, videos) are marked and not retried for
-SUMMARY_FAILED_TTL_SECONDS. Paywalled sites' articles are read from an
-archive.ph snapshot instead, when there is one (retried every few hours).
+The LLM server may be a machine that's often off: then nothing is fetched or
+summarized and the summarizer checks again next interval.
+
+An article's text is read, each step only if the previous ones failed:
+1. directly (a plain request);
+2. with a headless browser (FlareSolverr, at SUMMARIZER_BROWSER_URL), which gets
+   through sites' bot checks. Its only way out is a proxy that refuses private
+   addresses (Smokescreen), as pages run their own JavaScript. A site that
+   blocked a plain request is remembered for BROWSER_HOST_TTL_SECONDS: its
+   articles go to the browser first. Once that expires, the next article tries
+   a plain request again (and the site is remembered again if it's refused);
+3. from the text the feed itself carried (stored by the refresher);
+4. from the latest archive.ph snapshot.
+Paywalled sites (config.PAYWALLED_HOSTS) go direct, archive, then feed text: a
+browser doesn't get past a paywall. Articles none of these can read are marked
+and retried after SUMMARY_RETRY_SECONDS.
 """
 
 import asyncio
 import json
 import logging
 import re
-from typing import List, Optional
+from collections import Counter as Tally
+from typing import List, Optional, Tuple
 
 import httpx
 import redis.asyncio as aioredis
 import structlog
 import trafilatura
+from prometheus_client import Counter, start_http_server
 
-from config import CATALOG, is_paywalled, settings, snapshot_key, summary_key
+from config import CATALOG, browser_host_key, feed_text_key, is_paywalled, settings, snapshot_key, summary_key
 from logging_config import configure_logging
 from services.redis_client import create_redis_client
-from services.safe_fetch import UnsafeURL, stream_public
+from services.safe_fetch import UnsafeURL, check_public, stream_public
 
 logger = structlog.get_logger(__name__)
 
@@ -43,11 +56,16 @@ ARTICLE_HEADERS = {
     "Accept-Language": "en-US,en;q=0.5",
 }
 MAX_ARTICLE_BYTES = 3_000_000
-MIN_TEXT_CHARS = 600  # Less is usually a paywall teaser or a video page
-MAX_TEXT_CHARS = 6000  # ~1,500 tokens: enough for the gist, keeps prompts fast
 LINK = re.compile(r"https?://|www\.", re.IGNORECASE)
 ARCHIVE = "https://archive.ph/newest/"  # Redirects to the latest snapshot, or 404s
-ARCHIVE_RETRY_SECONDS = 3 * 3600  # Snapshots of new articles often appear later
+BLOCKING_STATUSES = {401, 402, 403, 429, 503}  # What bot checks answer a plain request with
+BOT_CHECK_HEADERS = ("cf-mitigated", "x-datadome", "x-amzn-waf-action")  # Cloudflare, DataDome, AWS WAF (HTTP 202)
+
+ARTICLE_READS = Counter(
+    "summarizer_article_reads_total",
+    "Articles by how their text was read (direct, browser, feed, archive) or failed",
+    ["method"],
+)
 
 PROMPT = (
     "You summarize news articles for a headlines site. Write 2-3 plain sentences "
@@ -61,9 +79,10 @@ class LLMUnavailable(Exception):
 
 
 class ArticleUnusable(Exception):
-    def __init__(self, reason: str, retry_after: Optional[int] = None):
+    def __init__(self, reason: str, blocked: bool = False, final: bool = False):
         super().__init__(reason)
-        self.retry_after = retry_after or settings.SUMMARY_FAILED_TTL_SECONDS
+        self.blocked = blocked  # The site refused a plain request (a bot check)
+        self.final = final  # Nothing may read it another way (not a public address)
 
 
 async def top_items(redis_client: aioredis.Redis) -> List[dict]:
@@ -81,29 +100,55 @@ async def top_items(redis_client: aioredis.Redis) -> List[dict]:
     return list(items.values())
 
 
-async def fetch_text(client: httpx.AsyncClient, link: str) -> str:
-    """
-    The article's main text, or ArticleUnusable. A paywalled site's article
-    (config.PAYWALLED_HOSTS) that can't be read directly is read from its
-    latest archive.ph snapshot, if there is one.
-    """
-    try:
-        return await fetch_page_text(client, link, favor_precision=True)
-    except ArticleUnusable as e:
-        if not is_paywalled(httpx.URL(link).host):
-            raise
+async def fetch_text(client: httpx.AsyncClient, redis_client: aioredis.Redis, link: str) -> Tuple[str, str]:
+    """(The article's main text, how it was read), or ArticleUnusable. See the module docstring for the order."""
+    host = httpx.URL(link).host
+    browser = bool(settings.SUMMARIZER_BROWSER_URL)
+    errors = []
+    if not (browser and await redis_client.exists(browser_host_key(host))):
         try:
-            # archive.ph restructures pages; the default (not precision) extraction keeps the whole article
-            return await fetch_page_text(client, ARCHIVE + link, favor_precision=False)
-        except ArticleUnusable as archive_error:
-            raise ArticleUnusable(f"{e}; archive: {archive_error}", ARCHIVE_RETRY_SECONDS)
+            return await fetch_page_text(client, link, favor_precision=True), "direct"
+        except ArticleUnusable as e:
+            if e.final:
+                raise
+            if e.blocked and browser:
+                await redis_client.set(browser_host_key(host), 1, ex=settings.BROWSER_HOST_TTL_SECONDS)
+            errors.append(str(e))
+
+    async def from_browser() -> str:
+        return await fetch_browser_text(client, link)
+
+    async def from_feed() -> str:
+        text = await redis_client.get(feed_text_key(link))
+        if not text:
+            raise ArticleUnusable("none")
+        return text if isinstance(text, str) else text.decode()
+
+    async def from_archive() -> str:
+        # archive.ph restructures pages; the default (not precision) extraction keeps the whole article
+        return await fetch_page_text(client, ARCHIVE + link, favor_precision=False)
+
+    if is_paywalled(host):
+        steps = [("archive", from_archive), ("feed", from_feed)]
+    else:
+        steps = ([("browser", from_browser)] if browser else []) + [("feed", from_feed), ("archive", from_archive)]
+    for method, step in steps:
+        try:
+            return await step(), method
+        except ArticleUnusable as e:
+            if e.final:
+                raise
+            errors.append(f"{method}: {e}")
+    raise ArticleUnusable("; ".join(errors))
 
 
 async def fetch_page_text(client: httpx.AsyncClient, url: str, favor_precision: bool) -> str:
     try:
         async with stream_public(client, url, ARTICLE_HEADERS) as response:
             if response.status_code != 200:
-                raise ArticleUnusable(f"HTTP {response.status_code}")
+                blocked = (response.status_code in BLOCKING_STATUSES
+                           or any(header in response.headers for header in BOT_CHECK_HEADERS))
+                raise ArticleUnusable(f"HTTP {response.status_code}", blocked=blocked)
             if "html" not in response.headers.get("content-type", ""):
                 raise ArticleUnusable("not HTML")
             body = b""
@@ -114,11 +159,50 @@ async def fetch_page_text(client: httpx.AsyncClient, url: str, favor_precision: 
     except httpx.HTTPError as e:
         raise ArticleUnusable(type(e).__name__)
     except UnsafeURL as e:
-        raise ArticleUnusable(str(e))
-    text = await asyncio.to_thread(trafilatura.extract, body, favor_precision=favor_precision)
-    if not text or len(text) < MIN_TEXT_CHARS:
+        raise ArticleUnusable(str(e), final=True)
+    return await extract_text(body, favor_precision)
+
+
+async def fetch_browser_text(client: httpx.AsyncClient, link: str) -> str:
+    """The article's text as a real browser (FlareSolverr) sees it, through the public-only proxy."""
+    try:
+        await check_public(httpx.URL(link))
+    except UnsafeURL as e:
+        raise ArticleUnusable(str(e), final=True)
+    request = {"cmd": "request.get", "url": link, "maxTimeout": int(settings.SUMMARY_BROWSER_TIMEOUT * 1000)}
+    if settings.SUMMARIZER_BROWSER_PROXY:
+        request["proxy"] = {"url": settings.SUMMARIZER_BROWSER_PROXY}
+    try:
+        response = await client.post(f"{settings.SUMMARIZER_BROWSER_URL}/v1", json=request,
+                                     timeout=settings.SUMMARY_BROWSER_TIMEOUT + 30)
+        result = response.json()
+    except (httpx.HTTPError, ValueError) as e:
+        raise ArticleUnusable(type(e).__name__)
+    solution = result.get("solution") or {}
+    if result.get("status") != "ok":
+        raise ArticleUnusable(str(result.get("message") or "failed")[:120])
+    if solution.get("status") != 200:
+        raise ArticleUnusable(f"HTTP {solution.get('status')}")
+    return await extract_text(str(solution.get("response") or "").encode(), favor_precision=True)
+
+
+async def extract_text(html: bytes, favor_precision: bool) -> str:
+    """The page's main text. Precise extraction drops some sites' whole article, so too little is retried without it."""
+    text = await asyncio.to_thread(trafilatura.extract, html, favor_precision=favor_precision)
+    if favor_precision and (not text or len(text) < settings.SUMMARY_MIN_TEXT_CHARS):
+        text = await asyncio.to_thread(trafilatura.extract, html, favor_precision=False)
+    if not text or len(text) < settings.SUMMARY_MIN_TEXT_CHARS:
         raise ArticleUnusable("too little text")
-    return text[:MAX_TEXT_CHARS]
+    return text[:settings.SUMMARY_MAX_TEXT_CHARS]
+
+
+async def check_llm(client: httpx.AsyncClient) -> None:
+    """Raises LLMUnavailable unless the LLM server answers, so nothing is fetched for nothing."""
+    try:
+        response = await client.get(f"{settings.SUMMARIZER_LLM_URL}/api/tags", timeout=httpx.Timeout(10.0, connect=5.0))
+        response.raise_for_status()
+    except httpx.HTTPError as e:
+        raise LLMUnavailable(str(e) or type(e).__name__)
 
 
 async def summarize(client: httpx.AsyncClient, title: str, text: str) -> str:
@@ -154,23 +238,31 @@ async def summarize_new(client: httpx.AsyncClient, redis_client: aioredis.Redis)
         return 0
     known = await redis_client.mget([summary_key(item["link"]) for item in items])
     todo = [item for item, value in zip(items, known) if value is None]
+    if not todo:
+        return 0
+    await check_llm(client)
+    reads = Tally()
     done = 0
     for item in todo:
         key = summary_key(item["link"])
         try:
-            text = await fetch_text(client, item["link"])
+            text, method = await fetch_text(client, redis_client, item["link"])
         except ArticleUnusable as e:
-            await redis_client.set(key, json.dumps({"failed": str(e)}), ex=e.retry_after)
+            reads["failed"] += 1
+            ARTICLE_READS.labels(method="failed").inc()
+            retry = settings.SUMMARY_FAILED_TTL_SECONDS if e.final else settings.SUMMARY_RETRY_SECONDS
+            await redis_client.set(key, json.dumps({"failed": str(e)}), ex=retry)
             continue
+        reads[method] += 1
+        ARTICLE_READS.labels(method=method).inc()
         summary = await summarize(client, item["title"], text)
         if LINK.search(summary):  # Articles can steer the model (prompt injection); a summary never needs a link
             await redis_client.set(key, json.dumps({"failed": "summary contains a link"}), ex=settings.SUMMARY_FAILED_TTL_SECONDS)
             continue
-        await redis_client.set(key, json.dumps({"text": summary, "model": settings.SUMMARIZER_MODEL}),
+        await redis_client.set(key, json.dumps({"text": summary, "model": settings.SUMMARIZER_MODEL, "via": method}),
                                ex=settings.SUMMARY_TTL_SECONDS)
         done += 1
-    if todo:
-        logger.info("Summarized articles", summarized=done, unusable=len(todo) - done, pending_before=len(todo))
+    logger.info("Summarized articles", summarized=done, pending_before=len(todo), read=dict(reads))
     return done
 
 
@@ -180,10 +272,12 @@ async def run() -> None:
     if not settings.SUMMARIZER_LLM_URL:
         logger.info("SUMMARIZER_LLM_URL is not set, summaries are disabled")
         await asyncio.Event().wait()  # Stay up (restart: unless-stopped) without doing anything
+    start_http_server(settings.METRICS_PORT)
     redis_client = create_redis_client(socket_timeout=10, retries=3)
     available: Optional[bool] = None
     async with httpx.AsyncClient(timeout=15.0, http2=True) as client:
-        logger.info("Summarizer started", llm=settings.SUMMARIZER_LLM_URL, model=settings.SUMMARIZER_MODEL)
+        logger.info("Summarizer started", llm=settings.SUMMARIZER_LLM_URL, model=settings.SUMMARIZER_MODEL,
+                    browser=settings.SUMMARIZER_BROWSER_URL or None)
         while True:
             try:
                 await summarize_new(client, redis_client)
