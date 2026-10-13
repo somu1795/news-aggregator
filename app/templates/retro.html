@@ -103,6 +103,15 @@
         .search input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }  /* Esc or [/]search closes */
         .search .note { color: var(--muted); font-size: .85em; }
         .meta .where { color: var(--ink); }
+        /* Search words in results: bold with a dotted accent underline, no background */
+        mark {
+            background: none;
+            color: inherit;
+            font-weight: 700;
+            text-decoration: underline dotted var(--accent);
+            text-underline-offset: 3px;
+        }
+        .snippet { grid-column: 2; margin: .2rem 0 .1rem; padding-left: 1.5ch; border-left: 1px solid var(--muted); font-size: .9em; }
         .advanced .note { flex-basis: 100%; }
         .site-icon { width: 1em; height: 1em; vertical-align: -0.125em; margin-right: .6ch; border-radius: 2px; }
         .regions { display: flex; flex-wrap: wrap; gap: .25rem 1.5ch; margin-top: .9rem; }
@@ -566,7 +575,7 @@
             function searchResults() {
                 // Each word must start a word in the text ("elect" finds "election", "ai" doesn't find "said")
                 var words = normalize(search.query).split(/\s+/).filter(Boolean).map(function (w) {
-                    return new RegExp("(^|[^a-z0-9])" + w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+                    return new RegExp("(^|[^a-z0-9])" + escapeRegExp(w));
                 });
                 function all(text) { return words.every(function (w) { return w.test(text); }); }
                 var inTitle = [], inSummary = [];
@@ -575,11 +584,64 @@
                     else if (all(entry.text)) inSummary.push(entry);
                 });
                 function newest(a, b) { return b.item.published - a.item.published; }
+                inSummary.forEach(function (entry) { entry.inSummaryOnly = true; });
+                inTitle.forEach(function (entry) { entry.inSummaryOnly = false; });
                 var matches = inTitle.sort(newest).concat(inSummary.sort(newest));
                 search.count = matches.length;
                 return matches.slice(0, SEARCH_LIMIT).map(function (entry) {
-                    return Object.assign({}, entry.item, { where: whereLabel(entry.views) });
+                    return Object.assign({}, entry.item, { where: whereLabel(entry.views), inSummaryOnly: entry.inSummaryOnly });
                 });
+            }
+            function escapeRegExp(text) { return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+
+            // Highlighting: the searched words (two letters or more) wherever they start a word,
+            // found on the normalized text and mapped back to the original's letters ("cafe" marks "Café")
+            function highlightWords() {
+                return searching() ? normalize(search.query).split(/\s+/).filter(function (w) { return w.length >= 2; }) : [];
+            }
+            function matchRanges(text, words) {
+                if (!words.length || !text) return [];
+                var norm = "", map = [];
+                for (var i = 0; i < text.length; i++) {
+                    var n = normalize(text[i]);
+                    for (var j = 0; j < n.length; j++) { norm += n[j]; map.push(i); }
+                }
+                var ranges = [];
+                words.forEach(function (w) {
+                    var re = new RegExp("(^|[^a-z0-9])(" + escapeRegExp(w) + ")", "g"), m;
+                    while ((m = re.exec(norm))) {
+                        var start = m.index + m[1].length;
+                        ranges.push([map[start], map[start + w.length - 1] + 1]);
+                    }
+                });
+                ranges.sort(function (a, b) { return a[0] - b[0]; });
+                var merged = [];
+                ranges.forEach(function (r) {
+                    var last = merged[merged.length - 1];
+                    if (last && r[0] <= last[1]) last[1] = Math.max(last[1], r[1]);
+                    else merged.push(r.slice());
+                });
+                return merged;
+            }
+            function highlighted(text, words) {  // Text nodes and <mark>s, never HTML
+                var fragment = document.createDocumentFragment(), at = 0;
+                matchRanges(text, words).forEach(function (r) {
+                    if (r[0] > at) fragment.appendChild(document.createTextNode(text.slice(at, r[0])));
+                    var mark = document.createElement("mark");
+                    mark.textContent = text.slice(r[0], r[1]);
+                    fragment.appendChild(mark);
+                    at = r[1];
+                });
+                if (at < text.length) fragment.appendChild(document.createTextNode(text.slice(at)));
+                return fragment;
+            }
+            function snippetOf(text, words) {  // A few words around the first match, cut at spaces
+                var first = matchRanges(text, words)[0];
+                if (!first) return null;
+                var start = Math.max(0, first[0] - 60), end = Math.min(text.length, first[1] + 90);
+                if (start > 0) start = text.indexOf(" ", start) + 1 || start;
+                if (end < text.length) end = text.lastIndexOf(" ", end) > first[1] ? text.lastIndexOf(" ", end) : end;
+                return (start > 0 ? "\u2026" : "") + text.slice(start, end).trim() + (end < text.length ? "\u2026" : "");
             }
             function updateSearchNote() {
                 searchNote.textContent = search.loading ? "loading every tab..." : "";
@@ -709,6 +771,7 @@
                     items = state.data;
                 }
                 var service = BYPASS_SERVICES.filter(function (s) { return s.id === bypass; })[0];
+                var words = highlightWords();
                 sorted(items).forEach(function (item, i) {
                     var href = safeUrl(item.link);
                     if (!href) return;
@@ -733,7 +796,9 @@
                         icon.addEventListener("error", function () { this.remove(); });  // No icon cached for that site
                         body.appendChild(icon);
                     }
-                    body.appendChild(link(href, cleanTitle(item.title, item.source), "title"));
+                    var titleLink = link(href, "", "title");
+                    titleLink.appendChild(highlighted(cleanTitle(item.title, item.source), words));
+                    body.appendChild(titleLink);
                     if (host) {
                         var domain = document.createElement("span");
                         domain.className = "domain";
@@ -743,7 +808,8 @@
 
                     var meta = document.createElement("div");
                     meta.className = "meta";
-                    meta.appendChild(document.createTextNode(item.source + " \u00b7 " + ago(item.published)));
+                    meta.appendChild(highlighted(item.source, words));
+                    meta.appendChild(document.createTextNode(" \u00b7 " + ago(item.published)));
                     if (item.where) {  // A search result: the tabs it's in
                         meta.appendChild(document.createTextNode(" \u00b7 "));
                         var where = document.createElement("span");
@@ -761,7 +827,7 @@
                         summary = document.createElement("p");
                         summary.className = "summary";
                         summary.id = "summary-" + i;
-                        summary.textContent = item.summary;
+                        summary.appendChild(highlighted(item.summary, words));
                         var note = document.createElement("small");
                         note.textContent = "machine summary \u00b7 may contain errors";
                         summary.appendChild(note);
@@ -786,7 +852,9 @@
                             if (!otherHref) return;
                             if (service && service.prefix && isPaywalled(hostOf(otherHref))) otherHref = service.prefix + otherHref;
                             var row = document.createElement("li");
-                            row.appendChild(link(otherHref, cleanTitle(other.title, other.source)));
+                            var otherLink = link(otherHref, "");
+                            otherLink.appendChild(highlighted(cleanTitle(other.title, other.source), words));
+                            row.appendChild(otherLink);
                             var from = document.createElement("span");
                             from.textContent = " \u00b7 " + other.source;
                             row.appendChild(from);
@@ -821,6 +889,14 @@
                     li.appendChild(num);
                     li.appendChild(body);
                     li.appendChild(meta);
+                    // A result found only in its summary: show where, so it's clear why it's here
+                    var snippetText = item.inSummaryOnly && item.summary && snippetOf(item.summary, words);
+                    if (snippetText) {
+                        var snippet = document.createElement("p");
+                        snippet.className = "snippet";
+                        snippet.appendChild(highlighted(snippetText, words));
+                        li.appendChild(snippet);
+                    }
                     if (summary) li.appendChild(summary);
                     if (related) li.appendChild(related);
                     list.appendChild(li);
