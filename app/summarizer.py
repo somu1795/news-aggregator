@@ -20,6 +20,9 @@ An article's text is read, each step only if the previous ones failed:
    blocked a plain request is remembered for BROWSER_HOST_TTL_SECONDS: its
    articles go to the browser first. Once that expires, the next article tries
    a plain request again (and the site is remembered again if it's refused);
+   If it fails, a second browser with a different engine (Byparr, a modified
+   Firefox, at SUMMARIZER_BROWSER2_URL, behind the same proxy) tries: it gets
+   past some checks the first doesn't, but is slower;
 3. from the text the feed itself carried (stored by the refresher);
 4. from the latest archive.ph snapshot.
 Paywalled sites (config.PAYWALLED_HOSTS) go direct, archive, then feed text: a
@@ -63,7 +66,7 @@ BOT_CHECK_HEADERS = ("cf-mitigated", "x-datadome", "x-amzn-waf-action")  # Cloud
 
 ARTICLE_READS = Counter(
     "summarizer_article_reads_total",
-    "Articles by how their text was read (direct, browser, feed, archive) or failed",
+    "Articles by how their text was read (direct, browser, browser2, feed, archive) or failed",
     ["method"],
 )
 
@@ -116,7 +119,10 @@ async def fetch_text(client: httpx.AsyncClient, redis_client: aioredis.Redis, li
             errors.append(str(e))
 
     async def from_browser() -> str:
-        return await fetch_browser_text(client, link)
+        return await fetch_browser_text(client, settings.SUMMARIZER_BROWSER_URL, link)
+
+    async def from_browser2() -> str:
+        return await fetch_browser_text(client, settings.SUMMARIZER_BROWSER2_URL, link)
 
     async def from_feed() -> str:
         text = await redis_client.get(feed_text_key(link))
@@ -131,7 +137,9 @@ async def fetch_text(client: httpx.AsyncClient, redis_client: aioredis.Redis, li
     if is_paywalled(host):
         steps = [("archive", from_archive), ("feed", from_feed)]
     else:
-        steps = ([("browser", from_browser)] if browser else []) + [("feed", from_feed), ("archive", from_archive)]
+        steps = (([("browser", from_browser)] if browser else [])
+                 + ([("browser2", from_browser2)] if settings.SUMMARIZER_BROWSER2_URL else [])
+                 + [("feed", from_feed), ("archive", from_archive)])
     for method, step in steps:
         try:
             return await step(), method
@@ -163,8 +171,8 @@ async def fetch_page_text(client: httpx.AsyncClient, url: str, favor_precision: 
     return await extract_text(body, favor_precision)
 
 
-async def fetch_browser_text(client: httpx.AsyncClient, link: str) -> str:
-    """The article's text as a real browser (FlareSolverr) sees it, through the public-only proxy."""
+async def fetch_browser_text(client: httpx.AsyncClient, browser_url: str, link: str) -> str:
+    """The article's text as a real browser (FlareSolverr's API) at browser_url sees it, through the public-only proxy."""
     try:
         await check_public(httpx.URL(link))
     except UnsafeURL as e:
@@ -173,7 +181,7 @@ async def fetch_browser_text(client: httpx.AsyncClient, link: str) -> str:
     if settings.SUMMARIZER_BROWSER_PROXY:
         request["proxy"] = {"url": settings.SUMMARIZER_BROWSER_PROXY}
     try:
-        response = await client.post(f"{settings.SUMMARIZER_BROWSER_URL}/v1", json=request,
+        response = await client.post(f"{browser_url}/v1", json=request,
                                      timeout=settings.SUMMARY_BROWSER_TIMEOUT + 30)
         result = response.json()
     except (httpx.HTTPError, ValueError) as e:
@@ -277,7 +285,7 @@ async def run() -> None:
     available: Optional[bool] = None
     async with httpx.AsyncClient(timeout=15.0, http2=True) as client:
         logger.info("Summarizer started", llm=settings.SUMMARIZER_LLM_URL, model=settings.SUMMARIZER_MODEL,
-                    browser=settings.SUMMARIZER_BROWSER_URL or None)
+                    browser=settings.SUMMARIZER_BROWSER_URL or None, browser2=settings.SUMMARIZER_BROWSER2_URL or None)
         while True:
             try:
                 await summarize_new(client, redis_client)

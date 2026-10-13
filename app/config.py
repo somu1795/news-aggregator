@@ -163,6 +163,7 @@ class Settings(BaseSettings):
     # proxy it must use (Smokescreen: public addresses only). Empty disables it.
     SUMMARIZER_BROWSER_URL: str = ""
     SUMMARIZER_BROWSER_PROXY: str = ""
+    SUMMARIZER_BROWSER2_URL: str = ""  # A second browser (Byparr, same API), tried when the first fails
     SUMMARY_BROWSER_TIMEOUT: float = 60.0  # Per page, challenge included
     BROWSER_HOST_TTL_SECONDS: int = 7 * 86400  # A blocking site goes straight to the browser for this long
     FEED_TEXT_TTL_SECONDS: int = 2 * 86400  # The feed's own text of published items, for the summarizer

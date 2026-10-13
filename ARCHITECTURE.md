@@ -115,21 +115,22 @@ So request volume costs almost nothing upstream or in Redis, and users keep gett
 - The summary is stored in Redis at `summary:<hash of link>` for 7 days, with how its text was read (`via`). The refresher adds it to the item (`summary`) when it next publishes, so summaries appear within one refresh of being made.
 - **Reading the article**, each step only if the previous ones failed:
   1. **direct**: a plain request (public addresses only, see §7b);
-  2. **browser**: headless Chromium (`browser` service, FlareSolverr), which gets through bot checks that refuse plain requests (Cloudflare challenges, AWS WAF's HTTP 202). A site that blocked a plain request (401/402/403/429/503, or a `cf-mitigated`, `x-datadome` or `x-amzn-waf-action` header) is remembered for 7 days (`browser-host:<host>`) and its articles go straight to the browser; after that the next article tries a plain request again, and the site is remembered again if it's refused;
+  2. **browser**: headless Chromium (`browser` service, FlareSolverr), which gets through bot checks that refuse plain requests (Cloudflare challenges, AWS WAF's HTTP 202). A site that blocked a plain request (401/402/403/429/503, or a `cf-mitigated`, `x-datadome` or `x-amzn-waf-action` header) is remembered for 7 days (`browser-host:<host>`) and its articles go straight to the browser; after that the next article tries a plain request again, and the site is remembered again if it's refused. If the browser fails, a second one with a different engine tries (`browser2`, Byparr: a modified Firefox, same API);
   3. **feed**: the text the feed itself carried for the article. The refresher keeps it for every published item with at least 600 characters (`feed-text:<hash of link>`, 2 days);
   4. **archive**: the latest archive.ph snapshot.
 
   Paywalled sites (`PAYWALLED_HOSTS` in `config.py`, the same list the page's bypass uses) go direct, archive, then feed: a browser doesn't get past a paywall. Articles none of these can read (or with less than 600 characters of text) are marked and retried after 3 hours; links to non-public addresses are marked for a day and never reach the browser.
-- Measured on the 153 top stories that the direct fetch alone couldn't read: 121 became readable (browser 100, direct after the looser extraction 8, archive 7, feed 2…). Still unreadable: sites whose bot checks also stop a real browser (phys.org's own check, Forbes' DataDome, Akamai on Sky and News Corp sites) and paywalled articles without a snapshot. A browser page takes ~10 s (up to ~50 s).
+- Measured on the 153 top stories that the direct fetch alone couldn't read: 121 became readable (browser 100, direct after the looser extraction 8, archive 7, feed 2…), and the second browser read 4 of the remaining 32 (phys.org, ESPN). On pages the first browser reads, the second reads 28 of 30, at ~23 s a page instead of ~8 s, so it only runs after the first fails. Still unreadable: sites whose bot checks also stop a real browser (phys.org's own check, Forbes' DataDome, Akamai on Sky and News Corp sites) and paywalled articles without a snapshot. A browser page takes ~10 s (up to ~50 s).
 - Counts per method are logged every pass and exported as `summarizer_article_reads_total{method}` on the summarizer's metrics port (9100, inside the Docker network).
 - When the LLM server is unreachable (the desktop is off), nothing is fetched, summarized or marked: each pass first checks the server. It retries every minute, logging only when availability changes.
 
-### Headless browser (`browser` and `browser-egress` services)
+### Headless browsers (`browser`, `browser2` and `browser-egress` services)
 - `browser` is FlareSolverr (pinned image): a headless Chromium behind a small HTTP API, used only by the summarizer. Pages run their own JavaScript in it, so it is cut off from everything else:
   - it sits only on the `browser` network, which is `internal` (no internet). Raw connections from it to the internet, the LAN or the tailnet fail, and the stack's other containers (Redis, app) don't even resolve;
   - the summarizer has it load every page through `browser-egress`, a Smokescreen proxy (`smokescreen/Dockerfile`, built from a pinned, verified commit). The proxy connects to public internet addresses only: private, loopback, link-local, Docker and Tailscale/CGNAT (100.64/10) addresses are refused, after DNS and at every redirect. Tested: the LAN, the tailnet, a public URL redirecting into the LAN, and container names were all refused;
   - `browser-egress` is the only container on both `browser` and `egress` (its own network to the internet).
-- Limits: 1.5 CPUs, 1 GB, 512 processes, 256 MB shared memory; ~230 MB while loading a page.
+- `browser2` is Byparr (pinned image), with the same isolation: only on the `browser` network, every page through `browser-egress` (`PROXY_SERVER`), and its own downloads too (`HTTPS_PROXY`: a GeoIP database at start, kept in the `browser2_cache` volume). Its locale and timezone are fixed so it doesn't look up its public IP.
+- Limits: `browser` 1.5 CPUs, 1 GB, 512 processes, 256 MB shared memory (~300 MB while loading a page); `browser2` 1.5 CPUs, 1.5 GB (its temporary files are in memory), 512 processes.
 
 ### Site icons
 - After each refresh, the refresher caches the icon of every website in the published views that it doesn't have yet. It fetches them from DuckDuckGo's icon service (`ICON_SOURCE_URL`) and keeps them in Redis for 7 days; a site without one is retried after a day.
@@ -417,7 +418,7 @@ A visitor makes 2 requests per page load plus 1 per region viewed, so 100/minute
 | `SUMMARIZER_LLM_URL` / `SUMMARIZER_MODEL` | empty / `qwen3:8b` | The Ollama server (empty disables summaries) and its model. Set in `.env`. |
 | `SUMMARY_TOP_N` / `SUMMARY_TTL_SECONDS` / `SUMMARY_FAILED_TTL_SECONDS` | 20 / 7 days / 1 day | Items per view that get a summary; how long a summary, and a failed article, are kept. |
 | `SUMMARY_RETRY_SECONDS` | 3 hours | When an article no step could read is tried again. |
-| `SUMMARIZER_BROWSER_URL` / `SUMMARIZER_BROWSER_PROXY` | set in `docker-compose.yml` | The headless browser and the public-only proxy it must use; empty disables the browser step. |
+| `SUMMARIZER_BROWSER_URL` / `SUMMARIZER_BROWSER_PROXY` / `SUMMARIZER_BROWSER2_URL` | set in `docker-compose.yml` | The headless browser, the public-only proxy it must use, and the second browser; empty disables a browser step. |
 | `BROWSER_HOST_TTL_SECONDS` | 7 days | How long a site that blocked a plain request goes straight to the browser. |
 | `FEED_TEXT_TTL_SECONDS` | 2 days | How long the feed's own text of a published item is kept. |
 | `MAX_HEADLINES` | 80 | Headlines per view (each region, and "all"). |

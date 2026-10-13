@@ -254,3 +254,22 @@ def test_feed_text_prefers_the_full_content_as_plain_text():
     entries = feedparser.parse(xml).entries
     assert feed_text(entries[0]) == "First paragraph.Second & last."
     assert feed_text(entries[1]) == ""
+
+
+@respx.mock
+async def test_the_second_browser_tries_when_the_first_fails(mock_redis, with_browser, monkeypatch):
+    browser2_url = "http://browser2.example:8191"
+    monkeypatch.setattr(settings, "SUMMARIZER_BROWSER2_URL", browser2_url)
+    await put_view(mock_redis, "all", [1])
+    await mock_redis.set(feed_text_key("https://pub.example/1"), "The council met. " * 50)  # Not needed: browser2 wins
+    respx.get("https://pub.example/1").mock(return_value=httpx.Response(403))
+    first = respx.post(f"{BROWSER}/v1").mock(return_value=browser_page("<p>Checking your connection</p>"))
+    second = respx.post(f"{browser2_url}/v1").mock(return_value=browser_page())
+    llm_up()
+
+    async with httpx.AsyncClient() as client:
+        assert await summarize_new(client, mock_redis) == 1
+
+    assert first.call_count == 1 and second.call_count == 1
+    assert json.loads(second.calls[0].request.content)["proxy"] == {"url": PROXY}
+    assert json.loads(await mock_redis.get(summary_key("https://pub.example/1")))["via"] == "browser2"

@@ -95,6 +95,7 @@ services:
       - SUMMARIZER_MODEL=${SUMMARIZER_MODEL:-qwen3:8b}
       - SUMMARIZER_BROWSER_URL=http://browser:8191
       - SUMMARIZER_BROWSER_PROXY=http://browser-egress:4750
+      - SUMMARIZER_BROWSER2_URL=http://browser2:8191
     volumes:
       - ./app/sources.json:/app/sources.json:ro
     networks: [default, browser]
@@ -128,6 +129,35 @@ services:
         limits:
           cpus: '1.5'
           memory: 1G
+          pids: 512
+    restart: unless-stopped
+
+  # A second headless browser (Byparr, a modified Firefox; same API as FlareSolverr),
+  # tried when the first fails: it gets past some bot checks the first doesn't, but
+  # is slower. Same isolation as `browser`: the internal network, and every page and
+  # its own downloads (a GeoIP database, at start) through browser-egress.
+  browser2:
+    <<: *hardened
+    image: ghcr.io/thephaseless/byparr:3.0.4
+    environment:
+      - PROXY_SERVER=http://browser-egress:4750
+      - HTTPS_PROXY=http://browser-egress:4750
+      - HTTP_PROXY=http://browser-egress:4750
+      - NO_PROXY=localhost,127.0.0.1
+      # Fixed, so it doesn't look up its public IP to pick them
+      - BROWSER_LOCALE=en-US
+      - BROWSER_TIMEZONE=UTC
+    networks: [browser]
+    volumes:
+      - browser2_cache:/cache  # The GeoIP database, kept across restarts
+    tmpfs:
+      - /tmp:size=256m  # Its many temporary files stay in memory (counted in the limit)
+    shm_size: 512m
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 1536M
           pids: 512
     restart: unless-stopped
 
@@ -261,6 +291,7 @@ networks:
   egress:
 
 volumes:
+  browser2_cache:
   tagger_data:
   redis_data:
   caddy_data:
