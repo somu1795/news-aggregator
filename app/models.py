@@ -8,6 +8,13 @@ from typing import List, Optional
 from pydantic import BaseModel
 
 
+class RelatedItem(BaseModel):
+    """Another outlet's headline about the same story."""
+    title: str
+    link: str
+    source: str
+
+
 class HeadlineItem(BaseModel):
     title: str
     link: str
@@ -16,6 +23,7 @@ class HeadlineItem(BaseModel):
     last_updated: float
     comments: Optional[str] = None  # Discussion page, when the feed provides one (e.g. Hacker News)
     summary: Optional[str] = None  # Machine-written summary of the article (top items only, see summarizer.py)
+    related: List[RelatedItem] = []  # Other headlines about the same story in this view (services/story_groups.py)
 
 
 class APIResponse(BaseModel):

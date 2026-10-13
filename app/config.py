@@ -22,6 +22,7 @@ class NewsSource(BaseModel):
     # For the tagger: "other" for general national news, or the topic of a single-topic feed
     # (its items are always tagged with it, as for a TopicSource)
     label: Optional[str] = None
+    max_items: Optional[int] = None  # At most this many of its items per view (for a feed whose quality varies)
 
 
 class TopicSource(BaseModel):
@@ -29,6 +30,7 @@ class TopicSource(BaseModel):
     name: str
     url: str
     label: str  # Its topic: every item is tagged with it, and it trains the tagger
+    max_items: Optional[int] = None  # At most this many of its items per view (for a feed whose quality varies)
 
 
 class Topic(BaseModel):
@@ -134,6 +136,11 @@ class Settings(BaseSettings):
 
     # --- Feed Fetching & Mixing Settings ---
     MAX_HEADLINES: int = 80  # Per view (each region, and "all")
+    # Views are built this many items longer, so that once each story is shown only once
+    # (its other headlines folded under it, see services/story_groups.py) they still fill up
+    STORY_GROUP_HEADROOM: int = 40
+    STORY_GROUP_TIMEOUT: float = 60.0  # The first grouping after a start embeds every headline
+    MAX_RELATED: int = 8  # Other outlets' headlines kept under a story
     MAX_HEADLINE_AGE_HOURS: int = 48  # Older items are dropped
     MAX_PER_PUBLISHER: int = 3  # Cap per publisher in a view (single-publisher feeds are bounded by their weight instead)
     REQUEST_TIMEOUT: float = 10.0

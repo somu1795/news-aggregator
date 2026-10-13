@@ -123,6 +123,19 @@
             font-size: .9em;
         }
         .summary small { display: block; color: var(--muted); font-size: .85em; margin-top: .2rem; }
+        .related {
+            grid-column: 2;
+            margin: .3rem 0 .1rem;
+            padding-left: 1.5ch;
+            border-left: 1px solid var(--muted);
+            list-style: none;
+            font-size: .9em;
+        }
+        .related li { display: block; margin: .15rem 0; }
+        .related a { color: var(--ink); text-decoration: none; }
+        .related a:visited { color: var(--visited); }
+        .related a:hover { text-decoration: underline; }
+        .related span { color: var(--muted); }
 
         .notice { color: var(--muted); padding: 1rem 0; }
         .notice.error { color: var(--accent); }
@@ -150,7 +163,7 @@
             </nav>
         </div>
         <nav class="advanced" id="advanced" aria-label="Advanced" hidden>
-            <button id="reset" title="Forget every setting on this device: region, topic, sort, theme, bypass, site icons, auto refresh, open summaries">reset</button>
+            <button id="reset" title="Forget every setting on this device: region, topic, sort, theme, bypass, site icons, auto refresh, open summaries and sources">reset</button>
             <button id="install" title="Install news.txt as an app">install</button>
             <button id="site-icons" aria-pressed="false" title="Show each website's icon before its headlines">site icons: off</button>
             <button id="auto-refresh" title="Refresh the open tab by itself: off, 5m, 15m, 30m, 1h">auto refresh: off</button>
@@ -481,6 +494,7 @@
             function resetAll() {
                 ["retroRegion", "retroTopic", "retroSort", "retroTheme", "bypassService", "retroSiteIcons", "retroAutoRefresh"].forEach(forget);  // bypassService: shared with the old classic page
                 openSummaries = {};
+                openRelated = {};
                 sortMode = "mix";
                 shuffleKeys = {};
                 siteIcons = false;
@@ -501,6 +515,16 @@
 
             // Open summaries, by link: they stay open when the list is re-rendered
             var openSummaries = {};
+
+            // Open lists of other outlets' headlines, by link (as for summaries)
+            var openRelated = {};
+
+            function setRelatedOpen(related, toggle, link, open) {
+                related.hidden = !open;
+                toggle.textContent = open ? "hide sources" : "+" + related.children.length + " sources";
+                toggle.setAttribute("aria-expanded", String(open));
+                if (open) openRelated[link] = true; else delete openRelated[link];
+            }
 
             function setSummaryOpen(summary, toggle, link, open) {
                 summary.hidden = !open;
@@ -581,6 +605,37 @@
                         meta.appendChild(document.createTextNode(" \u00b7 "));
                         meta.appendChild(toggle);
                     }
+                    // Other outlets' headlines about the same story, folded under this one by the server
+                    var related = null;
+                    if (item.related && item.related.length) {
+                        related = document.createElement("ul");
+                        related.className = "related";
+                        related.id = "related-" + i;
+                        item.related.forEach(function (other) {
+                            var otherHref = safeUrl(other.link);
+                            if (!otherHref) return;
+                            if (service && service.prefix && isPaywalled(hostOf(otherHref))) otherHref = service.prefix + otherHref;
+                            var row = document.createElement("li");
+                            row.appendChild(link(otherHref, cleanTitle(other.title, other.source)));
+                            var from = document.createElement("span");
+                            from.textContent = " \u00b7 " + other.source;
+                            row.appendChild(from);
+                            related.appendChild(row);
+                        });
+                        if (related.children.length) {
+                            var relatedToggle = document.createElement("button");
+                            relatedToggle.type = "button";
+                            relatedToggle.setAttribute("aria-controls", related.id);
+                            setRelatedOpen(related, relatedToggle, item.link, !!openRelated[item.link]);
+                            relatedToggle.addEventListener("click", function (related, toggle, link) {
+                                return function () { setRelatedOpen(related, toggle, link, related.hidden); };
+                            }(related, relatedToggle, item.link));
+                            meta.appendChild(document.createTextNode(" \u00b7 "));
+                            meta.appendChild(relatedToggle);
+                        } else {
+                            related = null;
+                        }
+                    }
                     if (bypassed) {
                         var mark = document.createElement("span");
                         mark.className = "paywall";
@@ -592,6 +647,7 @@
                     li.appendChild(body);
                     li.appendChild(meta);
                     if (summary) li.appendChild(summary);
+                    if (related) li.appendChild(related);
                     list.appendChild(li);
                 });
             }

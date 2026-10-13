@@ -27,6 +27,13 @@ ADD --checksum=sha256:2b5a19a34489c1b17d2a6769409f903ab496d3a4f59ea847ec218a9c77
 ADD --checksum=sha256:d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66 \
     https://huggingface.co/Xenova/bge-small-en-v1.5/resolve/ea104dacec62c0de699686887e3f920caeb4f3e3/tokenizer.json \
     /models/bge-small-en-v1.5/tokenizer.json
+# Story grouping model: multilingual-e5-small (MIT), fp16 ONNX
+ADD --checksum=sha256:0e0fe349c99ea21c6f3aa273af21f7fb753c1e1174ef1647032029c2be3251c3 \
+    https://huggingface.co/Xenova/multilingual-e5-small/resolve/761b726dd34fb83930e26aab4e9ac3899aa1fa78/onnx/model_fp16.onnx \
+    /models/multilingual-e5-small/model.onnx
+ADD --checksum=sha256:0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39 \
+    https://huggingface.co/Xenova/multilingual-e5-small/resolve/761b726dd34fb83930e26aab4e9ac3899aa1fa78/tokenizer.json \
+    /models/multilingual-e5-small/tokenizer.json
 RUN chmod -R a+rX /models
 
 COPY requirements.txt /tmp/requirements.txt

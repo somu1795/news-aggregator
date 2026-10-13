@@ -200,8 +200,8 @@ services:
       resources:
         limits:
           cpus: '2'
-          # ~450 MB in use; the first start (NPU compile + training) peaks at ~1.2 GB
-          memory: 1536M
+          # Two models (topics, and story grouping); measured use is in ARCHITECTURE.md §6
+          memory: 2G
           pids: 256
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=4)"]

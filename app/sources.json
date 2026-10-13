@@ -202,7 +202,8 @@
         {
           "name": "The Better India",
           "url": "https://thebetterindia.com/feed/",
-          "label": "uplifting"
+          "label": "uplifting",
+          "max_items": 15
         }
       ]
     },

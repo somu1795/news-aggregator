@@ -52,7 +52,7 @@ def tagger(tmp_path, monkeypatch):
     (bundled / "eval.json").write_text(json.dumps(EVAL))
     monkeypatch.setattr(tagger_module, "BUNDLED", bundled)
     monkeypatch.setattr(tagger_module, "TOPIC_THRESHOLD", 0.5)  # The toy embedding's classifier is never very confident
-    t = Tagger(FakeEmbedder(), tmp_path)
+    t = Tagger(FakeEmbedder(), tmp_path, story_embedder=FakeEmbedder())
     t.start()
     return t
 
@@ -116,3 +116,28 @@ def test_retrain_uses_only_the_newest_labelled_headlines(tagger, monkeypatch):
     monkeypatch.setattr(tagger_module, "train", lambda X, labels: trained.append(labels) or tagger.classifier)
     tagger.retrain()
     assert len(trained[0]) == 3 and trained[0][0] == "sport"  # Newest first, capped
+
+
+def test_group_puts_the_same_story_together(tagger, monkeypatch):
+    monkeypatch.setattr(tagger_module, "STORY_THRESHOLD", 0.8)
+    items = [
+        Item(title="apple unveils homepod mini two with siri", source="A"),
+        Item(title="minister resigns over budget vote", source="B"),
+        Item(title="apple unveils homepod mini two with siri today", source="C"),
+        Item(title="apple unveils homepod mini two with siri - D", source="D"),  # Google's publisher suffix
+        Item(title="minister resigns over budget vote", source="E"),  # Same title, another outlet
+    ]
+    groups = tagger.group(items)
+    assert groups[0] == groups[2] == groups[3] and groups[1] == groups[4] and groups[0] != groups[1]
+    # Story embeddings are stored: grouping again embeds nothing
+    tagger.story_embedder.embedded.clear()
+    assert tagger.group(items) == groups and tagger.story_embedder.embedded == []
+
+
+def test_group_compares_with_leaders_so_stories_dont_chain(tagger, monkeypatch):
+    monkeypatch.setattr(tagger_module, "STORY_THRESHOLD", 0.7)
+    a = "red blue green yellow orange purple"
+    b = "red blue green yellow orange black white"   # Close to a
+    c = "red blue green black white pink grey"       # Close to b, not to a
+    groups = tagger.group([Item(title=a), Item(title=b), Item(title=c)])
+    assert groups[0] == groups[1] and groups[2] != groups[0]

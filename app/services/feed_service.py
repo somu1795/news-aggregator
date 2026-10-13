@@ -143,9 +143,14 @@ def _title_key(headline: Dict) -> str:
     return re.sub(r"[^a-z0-9]+", " ", title.lower()).strip()
 
 
+def build_limit() -> int:
+    """How long views are built: room for the stories that grouping folds into others."""
+    return settings.MAX_HEADLINES + settings.STORY_GROUP_HEADROOM
+
+
 def mix_headlines(
     sources: List[NewsSource], results_by_source: Dict[str, List[Dict]], now: float, view: str = "",
-    cap_publishers: bool = True, max_age_hours: Optional[int] = None,
+    cap_publishers: bool = True, max_age_hours: Optional[int] = None, limit: Optional[int] = None,
 ) -> List[Dict]:
     """
     Builds the final list by interleaving sources according to their weights.
@@ -153,6 +158,7 @@ def mix_headlines(
     - Each source keeps its own feed order (Google's ranking, HN's front-page rank).
     - Items older than max_age_hours (default MAX_HEADLINE_AGE_HOURS) are dropped.
     - Duplicates (same link or same normalized title) are dropped, first one wins.
+    - At most a source's max_items items, when it sets one.
     - At most MAX_PER_PUBLISHER items per publisher. A feed whose items all come
       from one publisher (e.g. ABC Australia's own feed) is exempt: its share is
       already bounded by its weight. `cap_publishers=False` skips the cap, for
@@ -161,7 +167,10 @@ def mix_headlines(
       list has roughly the configured mix (e.g. W S W H W S W W H S ... for 0.5/0.3/0.2)
       and the order is deterministic between refreshes.
     - A source that runs out drops out of the rotation and the others fill its slots.
+    - At most `limit` items (default MAX_HEADLINES). Views are built longer (build_limit())
+      and cut to MAX_HEADLINES once each story is shown once (services/story_groups.py).
     """
+    limit = limit or settings.MAX_HEADLINES
     min_published = now - (max_age_hours or settings.MAX_HEADLINE_AGE_HOURS) * 3600
     fresh = {
         source.name: [h for h in results_by_source.get(source.name, []) if h["published"] >= min_published]
@@ -171,6 +180,7 @@ def mix_headlines(
     pending = {name: iter(items) for name, items in fresh.items()}
     single_publisher = {name for name, items in fresh.items() if len({_publisher_key(h) for h in items}) == 1}
     weights = {source.name: source.weight for source in sources}
+    max_items = {source.name: source.max_items for source in sources if source.max_items is not None}
     credit = {name: 0.0 for name in weights}
     active = [source.name for source in sources]  # Config order breaks ties
 
@@ -180,7 +190,7 @@ def mix_headlines(
     skipped = Counter()
     mixed: List[Dict] = []
 
-    while active and len(mixed) < settings.MAX_HEADLINES:
+    while active and len(mixed) < limit:
         # Smooth weighted round-robin: every active source earns its weight,
         # the one with the most credit is picked and pays back the active total.
         for name in active:
@@ -188,6 +198,9 @@ def mix_headlines(
         name = max(active, key=lambda n: credit[n])
         credit[name] -= sum(weights[n] for n in active)
 
+        if picked_per_source[name] >= max_items.get(name, limit):
+            active.remove(name)  # Capped; its share goes to the remaining sources
+            continue
         for headline in pending[name]:
             title_key = _title_key(headline)
             publisher = _publisher_key(headline)
@@ -249,7 +262,7 @@ def build_views(catalog: Catalog, results_by_source: Dict[str, List[Dict]], now:
     previous snapshot is kept rather than replaced by extras alone.
     """
     regional = {
-        region.id: mix_headlines(region.sources, results_by_source, now, view=f"{region.id}/news")
+        region.id: mix_headlines(region.sources, results_by_source, now, view=f"{region.id}/news", limit=build_limit())
         for region in catalog.regions
     }
     world = mix_headlines(
@@ -257,15 +270,17 @@ def build_views(catalog: Catalog, results_by_source: Dict[str, List[Dict]], now:
         {f"region:{region_id}": items for region_id, items in regional.items()},
         now,
         view=f"{ALL_VIEW}/news",
+        limit=build_limit(),
     )
-    extras = {source.name: mix_headlines([source], results_by_source, now, view=source.name) for source in catalog.extras}
+    extras = {source.name: mix_headlines([source], results_by_source, now, view=source.name, limit=build_limit())
+              for source in catalog.extras}
     news_weight = 1 - sum(source.weight for source in catalog.extras)
 
     def with_extras(view: str, news: List[Dict]) -> List[Dict]:
         if not news:
             return []
         sources = [NewsSource(name="news", url="", weight=news_weight)] + catalog.extras
-        return mix_headlines(sources, {"news": news} | extras, now, view=view, cap_publishers=False)
+        return mix_headlines(sources, {"news": news} | extras, now, view=view, cap_publishers=False, limit=build_limit())
 
     views = {region_id: with_extras(region_id, items) for region_id, items in regional.items()}
     views[ALL_VIEW] = with_extras(ALL_VIEW, world)
@@ -388,12 +403,13 @@ def build_topic_views(
     everything = [s for sources in own.values() for s in sources] + shared
 
     def equal(sources) -> List[NewsSource]:
-        return [NewsSource(name=s.name, url=s.url, weight=1.0) for s in sources]
+        return [NewsSource(name=s.name, url=s.url, weight=1.0, max_items=s.max_items) for s in sources]
 
     def view_for(groups, topic: Topic, view: str) -> List[Dict]:
         """groups: (sources, their tagged items), in order of preference."""
         def mixed(sources, items):
-            return mix_headlines(equal(sources), items, now, view=view, max_age_hours=topic.max_age_hours)
+            return mix_headlines(equal(sources), items, now, view=view, max_age_hours=topic.max_age_hours,
+                                 limit=build_limit())
         lists = [mixed([s for s in sources if s.label == topic.id], items) for sources, items in groups]
         if topic.id not in FEED_ONLY_TOPICS:
             lists += [mixed([s for s in sources if s.label != topic.id], items) for sources, items in groups]
@@ -404,7 +420,7 @@ def build_topic_views(
                 if seen.isdisjoint(keys):
                     seen |= keys
                     combined.append(h)
-        return combined[:settings.MAX_HEADLINES]
+        return combined[:build_limit()]
 
     views = {}
     for topic in catalog.topics:

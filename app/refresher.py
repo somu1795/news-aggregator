@@ -32,6 +32,7 @@ from models import APIResponse
 from services.feed_service import get_fresh_views, get_topic_views
 from services.redis_client import create_redis_client
 from services.site_icons import cache_icons
+from services.story_groups import group_stories
 
 logger = structlog.get_logger(__name__)
 
@@ -111,6 +112,7 @@ async def refresh_once(http_client: httpx.AsyncClient, redis_client: aioredis.Re
         logger.error("Refresh produced no headlines, keeping previous snapshots")
         return 0
 
+    published = await group_stories(http_client, published)
     await publish(redis_client, published, fetched_at)
 
     empty = sorted(set(views) - set(published))
@@ -132,6 +134,7 @@ async def refresh_topics(
         views = await asyncio.wait_for(
             get_topic_views(http_client, redis_client, results_by_source), settings.TOPIC_REFRESH_TIMEOUT_SECONDS,
         )
+        views = await group_stories(http_client, views)
         await publish(redis_client, views, time.time())
     except Exception as e:
         TOPIC_REFRESHES.labels(result="error").inc()

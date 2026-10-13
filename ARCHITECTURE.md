@@ -105,7 +105,7 @@ So request volume costs almost nothing upstream or in Redis, and users keep gett
 - Owns all upstream traffic: feeds, Google link resolution, writing the snapshots (see §4).
 
 ### Tagger (`tagger` service)
-- `tagger/tagger.py`, its own image (Ubuntu 24.04, OpenVINO and Intel's NPU user-space driver). Internal only: `POST /tag`, `GET /health`. See §6.
+- `tagger/tagger.py`, its own image (Ubuntu 24.04, OpenVINO and Intel's NPU user-space driver). Internal only: `POST /tag`, `POST /group` (story grouping), `GET /health`. See §6.
 - Runs on the Intel NPU (`/dev/accel`); falls back to the CPU if the NPU can't be used.
 
 ### Summarizer (`summarizer` service)
@@ -199,11 +199,11 @@ Fetching:
 4. **Skip duplicates and over-represented publishers:**
    - an item is a duplicate if its link, or its title (case and punctuation ignored, Google's " - Publisher" suffix removed), was already taken; the first occurrence wins;
    - at most `MAX_PER_PUBLISHER` (**3**) items per publisher. The publisher is the publisher name for Google items and the link's domain for direct links. **A feed whose items all come from one publisher** (e.g. ABC Australia's own feed) is exempt, because its weight already bounds its share.
-5. **Redistribute unused slots.** A source that runs out drops out of the rotation, and the others fill up to `MAX_HEADLINES` (**80**) in proportion to their weights.
+5. **Redistribute unused slots.** A source that runs out, or reaches its `max_items` (an optional per-source cap in `sources.json`, for a feed whose quality varies), drops out of the rotation, and the others fill the list in proportion to their weights. Views are built `STORY_GROUP_HEADROOM` (**40**) longer than `MAX_HEADLINES` (**80**); Step 4 cuts them to 80 once each story is shown once.
 
 The result is **deterministic**: the same feeds give the same order, so lists only change when the news changes. Each view logs a `Mixed headlines` line with counts per source and items dropped as stale, duplicate or over the cap.
 
-Not handled: the same event reported by two outlets under different headlines isn't detected, because de-duplication is by link and normalized title only.
+The same story reported by several outlets under different headlines is folded into one item in Step 4.
 
 ### Step 3 — Resolve links
 Google News RSS links point at Google, not at the publisher. Direct links (outlets, Hacker News) are used as-is with no network calls. Each distinct Google link across all views is resolved once, with at most 10 resolutions in flight, through `services/link_resolver.py`:
@@ -222,6 +222,7 @@ Google News RSS links point at Google, not at the publisher. Direct links (outle
 Outcomes are counted in `redirect_resolutions_total{outcome}` (custom resolver) and `redirect_fallbacks_total{outcome}` (fallback).
 
 ### Step 4 — Publish
+- **One item per story** (`services/story_groups.py`). Every headline in the views goes to the tagger's `POST /group`, which groups headlines about the same story (§6). In each view, the first-ranked headline of a story stays and its other headlines in that view are folded under it (`related`: title, link, source; at most `MAX_RELATED`, **8**), so later stories move up; the view is then cut to 80. If the tagger fails, views are published ungrouped. Measured on one cycle: 8 headlines folded in the main views, 151 in the topic views (tech, science and culture repeat most, e.g. one Apple launch from five outlets).
 - Each view's snapshot (`region`, `data`, `fetched_at`, `expires_at = fetched_at + 5 min`) is validated against the API schema and written to `headlines:<view>` with **no TTL**. All views are written in one pipelined round-trip.
 - **Publishing criteria — a view's previous snapshot is kept when:**
   - that view's news came out empty (e.g. all of a region's feeds failed). The other views are still published, and a warning names the empty views;
@@ -267,7 +268,7 @@ Consequence: a newly published snapshot reaches users within about 5s, and the A
   - The last region and topic are remembered when the URL doesn't name them.
   - A tab that was already loaded switches instantly and refreshes in the background if older than a minute.
   - A slow response for one view can never overwrite another view's list.
-- Each item shows the title (without Google's " - Publisher" suffix), the domain, the source and age, plus "discuss" for Hacker News posts (a feed's comments link is dropped when it's just the article itself) and "summary" for items with one, which opens it under the item, labelled as a machine summary (it stays open across refreshes).
+- Each item shows the title (without Google's " - Publisher" suffix), the domain, the source and age, plus "discuss" for Hacker News posts (a feed's comments link is dropped when it's just the article itself) and "summary" for items with one, which opens it under the item, labelled as a machine summary (it stays open across refreshes). A story that other outlets in the view also carry shows "+N sources", which opens their headlines (linked, with their source) under it.
 - Other controls:
   - `r` refreshes;
   - `a` (or [a]dvanced) shows a second row: **reset** (forgets every setting on this device: region, topic, sort, theme, bypass, site icons, auto refresh, and closes open summaries), **install** (the browser's own install prompt, when it offers one; the site has a web app manifest, so Chrome can install it), **site icons** (off by default: each website's icon before its headlines, at text size), **auto refresh** (cycles off, 5m, 15m, 30m, 1h: the open view is fetched again once it's older than that, checked every 30 s and on returning to the tab, never while the tab is hidden), and **bypass** (off by default; "archive" opens known paywalled sites via `archive.ph/newest/<url>`, which goes straight to the latest snapshot);
@@ -295,9 +296,11 @@ The tagger (`tagger/tagger.py`) gives each headline zero or more of `tech`, `sci
 
 **Storage:** SQLite (`/data/tagger.db` in the `tagger_data` volume, WAL mode). One row per headline, by cleaned title: source, link, feed label, tags, the classifier version that tagged it, and its embedding (float16, 768 bytes). A headline is embedded only the first time it's seen; after a retrain, stored headlines are re-tagged from their stored embeddings without re-embedding. Each headline takes roughly 1 KB.
 
-**Retraining:** every `RETRAIN_INTERVAL_HOURS` (**24**, counted from the last training, so restarts don't postpone it), on every labelled headline in the database. The candidate replaces the current classifier only if its macro F1 on the hand-labelled `tagger/data/eval.json` (325 headlines, never trained on) is at least as good. Both scores are logged. Training runs on its own thread; tagging continues meanwhile. Measured: the first retrain, after one cycle's new labels, went from F1 0.623 to 0.633 and from 8.9% to 8.1% hard-news leak (with the base model, before fine-tuning).
+**Retraining:** every `RETRAIN_INTERVAL_HOURS` (**24**, counted from the last attempt: at start-up it waits out what's left since the saved classifier was trained, so restarts don't postpone it), on the newest 100,000 labelled headlines in the database. The candidate replaces the current classifier only if its macro F1 on the hand-labelled `tagger/data/eval.json` (598 headlines, never trained on) is at least as good. Both scores are logged. Training runs on its own thread; tagging continues meanwhile. Measured: the first retrain, after one cycle's new labels, went from F1 0.623 to 0.633 and from 8.9% to 8.1% hard-news leak (with the base model, before fine-tuning).
 
-**Why this design (benchmarked on 325 hand-labelled headlines):**
+**Evaluation set:** `tagger/data/eval.json` has 598 hand-labelled headlines: 325 from the first version (48 of their labels were corrected, e.g. hurling and rugby headlines labelled `tech`, obituaries labelled `science`), and 273 added from three days of live headlines (120 general news, the rest from topic feeds, labelled without seeing the feed). Labelling rules: tech covers technology, AI and video games; science covers research, space and medicine; nature covers environment, climate, weather and wildlife; culture covers entertainment, celebrities, arts and fashion; uplifting is a tone and can combine with a topic; politics, crime, economy and conflict get no tag. On it, the classifier in use scores F1 0.648 with 5.3% hard-news leak; a retrain on the 15,900 labelled headlines stored after three days scored F1 0.636 with 3.2% leak, so the gate (F1 only) kept the current one.
+
+**Why this design (benchmarked on the first 325 hand-labelled headlines):**
 
 | Approach | Macro F1 | Hard news wrongly tagged | Speed |
 | --- | --- | --- | --- |
@@ -314,11 +317,13 @@ bge-small was chosen over EmbeddingGemma for memory (the tagger uses ~450 MB) an
 
 **Fine-tuning:** `tagger/finetune.py` trains the whole of bge-small (not just the classifier on top) on `seed.json`, then exports it to ONNX with fp16 weights. It needs a CUDA GPU (a desktop RTX 3060 Ti took ~20 s) and is deterministic: the same seed gives the same file, whose checksum the Dockerfile pins. On the NPU it scores F1 0.665 (base model 0.621) and 9.8% leak (8.9%: one more of the 123 hard-news headlines). Its NPU and CPU embeddings still match, so the CPU fallback is unaffected. The daily retrain keeps training only the classifier, on the fine-tuned embeddings. Replacing the model later needs care: stored embeddings come from the model that made them, so a new `model.onnx` would need every stored headline re-embedded first (not implemented).
 
+**Story grouping (`POST /group`).** The topic model can't tell stories apart: fine-tuning on topic labels puts every football headline at a cosine similarity of 0.95–0.98 with every other. Grouping uses a second model, `multilingual-e5-small` (118M parameters, MIT licence, fp16 ONNX, mean pooling with the `query: ` prefix), which also matches the same story across languages. Its embedding is stored with the headline (`story_embedding`) the first time it's grouped. Headlines are taken in the caller's order (top positions first); each joins the group of the most similar earlier **group leader** at cosine ≥ `STORY_THRESHOLD` (**0.92**), or leads a new group. Comparing with leaders only stops chains (A like B, B like C, but C unlike A). Chosen on 323 hand-labelled pairs of live headlines (`tagger/data/story_pairs.json`: the 250 most similar pairs by each of three candidate models): at 0.92 it finds 80% of same-story pairs. Its wrong merges were templated series, which reading-wise are welcome as one item (horoscopes for different signs, daily puzzle answers, "Good News in History, October 12/13"), and one pair of different comparison articles. The other candidates: base bge-small-en found 72% at its best clean threshold, paraphrase-multilingual-MiniLM 38%. fp16 on the NPU gives the same groups as fp32 at 310 headlines/s (265/s on the CPU); the first compile takes ~50 s and is cached.
+
 **Precision to expect:** the benchmark's best F1 (0.66) is at a 0.5 threshold, but there 1 in 4 topic tags on the evaluation set is wrong, and live news is mostly hard news, so wrong tags flooded the views. At 0.9, 4 in 5 are right (it finds 42% of topic stories) and 4% of hard news gets a tag (10% at 0.5). Topic views take feed items first anyway, so model tags mainly fill nature views and thin regions. Uplifting views come only from the three good-news feeds, which post a few items a day.
 
 | Tagger resource | Value |
 | --- | --- |
-| Memory | ~450 MB in use; ~1.2 GB peak on the very first start (NPU compile + training). Limit 1.5 GB. |
+| Memory | ~860 MB in use with both models (470 MB process, 390 MB NPU buffers); ~1.5 GB peak on the very first start (two NPU compiles, training, embedding every headline). Limit 2 GB. |
 | CPU | Limit 2. Idle between refreshes; a refresh tags its few hundred new headlines in about a second. |
 | Device | `/dev/accel` plus the host's render group (`RENDER_GID`). Without an NPU, remove `devices`/`group_add` in `docker-compose.yml` and it uses the CPU. `GET /health` reports the device. |
 
@@ -422,6 +427,7 @@ A visitor makes 2 requests per page load plus 1 per region viewed, so 100/minute
 | `BROWSER_HOST_TTL_SECONDS` | 7 days | How long a site that blocked a plain request goes straight to the browser. |
 | `FEED_TEXT_TTL_SECONDS` | 2 days | How long the feed's own text of a published item is kept. |
 | `MAX_HEADLINES` | 80 | Headlines per view (each region, and "all"). |
+| `STORY_GROUP_HEADROOM` / `MAX_RELATED` / `STORY_GROUP_TIMEOUT` | 40 / 8 / 60 s | Views are built this much longer before each story is shown once; other outlets' headlines kept under a story; the tagger's grouping call timeout. |
 | `MAX_HEADLINE_AGE_HOURS` | 48 | Items older than this are dropped before mixing. |
 | `MAX_PER_PUBLISHER` | 3 | Maximum items from one publisher in a view (single-publisher feeds are bounded by their weight instead). |
 | `REQUEST_TIMEOUT` | 10.0 | Per upstream HTTP request (seconds). |
@@ -431,23 +437,26 @@ A visitor makes 2 requests per page load plus 1 per region viewed, so 100/minute
 | `HEADLINES_KEY` | `headlines` | Redis key prefix; snapshots live at `headlines:<view>`. |
 | `SOURCES_FILE` | `sources.json` | The source catalog (below). Mounted into the refresher; apply edits with `docker compose restart refresher`. The page's tabs come from the same file, so after adding or renaming a region or topic also restart `app`. |
 
-**Tagger environment** (`tagger` service): `TAGGER_DEVICE` (`NPU`; `CPU` to skip the NPU), `RETRAIN_INTERVAL_HOURS` (`24`), `DATA_DIR` (`/data`).
+**Tagger environment** (`tagger` service): `TAGGER_DEVICE` (`NPU`; `CPU` to skip the NPU), `RETRAIN_INTERVAL_HOURS` (`24`), `STORY_THRESHOLD` (`0.92`), `DATA_DIR` (`/data`).
 
 **`sources.json` format:**
 
 ```json
 {
-  "topics": [{"id": "uplifting", "label": "Uplifting"}, …],
+  "topics": [{"id": "uplifting", "label": "Uplifting", "max_age_hours": 168}, …],
   "regions": [
     {"id": "asia", "label": "Asia",
      "sources": [{"name": "…", "url": "…", "weight": 0.2, "label": "other"}, …],
-     "topic_sources": [{"name": "Google News India Sports", "url": "…", "label": "sport"}, …]},
+     "topic_sources": [{"name": "Google News India Sports", "url": "…", "label": "sport"},
+                       {"name": "The Better India", "url": "…", "label": "uplifting", "max_items": 15}, …]},
     …
   ],
   "extras": [{"name": "Hacker News", "url": "…", "weight": 0.2}, …],
   "topic_extras": [{"name": "Good News Network", "url": "…", "label": "uplifting"}, …]
 }
 ```
+
+`max_items` (optional, any source): at most this many of the feed's items per view, so a feed whose quality varies can't fill a view (e.g. The Better India is Asia's only regional good-news feed; uncapped it took 50 of Asia's 80 uplifting slots). `max_age_hours` (optional, a topic): its views keep stories this long instead of `MAX_HEADLINE_AGE_HOURS`.
 
 `label` (optional on `sources` and `extras`): what the feed's items are, for the tagger: a topic (its items are always tagged with it) or `other` (general news, a training label only). Topic ids must be ones the tagger knows (`TOPICS` in `tagger/tagger.py`).
 
@@ -476,3 +485,4 @@ Pinned in the Dockerfiles, `docker-compose.yml`, `.woodpecker.yml`, `app/require
 | Intel NPU driver (user space) | linux-npu-driver 1.38.0 |
 | OpenVINO / scikit-learn | 2026.4.1 / 1.9.1 |
 | Embedding model | `bge-small-en-v1.5` fine-tuned by `tagger/finetune.py`, release `tagger-model-v1` (checksummed); tokenizer from `Xenova/bge-small-en-v1.5` revision `ea104dac` |
+| Story grouping model | `multilingual-e5-small` fp16 ONNX and tokenizer from `Xenova/multilingual-e5-small` revision `761b726d` (checksummed) |

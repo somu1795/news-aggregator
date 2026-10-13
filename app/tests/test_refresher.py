@@ -358,3 +358,16 @@ def test_a_topic_can_keep_older_stories():
     views = build_topic_views(catalog, results, tags, now)
     assert [h["title"] for h in views["asia:uplifting"]] == ["good-today", "good-5-days"]  # 7 days
     assert [h["title"] for h in views["asia:tech"]] == ["tech-today"]  # The default 48 hours
+
+
+def test_a_source_can_be_capped():
+    from config import NewsSource
+    from services.feed_service import mix_headlines
+    now = time.time()
+    sources = [NewsSource(name="Busy", url="https://b.example/rss", weight=0.9, max_items=2),
+               NewsSource(name="Quiet", url="https://q.example/rss", weight=0.1)]
+    results = {name: [{"title": f"{name} {i}", "link": f"https://{name}.example/{i}", "source": name, "published": now}
+                      for i in range(5)] for name in ("Busy", "Quiet")}
+    titles = [h["title"] for h in mix_headlines(sources, results, now)]
+    assert sum(t.startswith("Busy") for t in titles) == 2  # Its weight would have given it most of the list
+    assert sum(t.startswith("Quiet") for t in titles) == 5  # The others fill its share

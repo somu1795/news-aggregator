@@ -6,6 +6,8 @@ CPU if no NPU is available) and tags them with a classifier trained on our own
 stored headlines.
 
 POST /tag     {"items": [{"title", "source", "link", "label"}]} -> {"tags": [[topic, ...], ...], "model": version}
+POST /group   {"items": [{"title", "source"}]} -> {"groups": [group number, ...]}: the same number for
+              headlines about the same story (see Tagger.group)
 GET  /health  device, model version, stored headline count
 
 Storage: every headline is stored once in SQLite (DATA_DIR/tagger.db) with its
@@ -46,6 +48,13 @@ TOPICS = ["tech", "science", "nature", "culture", "sport", "uplifting"]
 OTHER = "other"  # Label for general news: politics, crime, economy...
 
 MODEL_DIR = Path(os.environ.get("MODEL_DIR", "/models/bge-small-en-v1.5"))
+# Story grouping needs embeddings that tell stories apart: the topic model is fine-tuned to
+# put every football story together. multilingual-e5-small also matches across languages.
+STORY_MODEL_DIR = Path(os.environ.get("STORY_MODEL_DIR", "/models/multilingual-e5-small"))
+# Cosine similarity at which two headlines are the same story. Chosen on 323 hand-labelled
+# pairs of live headlines: it catches 80% of same-story pairs, and the only wrong merges
+# were templated series (horoscopes, puzzle answers) and one pair of comparison articles.
+STORY_THRESHOLD = float(os.environ.get("STORY_THRESHOLD", "0.92"))
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 DEVICE = os.environ.get("TAGGER_DEVICE", "NPU")
 RETRAIN_INTERVAL_HOURS = float(os.environ.get("RETRAIN_INTERVAL_HOURS", "24"))
@@ -69,9 +78,13 @@ def clean_title(title: str, source: Optional[str] = None) -> str:
 
 
 class Embedder:
-    """bge-small via OpenVINO: CLS pooling, L2-normalized, 384 dimensions."""
+    """
+    A sentence embedding model via OpenVINO, L2-normalized: bge-small (CLS pooling) for
+    topics, multilingual-e5-small (mean pooling, "query: " prefix) for story grouping.
+    """
 
-    def __init__(self, model_dir: Path, device: str, cache_dir: Path) -> None:
+    def __init__(self, model_dir: Path, device: str, cache_dir: Path, pooling: str = "cls", prefix: str = "") -> None:
+        self.pooling, self.prefix = pooling, prefix
         import openvino as ov
         from tokenizers import Tokenizer
 
@@ -97,14 +110,18 @@ class Embedder:
         out = []
         for start in range(0, len(titles), BATCH):
             batch = titles[start:start + BATCH]
-            encoded = self.tokenizer.encode_batch(batch + [""] * (BATCH - len(batch)))
+            encoded = self.tokenizer.encode_batch([self.prefix + t for t in batch] + [""] * (BATCH - len(batch)))
             ids = np.array([e.ids for e in encoded], dtype=np.int64)
-            feeds = {
-                "input_ids": ids,
-                "attention_mask": np.array([e.attention_mask for e in encoded], dtype=np.int64),
-                "token_type_ids": np.zeros_like(ids),
-            }
-            out.append(self.compiled(feeds)[0][: len(batch), 0, :])
+            mask = np.array([e.attention_mask for e in encoded], dtype=np.int64)
+            feeds = {"input_ids": ids, "attention_mask": mask}
+            if any(i.get_any_name() == "token_type_ids" for i in self.compiled.inputs):
+                feeds["token_type_ids"] = np.zeros_like(ids)
+            hidden = self.compiled(feeds)[0][: len(batch)]
+            if self.pooling == "cls":
+                out.append(hidden[:, 0, :])
+            else:
+                mask = mask[: len(batch), :, None]
+                out.append((hidden * mask).sum(axis=1) / mask.sum(axis=1))
         vectors = np.concatenate(out) if out else np.zeros((0, 384), dtype=np.float32)
         return vectors / np.linalg.norm(vectors, axis=1, keepdims=True)
 
@@ -162,7 +179,8 @@ CREATE TABLE IF NOT EXISTS headlines (
     tags       TEXT,              -- JSON list, from classifier `model`
     model      TEXT,
     embedding  BLOB NOT NULL,     -- float16[384]
-    first_seen REAL NOT NULL
+    first_seen REAL NOT NULL,
+    story_embedding BLOB          -- float16[384], from the story model; made when first grouped
 )
 """
 
@@ -172,6 +190,8 @@ def connect(path: Path) -> sqlite3.Connection:
     db.execute("PRAGMA journal_mode=WAL")
     db.execute("PRAGMA synchronous=NORMAL")
     db.execute(SCHEMA)
+    if "story_embedding" not in {row[1] for row in db.execute("PRAGMA table_info(headlines)")}:
+        db.execute("ALTER TABLE headlines ADD COLUMN story_embedding BLOB")  # Databases made before grouping
     return db
 
 
@@ -190,8 +210,9 @@ class Tagger:
     with its own read-only connection and swaps the classifier when done.
     """
 
-    def __init__(self, embedder: Embedder, data_dir: Path) -> None:
+    def __init__(self, embedder: Embedder, data_dir: Path, story_embedder: Optional[Embedder] = None) -> None:
         self.embedder = embedder
+        self.story_embedder = story_embedder
         self.db_path = data_dir / "tagger.db"
         self.model_path = data_dir / "classifier.pkl"
         self.db = connect(self.db_path)
@@ -258,6 +279,47 @@ class Tagger:
                 rows[title] = (json.dumps(tags), classifier.version, None)
         return [json.loads(rows[title][0]) for title in titles]
 
+    def group(self, items: List["Item"]) -> List[int]:
+        """
+        A group number per item: items about the same story share one. Items are taken in
+        the order given (the caller's ranking); each joins the group of the most similar
+        earlier group leader at or above STORY_THRESHOLD, or leads a new group. Comparing
+        with leaders only (not every member) keeps a group from drifting into a chain of
+        ever-less-related stories.
+        """
+        titles = [clean_title(item.title, item.source) for item in items]
+        unique = list(dict.fromkeys(titles))
+        vectors = {}
+        for start in range(0, len(unique), 500):
+            chunk = unique[start:start + 500]
+            for title, blob in self.db.execute(
+                f"SELECT title, story_embedding FROM headlines WHERE title IN ({','.join('?' * len(chunk))}) "
+                "AND story_embedding IS NOT NULL", chunk,
+            ):
+                vectors[title] = np.frombuffer(blob, dtype=np.float16).astype(np.float32)
+        missing = [title for title in unique if title not in vectors]
+        if missing:
+            self._store([(clean_title(item.title, item.source), item.source, item.link, None) for item in items])
+            for title, v in zip(missing, self.story_embedder.embed(missing)):
+                vectors[title] = v
+            self.db.executemany("UPDATE headlines SET story_embedding = ? WHERE title = ?",
+                                [(to_blob(vectors[t]), t) for t in missing])
+            self.db.commit()
+        X = np.stack([vectors[t] for t in unique]) if unique else np.zeros((0, 384), dtype=np.float32)
+        X /= np.maximum(np.linalg.norm(X, axis=1, keepdims=True), 1e-9)
+        leaders: List[int] = []  # Rows of X
+        group_of = {}
+        for row, title in enumerate(unique):
+            if leaders:
+                sims = X[leaders] @ X[row]
+                best = int(np.argmax(sims))
+                if sims[best] >= STORY_THRESHOLD:
+                    group_of[title] = group_of[unique[leaders[best]]]
+                    continue
+            group_of[title] = len(leaders)
+            leaders.append(row)
+        return [group_of[title] for title in titles]
+
     def retrain(self, force: bool = False) -> None:
         db = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
         try:
@@ -282,7 +344,9 @@ class Tagger:
 
     def stats(self) -> dict:
         count = self.db.execute("SELECT COUNT(*) FROM headlines").fetchone()[0]
-        return {"device": self.embedder.device, "model": self.classifier.version, "headlines": count}
+        story_device = self.story_embedder.device if self.story_embedder else None
+        return {"device": self.embedder.device, "story_device": story_device, "model": self.classifier.version,
+                "headlines": count}
 
 
 class Item(BaseModel):
@@ -321,7 +385,8 @@ async def lifespan(app: FastAPI):
     started = time.monotonic()
 
     def setup():
-        tagger = Tagger(Embedder(MODEL_DIR, DEVICE, DATA_DIR / "ov_cache"), DATA_DIR)
+        story = Embedder(STORY_MODEL_DIR, DEVICE, DATA_DIR / "ov_cache", pooling="mean", prefix="query: ")
+        tagger = Tagger(Embedder(MODEL_DIR, DEVICE, DATA_DIR / "ov_cache"), DATA_DIR, story)
         tagger.start()
         # The first NPU compile and the training leave ~0.7 GB of freed heap; give it back
         ctypes.CDLL("libc.so.6").malloc_trim(0)
@@ -342,6 +407,11 @@ async def tag(request: TagRequest):
     tagger = app.state.tagger
     tags = await on_worker(tagger.tag, request.items)
     return {"tags": tags, "model": tagger.classifier.version}
+
+
+@app.post("/group")
+async def group(request: TagRequest):
+    return {"groups": await on_worker(app.state.tagger.group, request.items)}
 
 
 @app.get("/health")
