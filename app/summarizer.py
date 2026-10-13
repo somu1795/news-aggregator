@@ -51,10 +51,7 @@ from services.safe_fetch import UnsafeURL, check_public, stream_public
 logger = structlog.get_logger(__name__)
 
 ARTICLE_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-    ),
+    "User-Agent": settings.BROWSER_USER_AGENT,
     "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5",
     "Accept-Language": "en-US,en;q=0.5",
 }

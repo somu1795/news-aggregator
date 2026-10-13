@@ -75,7 +75,7 @@ For the full details — diagram, how and when data is refreshed, link resolutio
     ./stop.sh
     ```
 
-The application will be available at `http://<your-host-ip>:7001` (or whichever port you set for `CADDY_HTTP_PORT`).
+On this machine the application is at `http://localhost:7001` (or whichever port you set for `CADDY_HTTP_PORT`); the port isn't open to other machines. The public site goes through the Cloudflare Tunnel (below).
 
 ## Cloudflare Tunnel (recommended)
 
@@ -86,24 +86,6 @@ The simplest public setup: no open ports, Cloudflare's DDoS protection, and the 
 3. In `.env`, set `COMPOSE_PROFILES=cloudflare` and `CLOUDFLARE_TUNNEL_TOKEN=<token>`, then `docker compose up -d`. The `cloudflared` container connects out to Cloudflare.
 
 Cloudflare sets `CF-Connecting-IP` to the visitor's IP and rejects requests that try to send their own, so the rate limit sees real IPs. Caddy adds HSTS and the other security headers itself.
-
-## Proxy Configuration (Cloudflare & Tailscale)
-
-If you are deploying this behind a public VPS proxy (e.g., Cloudflare -> VPS Caddy -> Tailscale -> App), you must correctly configure proxy headers to ensure the real client IP is passed and rate limiting works accurately.
-
-1. **VPS Public Caddyfile**: the VPS must send the client IP it actually sees, and drop the client's own IP headers. Otherwise anyone can bypass the rate limit by sending a made-up `CF-Connecting-IP` or `X-Forwarded-For`:
-   ```caddyfile
-   reverse_proxy <this host>:7001 {
-       header_up X-Real-IP {remote_host}
-       header_up X-Forwarded-For {remote_host}
-       header_up -CF-Connecting-IP
-   }
-   ```
-   Only if the VPS itself sits behind Cloudflare (proxied DNS) may it forward `CF-Connecting-IP` instead, and then it must accept connections from Cloudflare's IP ranges only.
-2. **Internal App Caddyfile**:
-   `caddy/Caddyfile` trusts forwarded client-IP headers (`CF-Connecting-IP`, `X-Real-IP`, `X-Forwarded-For`) only from `trusted_proxies`: private ranges and the Tailscale subnet (`100.64.0.0/10`). If your proxy connects from another address, add it there. Caddy then overwrites `X-Real-IP` with the resolved client IP.
-3. **Application Layer**:
-   The FastAPI app rate-limits with `slowapi`, keyed only on the `X-Real-IP` header set by Caddy. Clients connecting from untrusted addresses cannot spoof it.
 
 ## Configuration
 
@@ -117,7 +99,7 @@ Regions, news sources and their weights are defined in `app/sources.json` (forma
 | `ENABLE_API_DOCS`  | Set to "true" to enable interactive API docs at `/docs`.                 | `false`      |
 | `ADMIN_API_KEY`    | A secret key to protect administrative endpoints. **Required.**          | `changeme`   |
 | `UVICORN_WORKERS`  | Uvicorn worker processes per container; keep equal to `APP_CPUS`.       | `4`          |
-| `CADDY_HTTP_PORT`  | The external port Caddy will listen on.                                  | `7001`       |
+| `CADDY_HTTP_PORT`  | The port Caddy listens on, on this machine only (`127.0.0.1`).           | `7001`       |
 | `API_RATE_LIMIT`   | Rate limit per client IP for `/` and `/api/headlines`.                   | `100/minute` |
 | `APP_CPUS`         | Max CPU cores for each app container.                                    | `4`          |
 | `APP_MEM_LIMIT`    | Max memory for each app container (e.g., `512m`, `2G`).                  | `2G`         |
@@ -126,6 +108,8 @@ Regions, news sources and their weights are defined in `app/sources.json` (forma
 | `SUMMARIZER_LLM_URL` | Ollama server for article summaries, e.g. `http://<host>:11434`; empty disables them. | empty |
 
 ## Backup and Restore
+
+For what needs reviewing and when (pinned versions, feeds, lists), see [MAINTENANCE.md](MAINTENANCE.md).
 
 `scripts/backup.sh` runs daily at 03:30 UTC from the `pi` user's crontab and writes to both media disks (`/mnt/media/app_bkp/news_aggregator` and `/mnt/mediatoshiba/app_bkp/news_aggregator`; its log is `backup.log` in the first). Each run saves a dated, compressed archive with a checksum:
 

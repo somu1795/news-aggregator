@@ -219,9 +219,9 @@ services:
     image: news-aggregator-caddy
     build: ./caddy
     ports:
-      # Expose Caddy's HTTP port on all network interfaces so it can be accessed
-      # from other machines on the network (e.g., your browser or Nginx Proxy Manager).
-      - "${CADDY_HTTP_PORT:-7001}:7001"
+      # On this machine only (http://localhost:7001): the public site goes through the
+      # Cloudflare Tunnel over the Docker network, and other machines shouldn't bypass it.
+      - "127.0.0.1:${CADDY_HTTP_PORT:-7001}:7001"
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data

@@ -1,15 +1,15 @@
 {
 	# Global options block
 
-	# Disable automatic HTTPS as it's handled by the external proxy.
+	# Disable automatic HTTPS: Cloudflare terminates TLS and reaches Caddy through the tunnel.
 	auto_https off
 	servers {
 		protocols h1 h2
 
-		# Only these peers may tell us the real client IP: LAN/Docker ranges and
-		# Tailscale (100.64.0.0/10). Forwarded headers from anyone else are ignored,
-		# so clients that reach this port directly cannot spoof their IP.
-		trusted_proxies static private_ranges 100.64.0.0/10
+		# Only these peers may tell us the real client IP: private (Docker) ranges, where
+		# the Cloudflare Tunnel connector connects from. Forwarded headers from anyone else
+		# are ignored, so clients that reach this port directly cannot spoof their IP.
+		trusted_proxies static private_ranges
 		client_ip_headers CF-Connecting-IP X-Real-IP X-Forwarded-For
 	}
 }

@@ -17,8 +17,8 @@ So request volume costs almost nothing upstream or in Redis, and users keep gett
 ## 2. Architecture Diagram
 
 ```
-  End users ──► Cloudflare ──► VPS proxy ──(Tailscale)──┐
-                                                         │  (or LAN / Nginx Proxy Manager)
+  End users ──► Cloudflare ──► Cloudflare Tunnel ──(cloudflared, outbound)──┐
+                                                         ┌──────────────────┘
                                                          ▼
                                      +-----------------------------------+
                                      |  Caddy 2.11  (:7001)              |
@@ -79,8 +79,8 @@ So request volume costs almost nothing upstream or in Redis, and users keep gett
 ## 3. Components
 
 ### Caddy (`caddy` service)
-- **Role**: Internal reverse proxy and load balancer. TLS is terminated upstream (Cloudflare / VPS proxy).
-- **Client IP trust**: `trusted_proxies` lists the peers allowed to tell Caddy the real client IP: private ranges and Tailscale `100.64.0.0/10`. For those peers Caddy reads `CF-Connecting-IP`, `X-Real-IP` or `X-Forwarded-For`; for anyone else it uses the connection's own IP. It then **overwrites** `X-Real-IP` before proxying, so clients can't spoof the IP used for rate limiting.
+- **Role**: Internal reverse proxy and load balancer. TLS is terminated at Cloudflare; the tunnel connector (`cloudflared`) reaches Caddy over the Docker network. Its port is published on `127.0.0.1` only, so other machines can't bypass Cloudflare.
+- **Client IP trust**: `trusted_proxies` lists the peers allowed to tell Caddy the real client IP: private ranges (the Docker network the connector uses). For those peers Caddy reads `CF-Connecting-IP`, `X-Real-IP` or `X-Forwarded-For`; for anyone else it uses the connection's own IP. It then **overwrites** `X-Real-IP` before proxying, so clients can't spoof the IP used for rate limiting.
 - Compresses responses (zstd/gzip), health-checks app containers via `/health`, and blocks `/metrics`.
 
 ### API (`app` service)
@@ -340,7 +340,7 @@ bge-small was chosen over EmbeddingGemma for memory (the tagger uses ~450 MB) an
 | --- | --- |
 | Limit | `API_RATE_LIMIT`, default **100 requests per minute per client IP**, fixed window. |
 | Routes limited | `GET /` and `GET /api/headlines` (all regions share one counter), each route with its own counter. `/health`, `/metrics`, `/admin/*` and the `/retro` redirect are not limited. |
-| Client identity | The `X-Real-IP` header, which Caddy always overwrites with the IP it resolved. Clients connecting from untrusted addresses can't influence it; trusted proxies (LAN, Docker, Tailscale) forward the real visitor IP. |
+| Client identity | The `X-Real-IP` header, which Caddy always overwrites with the IP it resolved. Clients connecting from untrusted addresses can't influence it; trusted proxies (the Docker network, where the Cloudflare Tunnel connector connects from) forward the real visitor IP. |
 | When exceeded | `429` with `{"error": "Rate limit exceeded: 100 per 1 minute"}`. |
 | Storage | Counters live in Redis, so limits are shared across all workers and containers. Checks use 0.5s timeouts and no retries. |
 | Redis down | Limits fall back to per-process memory automatically and switch back when Redis recovers. Requests are never failed because of the limiter. |
@@ -352,7 +352,7 @@ A visitor makes 2 requests per page load plus 1 per region viewed, so 100/minute
 
 - **Fetching links from outside** (the summarizer reads any top story's link; anyone can post one to Hacker News): only public internet addresses are fetched, checked again at every redirect (`services/safe_fetch.py`). Private, loopback, link-local and Tailscale (100.64/10) addresses are refused, so a crafted link can't make the server read the LAN or the tailnet. Summaries containing a link are discarded, since an article could try to steer the model. The headless browser that reads bot-protected sites can't make that check itself, so it has no network access except a proxy that enforces it (see the headless browser in §3).
 - **Page:** a Content-Security-Policy with a fresh nonce per response allows only the page's own inline script and style, images and requests from its own origin, and no framing. Feed text, summaries and titles are inserted as text, never HTML; links must be http(s) and open with `noopener`.
-- **Client IP:** the rate limit keys on the IP Caddy resolves from trusted proxies only. Through the Cloudflare Tunnel (`cloudflared` service), Cloudflare sets `CF-Connecting-IP` and rejects client-supplied ones (error 1000), and a forged `X-Forwarded-For` is ignored because `CF-Connecting-IP` comes first. Any other proxy in front (e.g. a VPS) must overwrite client-supplied IP headers; see the README.
+- **Client IP:** the rate limit keys on the IP Caddy resolves from trusted proxies only. Through the Cloudflare Tunnel (`cloudflared` service), Cloudflare sets `CF-Connecting-IP` and rejects client-supplied ones (error 1000), and a forged `X-Forwarded-For` is ignored because `CF-Connecting-IP` comes first. Any other proxy put in front would have to overwrite client-supplied IP headers before they reach Caddy.
 - **Headers:** Caddy sets HSTS, `X-Content-Type-Options`, `X-Frame-Options` and `Referrer-Policy` on every response.
 - **Containers:** every service has CPU, memory and process limits, rotated logs (10 MB × 3), `no-new-privileges`, and no Linux capabilities (Redis keeps the three its entrypoint needs to switch user). Redis requires a password (`REDIS_PASSWORD`) and is reachable only inside the Docker network.
 - **Admin endpoint:** disabled unless `ADMIN_API_KEY` is set; the key is compared in constant time.
@@ -414,7 +414,7 @@ A visitor makes 2 requests per page load plus 1 per region viewed, so 100/minute
 | `API_RATE_LIMIT` | `100/minute` | Per-IP limit (§7). |
 | `UVICORN_WORKERS` | `4` | Workers per app container; keep equal to `APP_CPUS`. |
 | `APP_CPUS` / `APP_MEM_LIMIT` | `4` / `2G` | App container limits. |
-| `CADDY_HTTP_PORT` | `7001` | Published port. |
+| `CADDY_HTTP_PORT` | `7001` | Caddy's port, published on `127.0.0.1` only. |
 | `ENABLE_API_DOCS` | `false` | Serve `/docs`. |
 | `RENDER_GID` | `991` | Numeric id of the host group owning `/dev/accel/accel0` (`getent group render`), for the tagger. |
 

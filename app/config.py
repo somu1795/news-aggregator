@@ -144,6 +144,14 @@ class Settings(BaseSettings):
     MAX_HEADLINE_AGE_HOURS: int = 48  # Older items are dropped
     MAX_PER_PUBLISHER: int = 3  # Cap per publisher in a view (single-publisher feeds are bounded by their weight instead)
     REQUEST_TIMEOUT: float = 10.0
+    # How feed and article requests identify themselves: a current desktop Chrome, as sites treat
+    # old browser versions as suspicious. Keep it within a few versions of Chrome's stable release
+    # (scripts/check-updates.sh reports when it falls behind). The Google link resolver
+    # (services/redirect.py, services/link_resolver.py) keeps its own.
+    BROWSER_USER_AGENT: str = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36"
+    )
     FETCH_RETRIES: int = 3
     # Polite polling (services/feed_service.py fetch_and_parse_feed)
     FEED_MAX_INTERVAL_SECONDS: int = 1800  # A feed that keeps bringing nothing new is fetched at most this rarely

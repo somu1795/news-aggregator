@@ -40,10 +40,7 @@ _OUTGOING_SEMAPHORE = asyncio.Semaphore(15)
 _RESOLVE_SEMAPHORE = asyncio.Semaphore(10)
 
 _FEED_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-    ),
+    "User-Agent": settings.BROWSER_USER_AGENT,
     "Accept": "application/xml,application/xhtml+xml,text/html;q=0.9, text/plain;q=0.8,*/*;q=0.5",
     "Accept-Language": "en-US,en;q=0.5",
 }
