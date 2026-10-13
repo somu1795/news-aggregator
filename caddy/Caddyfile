@@ -6,9 +6,9 @@
 	servers {
 		protocols h1 h2
 
-		# Only these peers may tell us the real client IP: private (Docker) ranges, where
-		# the Cloudflare Tunnel connector connects from. Forwarded headers from anyone else
-		# are ignored, so clients that reach this port directly cannot spoof their IP.
+		# Only these peers may tell us the real client IP: private ranges (the Docker network,
+		# where the Cloudflare Tunnel connector connects from, and the LAN). Forwarded headers
+		# from anyone else are ignored, so other clients can't spoof their IP.
 		trusted_proxies static private_ranges
 		client_ip_headers CF-Connecting-IP X-Real-IP X-Forwarded-For
 	}
@@ -31,9 +31,19 @@
 		Referrer-Policy strict-origin-when-cross-origin
 	}
 
-	# Block external access to Prometheus metrics
-	@metrics path /metrics
-	respond @metrics "Forbidden" 403
+	# Prometheus metrics: only for this machine and the LAN, connecting directly. Visitors come
+	# through the Cloudflare Tunnel, whose connector is on the (private) Docker network too, so
+	# they're told apart by the header Cloudflare adds to every request.
+	@metrics_via_cloudflare {
+		path /metrics
+		header Cf-Connecting-IP *
+	}
+	@metrics_from_outside {
+		path /metrics
+		not remote_ip private_ranges
+	}
+	respond @metrics_via_cloudflare "Forbidden" 403
+	respond @metrics_from_outside "Forbidden" 403
 
 	# Site icons and the web app manifest are static files baked into this image (caddy/static)
 	@icons path /favicon.svg /favicon.ico /apple-touch-icon.png /icon-192.png /icon-512.png

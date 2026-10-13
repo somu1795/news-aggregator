@@ -219,9 +219,9 @@ services:
     image: news-aggregator-caddy
     build: ./caddy
     ports:
-      # On this machine only (http://localhost:7001): the public site goes through the
-      # Cloudflare Tunnel over the Docker network, and other machines shouldn't bypass it.
-      - "127.0.0.1:${CADDY_HTTP_PORT:-7001}:7001"
+      # Open to this machine and the LAN (e.g. /metrics, which Caddy serves only to direct
+      # LAN requests). The public site goes through the Cloudflare Tunnel over the Docker network.
+      - "${CADDY_HTTP_PORT:-7001}:7001"
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data

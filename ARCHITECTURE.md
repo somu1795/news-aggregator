@@ -26,7 +26,7 @@ So request volume costs almost nothing upstream or in Redis, and users keep gett
                                      |    trusted proxies only, sets     |
                                      |    X-Real-IP                      |
                                      |  - compression, load balancing    |
-                                     |  - blocks /metrics                |
+                                     |  - /metrics for the LAN only       |
                                      +-----------------------------------+
                                                          │
 +--------------------------------------------------------│---------------------------+
@@ -79,9 +79,9 @@ So request volume costs almost nothing upstream or in Redis, and users keep gett
 ## 3. Components
 
 ### Caddy (`caddy` service)
-- **Role**: Internal reverse proxy and load balancer. TLS is terminated at Cloudflare; the tunnel connector (`cloudflared`) reaches Caddy over the Docker network. Its port is published on `127.0.0.1` only, so other machines can't bypass Cloudflare.
-- **Client IP trust**: `trusted_proxies` lists the peers allowed to tell Caddy the real client IP: private ranges (the Docker network the connector uses). For those peers Caddy reads `CF-Connecting-IP`, `X-Real-IP` or `X-Forwarded-For`; for anyone else it uses the connection's own IP. It then **overwrites** `X-Real-IP` before proxying, so clients can't spoof the IP used for rate limiting.
-- Compresses responses (zstd/gzip), health-checks app containers via `/health`, and blocks `/metrics`.
+- **Role**: Internal reverse proxy and load balancer. TLS is terminated at Cloudflare; the tunnel connector (`cloudflared`) reaches Caddy over the Docker network. Its port is also open to the LAN (e.g. for `/metrics`).
+- **Client IP trust**: `trusted_proxies` lists the peers allowed to tell Caddy the real client IP: private ranges (the Docker network the connector uses, and the LAN). For those peers Caddy reads `CF-Connecting-IP`, `X-Real-IP` or `X-Forwarded-For`; for anyone else it uses the connection's own IP. It then **overwrites** `X-Real-IP` before proxying, so clients can't spoof the IP used for rate limiting.
+- Compresses responses (zstd/gzip) and health-checks app containers via `/health`. It serves `/metrics` only to direct requests from private (LAN) addresses: requests through the tunnel (they carry Cloudflare's `CF-Connecting-IP` header) and from public addresses get 403.
 
 ### API (`app` service)
 - **Framework**: FastAPI on Uvicorn (`uvloop`, `httptools`), one worker per CPU (`UVICORN_WORKERS` = `APP_CPUS` = 4).
@@ -414,7 +414,7 @@ A visitor makes 2 requests per page load plus 1 per region viewed, so 100/minute
 | `API_RATE_LIMIT` | `100/minute` | Per-IP limit (§7). |
 | `UVICORN_WORKERS` | `4` | Workers per app container; keep equal to `APP_CPUS`. |
 | `APP_CPUS` / `APP_MEM_LIMIT` | `4` / `2G` | App container limits. |
-| `CADDY_HTTP_PORT` | `7001` | Caddy's port, published on `127.0.0.1` only. |
+| `CADDY_HTTP_PORT` | `7001` | Caddy's port (this machine and the LAN). |
 | `ENABLE_API_DOCS` | `false` | Serve `/docs`. |
 | `RENDER_GID` | `991` | Numeric id of the host group owning `/dev/accel/accel0` (`getent group render`), for the tagger. |
 

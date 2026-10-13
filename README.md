@@ -75,7 +75,7 @@ For the full details — diagram, how and when data is refreshed, link resolutio
     ./stop.sh
     ```
 
-On this machine the application is at `http://localhost:7001` (or whichever port you set for `CADDY_HTTP_PORT`); the port isn't open to other machines. The public site goes through the Cloudflare Tunnel (below).
+On this machine and the LAN the application is at `http://<this host>:7001` (or whichever port you set for `CADDY_HTTP_PORT`), including Prometheus metrics at `/metrics`, which are served only to direct requests from private (LAN) addresses. The public site goes through the Cloudflare Tunnel (below), where `/metrics` is blocked.
 
 ## Cloudflare Tunnel (recommended)
 
@@ -99,7 +99,7 @@ Regions, news sources and their weights are defined in `app/sources.json` (forma
 | `ENABLE_API_DOCS`  | Set to "true" to enable interactive API docs at `/docs`.                 | `false`      |
 | `ADMIN_API_KEY`    | A secret key to protect administrative endpoints. **Required.**          | `changeme`   |
 | `UVICORN_WORKERS`  | Uvicorn worker processes per container; keep equal to `APP_CPUS`.       | `4`          |
-| `CADDY_HTTP_PORT`  | The port Caddy listens on, on this machine only (`127.0.0.1`).           | `7001`       |
+| `CADDY_HTTP_PORT`  | The port Caddy listens on (this machine and the LAN).                   | `7001`       |
 | `API_RATE_LIMIT`   | Rate limit per client IP for `/` and `/api/headlines`.                   | `100/minute` |
 | `APP_CPUS`         | Max CPU cores for each app container.                                    | `4`          |
 | `APP_MEM_LIMIT`    | Max memory for each app container (e.g., `512m`, `2G`).                  | `2G`         |
