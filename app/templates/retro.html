@@ -419,7 +419,7 @@
             // Order of the list. "mix" is the server's: each feed's own ranking, interleaved by weight.
             var SORTS = ["mix", "newest", "oldest", "random"];
             var sortMode = SORTS.indexOf(read("retroSort")) >= 0 ? read("retroSort") : "mix";
-            var shuffleKeys = {};  // Link -> random number; kept while "random" stays selected, so refreshes don't reshuffle
+            var shuffleKeys = Object.create(null);  // Link -> random number; kept while "random" stays selected, so refreshes don't reshuffle
 
             function sorted(items) {
                 var copy = items.slice();
@@ -434,7 +434,7 @@
 
             function cycleSort() {
                 sortMode = SORTS[(SORTS.indexOf(sortMode) + 1) % SORTS.length];
-                if (sortMode === "random") shuffleKeys = {};  // A fresh shuffle each time it's chosen
+                if (sortMode === "random") shuffleKeys = Object.create(null);  // A fresh shuffle each time it's chosen
                 write("retroSort", sortMode);
                 renderSort();
                 render();
@@ -527,7 +527,7 @@
                     var state = stateOf(view[0], view[1]);
                     return state.data && Date.now() - state.loadedAt < STALE_MS ? null : load(view[0], view[1]);
                 })).then(function () {
-                    var seen = {}, index = [];
+                    var seen = Object.create(null), index = [];  // No inherited keys: a headline "constructor" is just a headline
                     allViews().forEach(function (view) {
                         (stateOf(view[0], view[1]).data || []).forEach(function (item) {
                             // One result per story: the same link, or the same headline from another outlet
@@ -643,10 +643,10 @@
 
             function resetAll() {
                 ["retroRegion", "retroTopic", "retroSort", "retroTheme", "bypassService", "retroSiteIcons", "retroAutoRefresh", "retroBackAction"].forEach(forget);  // bypassService: shared with the old classic page
-                openSummaries = {};
-                openRelated = {};
+                openSummaries = Object.create(null);
+                openRelated = Object.create(null);
                 sortMode = "mix";
-                shuffleKeys = {};
+                shuffleKeys = Object.create(null);
                 siteIcons = false;
                 autoRefresh = AUTO_REFRESH[0];
                 backToLastTab = false;
@@ -666,10 +666,10 @@
             }
 
             // Open summaries, by link: they stay open when the list is re-rendered
-            var openSummaries = {};
+            var openSummaries = Object.create(null);  // Keyed by links from feeds: no inherited keys
 
             // Open lists of other outlets' headlines, by link (as for summaries)
-            var openRelated = {};
+            var openRelated = Object.create(null);
 
             function setRelatedOpen(related, toggle, link, open) {
                 related.hidden = !open;
