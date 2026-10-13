@@ -240,13 +240,18 @@ services:
   # Cloudflare Tunnel: an outbound connection to Cloudflare, which serves the site
   # (no inbound port needed). In the tunnel's Public Hostname, point the site at
   # http://caddy:7001. Started only with COMPOSE_PROFILES=cloudflare in .env.
-  cloudflared:
+  # Two connectors on the same tunnel, pinned separately, so an upgrade can replace
+  # one while the other serves: scripts/upgrade-cloudflared.sh <version>.
+  cloudflared: &cloudflared
     image: cloudflare/cloudflared:2026.10.0
     <<: *hardened
     profiles: [cloudflare]
     command: tunnel --no-autoupdate run
     environment:
       - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:-}
+    # cloudflared finishes in-flight requests for up to 30s when stopped (its --grace-period);
+    # Docker would kill it after 10s
+    stop_grace_period: 40s
     deploy:
       resources:
         limits:
@@ -256,6 +261,10 @@ services:
     restart: unless-stopped
     depends_on:
       - caddy
+
+  cloudflared-b:
+    <<: *cloudflared
+    image: cloudflare/cloudflared:2026.10.0
 
   redis:
     image: redis:8.10.2-alpine
