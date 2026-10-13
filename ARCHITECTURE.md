@@ -136,6 +136,7 @@ So request volume costs almost nothing upstream or in Redis, and users keep gett
 ### Site icons
 - After each refresh, the refresher caches the icon of every website in the published views that it doesn't have yet. It fetches them from DuckDuckGo's icon service (`ICON_SOURCE_URL`) and keeps them in Redis for 7 days; a site without one is retried after a day.
 - The app serves them at `/site-icon/<domain>` (cached by browsers for 7 days). It only reads Redis and never fetches, so visitors' browsers contact neither the websites nor the icon service.
+- Each icon is sent with `Content-Security-Policy: default-src 'none'; sandbox`. Opened directly, an icon is a page on this domain, and an SVG icon (the publisher's own, passed on by the icon service) could carry a script: the policy stops anything in it from running or loading. As an image on the page it can't run anyway, and it looks the same.
 - Measured on the first cycle: 112 of 126 websites had an icon.
 
 ### Redis (`redis` service, Redis 8)

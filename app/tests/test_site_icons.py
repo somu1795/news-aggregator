@@ -51,3 +51,12 @@ async def test_serves_cached_icons_only(client, mock_redis):
     missing = client.get("/site-icon/other.example")
     assert missing.status_code == 404 and missing.headers["cache-control"] == "public, max-age=300"
     assert client.get("/site-icon/..%2Fetc").status_code == 404
+
+
+async def test_icons_opened_directly_cannot_run_anything(client, mock_redis):
+    """A publisher's SVG icon could carry a script; opened as a page on our domain, nothing in it may run."""
+    svg = b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'
+    await mock_redis.set(icon_key("svg.example"), json.dumps({"type": "image/svg+xml", "data": base64.b64encode(svg).decode()}))
+    response = client.get("/site-icon/svg.example")
+    assert response.status_code == 200 and response.headers["content-type"] == "image/svg+xml"
+    assert response.headers["content-security-policy"] == "default-src 'none'; sandbox"

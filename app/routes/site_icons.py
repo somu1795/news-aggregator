@@ -21,4 +21,7 @@ async def site_icon(request: Request, host: str):
         # Briefly: a new item's icon is usually cached within the same refresh cycle
         return Response(status_code=404, headers={"Cache-Control": "public, max-age=300"})
     content_type, data = icon
-    return Response(data, media_type=content_type, headers={"Cache-Control": "public, max-age=604800"})
+    # Opened directly, an icon is a page on our domain, and an SVG one (a publisher's, via the icon
+    # service) could carry a script: nothing in it may run or load. As an <img> on the page, it can't anyway.
+    return Response(data, media_type=content_type, headers={"Cache-Control": "public, max-age=604800",
+                                                            "Content-Security-Policy": "default-src 'none'; sandbox"})
