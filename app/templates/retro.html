@@ -131,11 +131,13 @@
             list-style: none;
             font-size: .9em;
         }
-        .related li { display: block; margin: .15rem 0; }
+        .related li { display: block; margin: .15rem 0; padding: 0; }
         .related a { color: var(--ink); text-decoration: none; }
         .related a:visited { color: var(--visited); }
         .related a:hover { text-decoration: underline; }
         .related span { color: var(--muted); }
+        .related a.discuss { color: var(--muted); text-decoration: underline; }
+        .related a.discuss:hover { color: var(--accent); }
 
         .notice { color: var(--muted); padding: 1rem 0; }
         .notice.error { color: var(--accent); }
@@ -623,7 +625,7 @@
                             var otherComments = other.comments && safeUrl(other.comments);
                             if (otherComments) {
                                 row.appendChild(document.createTextNode(" \u00b7 "));
-                                row.appendChild(link(otherComments, "discuss"));
+                                row.appendChild(link(otherComments, "discuss", "discuss"));
                             }
                             related.appendChild(row);
                         });
