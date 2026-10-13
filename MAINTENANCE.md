@@ -44,7 +44,7 @@ What in this project is written by hand and ages, how often to look at it, and a
 ### Only when something breaks
 | What | Where | Sign it broke |
 | --- | --- | --- |
-| Google link resolution | `app/services/redirect.py`, `app/services/link_resolver.py` (they keep their own browser identity) | `redirect_fallbacks_total` rises, or headlines link to `news.google.com` |
+| Google link resolution | `app/services/redirect.py`, `app/services/link_resolver.py` | `redirect_fallbacks_total` rises, or headlines link to `news.google.com` |
 | archive.ph | `app/summarizer.py` `ARCHIVE`, the page's bypass option | Archive reads fail, the bypass links stop opening |
 | Site icon service (DuckDuckGo) | `app/config.py` `ICON_SOURCE_URL` | Icons stop appearing |
 | Google Fonts on error pages | `app/templates/404.html`, `500.html`, `error.html` | Error pages lose their font |

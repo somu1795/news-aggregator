@@ -22,10 +22,7 @@ logger = structlog.get_logger(__name__)
 RESOLVED_URL_PREFIX = "resolved_url:"
 RESOLVED_URL_TTL = 86400  # 24 hours
 
-_BROWSER_UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36"
-)
+_BROWSER_UA = settings.BROWSER_USER_AGENT
 
 
 def _parse_batch_execute_response(response_text: str) -> Optional[str]:

@@ -146,8 +146,8 @@ class Settings(BaseSettings):
     REQUEST_TIMEOUT: float = 10.0
     # How feed and article requests identify themselves: a current desktop Chrome, as sites treat
     # old browser versions as suspicious. Keep it within a few versions of Chrome's stable release
-    # (scripts/check-updates.sh reports when it falls behind). The Google link resolver
-    # (services/redirect.py, services/link_resolver.py) keeps its own.
+    # (scripts/check-updates.py reports when it falls behind). Used by every outgoing request
+    # that should look like a browser: feeds, articles and the Google link resolver.
     BROWSER_USER_AGENT: str = (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36"

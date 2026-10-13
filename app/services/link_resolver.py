@@ -31,10 +31,7 @@ logger = structlog.get_logger(__name__)
 
 _ARTICLE_ID = re.compile(r"news\.google\.com/(?:rss/)?articles/([^/?#]+)")
 _BATCH_URL = "https://news.google.com/_/DotsSplashUi/data/batchexecute"
-_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36"
-)
+_USER_AGENT = settings.BROWSER_USER_AGENT
 
 # The fallback only runs for links the custom resolver failed on; if that's
 # every link (Google changed something), don't fire them all at once.
