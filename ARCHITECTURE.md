@@ -98,6 +98,7 @@ So request volume costs almost nothing upstream or in Redis, and users keep gett
     - `redirect.py`: the custom Google News resolver.
     - `link_resolver.py`: custom resolver first, then the fallback.
   - **`templates/`**: `retro.html` (the page) and the error pages.
+  - **`static/`**: `retro.css` and `retro.js`, the page's stylesheet and script. The page links to them by a hash of their content (`?v=`), so browsers and Cloudflare keep them for a year and a changed file gets a new URL; any other version is served with `no-cache`.
   - **`middleware/`**: content-negotiated error pages (HTML for browsers, JSON for API clients).
 
 ### Refresher (`refresher` service)
@@ -253,7 +254,7 @@ After the main views are published, the refresher builds the topic views (`get_t
 
 ## 5. How Requests Are Served
 
-1. A browser loads `/`; the page reads the region and topic lists embedded in it and calls `/api/headlines?region=<view>[&topic=<topic>]`.
+1. A browser loads `/` and its stylesheet and script from `/static/` (cached after the first visit); the page reads the region and topic lists embedded in it and calls `/api/headlines?region=<view>[&topic=<topic>]`.
 2. Caddy resolves the client IP, sets `X-Real-IP`, compresses and forwards to an app container.
 3. The rate limiter checks that client's counter (§7).
 4. The worker returns its **in-memory snapshot** of that view, pre-serialized, with `Cache-Control: public, max-age=<seconds until expires_at>`, and `CDN-Cache-Control` for Cloudflare: at least 60 s, `stale-while-revalidate=60` and `stale-if-error=86400` (an edge copy keeps being served for a day if the origin is unreachable).
@@ -287,6 +288,7 @@ Consequence: a newly published snapshot reaches users within about 5s, and the A
 | --- | --- |
 | `GET /` | Main page for browsers; small JSON status for API clients. |
 | `GET /archive`, `GET /retro` | Old URLs; redirect to `/`. |
+| `GET /static/retro.css`, `GET /static/retro.js` | The page's stylesheet and script. With the current `?v=` hash (the page's links): cached for a year (`immutable`); otherwise `no-cache`. |
 | `GET /retro` | Old evaluation URL; `301` redirect to `/`. |
 | `GET /api/headlines?region=<view>&topic=<topic>` | Snapshot JSON for `all` (default) or a region id, and optionally one topic: `region`, `topic` (null for a main view), `data` (each item: `title`, `link`, `source`, `published`, `last_updated`, `comments` or null), `fetched_at`, `expires_at`. **404** for an unknown region or topic (the message lists valid ones). **503 with `Retry-After: 10`** only before that view's first snapshot exists. |
 | `GET /health` | `healthy` / `degraded` / `unhealthy`, plus the "all" view's `headlines.age_seconds` and `headlines.stale` (see §8). |
@@ -352,7 +354,7 @@ A visitor makes 2 requests per page load plus 1 per region viewed, so 100/minute
 ## 7b. Security Hardening
 
 - **Fetching links from outside** (the summarizer reads any top story's link; anyone can post one to Hacker News): only public internet addresses are fetched, checked again at every redirect (`services/safe_fetch.py`). Private, loopback, link-local and Tailscale (100.64/10) addresses are refused, so a crafted link can't make the server read the LAN or the tailnet. Summaries containing a link are discarded, since an article could try to steer the model. The headless browser that reads bot-protected sites can't make that check itself, so it has no network access except a proxy that enforces it (see the headless browser in §3).
-- **Page:** a Content-Security-Policy with a fresh nonce per response allows only the page's own inline script and style, images and requests from its own origin, and no framing. Feed text, summaries and titles are inserted as text, never HTML; links must be http(s) and open with `noopener`.
+- **Page:** a Content-Security-Policy with a fresh nonce per response allows only the page's own script and stylesheet (the `<script>` and `<link>` tags carry the nonce), images and requests from its own origin, and no framing. Feed text, summaries and titles are inserted as text, never HTML; links must be http(s) and open with `noopener`.
 - **Client IP:** the rate limit keys on the IP Caddy resolves from trusted proxies only. Through the Cloudflare Tunnel (`cloudflared` service), Cloudflare sets `CF-Connecting-IP` and rejects client-supplied ones (error 1000), and a forged `X-Forwarded-For` is ignored because `CF-Connecting-IP` comes first. Any other proxy put in front would have to overwrite client-supplied IP headers before they reach Caddy.
 - **Headers:** Caddy sets HSTS, `X-Content-Type-Options`, `X-Frame-Options` and `Referrer-Policy` on every response.
 - **Containers:** every service has CPU, memory and process limits, rotated logs (10 MB × 3), `no-new-privileges`, and no Linux capabilities (Redis keeps the three its entrypoint needs to switch user). Redis requires a password (`REDIS_PASSWORD`) and is reachable only inside the Docker network.

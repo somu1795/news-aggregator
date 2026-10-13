@@ -1,5 +1,7 @@
 import json
+import re
 import time
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -97,9 +99,24 @@ def test_page_has_a_content_security_policy(client):
     response = client.get("/", headers={"Accept": "text/html"})
     csp = response.headers["content-security-policy"]
     nonce = csp.split("script-src 'nonce-")[1].split("'")[0]
-    assert f'<script nonce="{nonce}">' in response.text and f'<style nonce="{nonce}">' in response.text
+    assert re.search(rf'<link rel="stylesheet" href="/static/retro\.css\?v=\w+" nonce="{nonce}">', response.text)
+    assert re.search(rf'<script src="/static/retro\.js\?v=\w+" nonce="{nonce}" defer></script>', response.text)
+    assert "<style" not in response.text and "<script>" not in response.text  # Nothing inline but data
     assert "unsafe-inline" not in csp and "frame-ancestors 'none'" in csp
     assert client.get("/", headers={"Accept": "text/html"}).headers["content-security-policy"] != csp  # Fresh per response
+
+@pytest.mark.parametrize("name, content_type", [("retro.css", "text/css"), ("retro.js", "text/javascript")])
+def test_page_assets_are_kept_by_content_hash(client, name, content_type):
+    """The page links to its stylesheet and script by content hash, so they can be cached for a year."""
+    url = re.search(rf'"(/static/{re.escape(name)}\?v=\w+)"', client.get("/", headers={"Accept": "text/html"}).text).group(1)
+    response = client.get(url)
+    assert response.status_code == 200 and response.headers["content-type"].startswith(content_type)
+    assert response.content == (Path("static") / name).read_bytes()
+    assert response.headers["cache-control"] == "public, max-age=31536000, immutable"
+    # Any other version (an old page's link, or none) is the current file, not to be kept
+    assert client.get(f"/static/{name}?v=0123456789ab").headers["cache-control"] == "no-cache"
+    assert client.get(f"/static/{name}").headers["cache-control"] == "no-cache"
+    assert client.get("/static/missing.js").status_code == 404
 
 @pytest.mark.parametrize("path", ["/", "/api/headlines", "/health"])
 def test_head_requests(client, path):
@@ -108,8 +125,9 @@ def test_head_requests(client, path):
 def test_paywall_bypass_links(client):
     """archive.today links go straight to the newest snapshot; the defunct 12ft.io is gone."""
     page = client.get("/", headers={"Accept": "text/html"}).text
-    assert "https://archive.ph/newest/" in page
-    assert "12ft.io/" not in page
+    script = client.get(re.search(r'<script src="([^"]+)"', page).group(1)).text
+    assert "https://archive.ph/newest/" in script
+    assert "12ft.io/" not in script
 
 def test_root_endpoint_json(client):
     """Tests that the root endpoint serves JSON to API clients."""
