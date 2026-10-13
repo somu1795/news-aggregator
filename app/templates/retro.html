@@ -165,10 +165,11 @@
             </nav>
         </div>
         <nav class="advanced" id="advanced" aria-label="Advanced" hidden>
-            <button id="reset" title="Forget every setting on this device: region, topic, sort, theme, bypass, site icons, auto refresh, open summaries and sources">reset</button>
+            <button id="reset" title="Forget every setting on this device: region, topic, sort, theme, bypass, site icons, auto refresh, back action, open summaries and sources">reset</button>
             <button id="install" title="Install news.txt as an app">install</button>
             <button id="site-icons" aria-pressed="false" title="Show each website's icon before its headlines">site icons: off</button>
             <button id="auto-refresh" title="Refresh the open tab by itself: off, 5m, 15m, 30m, 1h">auto refresh: off</button>
+            <button id="back-action" title="What the Back button does: exit the site, or return to the last tab">back action: exit</button>
             <span id="bypass" title="Open paywalled sites via a bypass service">bypass:</span>
             <span class="note" id="advanced-note" aria-live="polite"></span>
         </nav>
@@ -228,6 +229,7 @@
             var installBtn = document.getElementById("install");
             var siteIconsBtn = document.getElementById("site-icons");
             var autoRefreshBtn = document.getElementById("auto-refresh");
+            var backActionBtn = document.getElementById("back-action");
             var advancedNote = document.getElementById("advanced-note");
             var bypassEl = document.getElementById("bypass");
 
@@ -459,6 +461,19 @@
                 renderAutoRefresh();
                 autoRefreshIfDue();
             }
+            // Back action: "exit" (the default) updates the address in place when switching tabs, so Back
+            // leaves the site (as an installed app should); "last tab" adds a history entry per switch
+            var backToLastTab = read("retroBackAction") === "last tab";
+            function renderBackAction() {
+                backActionBtn.textContent = "back action: " + (backToLastTab ? "last tab" : "exit".padEnd(8, "\u00a0"));  // Same width either way
+                backActionBtn.classList.toggle("on", backToLastTab);
+            }
+            function toggleBackAction() {
+                backToLastTab = !backToLastTab;
+                write("retroBackAction", backToLastTab ? "last tab" : "exit");
+                renderBackAction();
+            }
+
             function autoRefreshIfDue() {
                 if (!autoRefresh.ms || document.hidden) return;
                 if (Date.now() - stateOf(current, currentTopic).loadedAt >= autoRefresh.ms) load(current, currentTopic);
@@ -494,13 +509,14 @@
             });
 
             function resetAll() {
-                ["retroRegion", "retroTopic", "retroSort", "retroTheme", "bypassService", "retroSiteIcons", "retroAutoRefresh"].forEach(forget);  // bypassService: shared with the old classic page
+                ["retroRegion", "retroTopic", "retroSort", "retroTheme", "bypassService", "retroSiteIcons", "retroAutoRefresh", "retroBackAction"].forEach(forget);  // bypassService: shared with the old classic page
                 openSummaries = {};
                 openRelated = {};
                 sortMode = "mix";
                 shuffleKeys = {};
                 siteIcons = false;
                 autoRefresh = AUTO_REFRESH[0];
+                backToLastTab = false;
                 bypass = "none";
                 document.documentElement.removeAttribute("data-theme");
                 applyTheme(null);
@@ -508,6 +524,7 @@
                 renderSort();
                 renderSiteIcons();
                 renderAutoRefresh();
+                renderBackAction();
                 selectView(HOME_VIEW, DEFAULT_TOPIC, true);
                 forget("retroRegion");  // Back to following the visitor's location
                 forget("retroTopic");
@@ -715,10 +732,13 @@
                     write("retroRegion", region);
                     write("retroTopic", topic);
                 }
-                // The address follows the tab (refresh and shared links open it) without adding history
-                // entries: Back leaves the site, as it should in the installed app, instead of stepping
-                // back through every tab visited
-                if (byUser && changed) history.replaceState({ region: region, topic: topic }, "", urlFor(region, topic));
+                // The address follows the tab (refresh and shared links open it). By default it's updated in
+                // place, so Back leaves the site; with back action "last tab", each switch is a history entry
+                if (byUser && changed) {
+                    var state = { region: region, topic: topic };
+                    if (backToLastTab) history.pushState(state, "", urlFor(region, topic));
+                    else history.replaceState(state, "", urlFor(region, topic));
+                }
                 document.title = region === DEFAULT_VIEW && topic === DEFAULT_TOPIC ? "news.txt" : "news.txt / " + viewName(region, topic);
                 renderTabs();
                 render();
@@ -742,6 +762,7 @@
             installBtn.addEventListener("click", install);
             siteIconsBtn.addEventListener("click", toggleSiteIcons);
             autoRefreshBtn.addEventListener("click", cycleAutoRefresh);
+            backActionBtn.addEventListener("click", toggleBackAction);
             document.addEventListener("visibilitychange", autoRefreshIfDue);  // Catch up on returning to the tab
             window.addEventListener("popstate", function () {
                 selectView(fromUrl("region", isView) || DEFAULT_VIEW, fromUrl("topic", isTopic) || DEFAULT_TOPIC, false);
@@ -770,6 +791,7 @@
             renderSort();
             renderSiteIcons();
             renderAutoRefresh();
+            renderBackAction();
             renderInstall();
             // A view in the URL wins (shared links); otherwise reopen the last one viewed
             var params = new URLSearchParams(location.search);
