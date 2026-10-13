@@ -16,6 +16,7 @@ from services.places import regions_in
     ("These California Boat Dwellers Fear the Worst: Life on Land", {"americas"}),
     ("Koalas return to New South Wales forests", {"oceania"}),  # Not Wales
     ("Papua New Guinea logging probe", {"oceania"}),  # Not Guinea
+    ("Flights from São Paulo resume", {"americas"}),  # A name that wraps onto the next line in the list
     ("US and China agree climate pact", {"americas", "asia"}),
     ("U.S. EPA rolls back rule", {"americas"}),
     ("Too much penguin poop in Antarctica is accelerating snow melt", set()),
