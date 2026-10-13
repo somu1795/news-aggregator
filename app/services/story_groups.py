@@ -33,33 +33,20 @@ def _in_rank_order(views: Dict[str, List[Dict]]) -> List[Dict]:
     return ordered
 
 
-def _same_article(a: str, b: str) -> bool:
-    """Links to the same page, ignoring the fragment and a trailing slash."""
-    return a.split("#")[0].rstrip("/") == b.split("#")[0].rstrip("/")
-
-
 def collapse(items: List[Dict], group_of: Dict[str, int]) -> List[Dict]:
     """
     Keeps each story's first headline (a copy, as views share item dicts) with the
-    others under "related". Another headline linking to the same article adds no
-    row; if it has a discussion page (Hacker News) and the story has none, the
-    story gets it as its own "comments". Related headlines keep their discussion page.
+    others under "related", each with its discussion page when it has one (Hacker News).
     """
-    kept, leaders, by_link = [], {}, {}
+    kept, leaders = [], {}
     for item in items:
         group = group_of.get(item["title"])
-        page = item["link"].split("#")[0].rstrip("/")
-        # Same story by the model, or simply the same article under another headline
-        leader = (leaders.get(group) if group is not None else None) or by_link.get(page)
+        leader = leaders.get(group) if group is not None else None
         if leader is None:
             leader = {**item, "related": []}
             if group is not None:
                 leaders[group] = leader
-            by_link[page] = leader
             kept.append(leader)
-        elif _same_article(item["link"], leader["link"]):
-            if item.get("comments") and not leader.get("comments"):
-                leader["comments"] = item["comments"]
         elif len(leader["related"]) < settings.MAX_RELATED:
             leader["related"].append({"title": item["title"], "link": item["link"], "source": item["source"],
                                       "comments": item.get("comments")})
