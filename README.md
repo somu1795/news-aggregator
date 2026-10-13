@@ -14,7 +14,7 @@
 - **Regional News Without a Home-Country Bias**: Tabs for Asia, Europe, the Americas, Africa and Oceania, each built from that region's own local news (Google News local editions' national sections, BBC regional feeds and about 65 local outlets from Japan, Korea and Taiwan to the Baltics, the Caribbean, North Africa and the Pacific, such as Kyodo, Yonhap, ANSA, Yle, MercoPress, Daily Maverick, ABC and RNZ Pacific). Every tab keeps the same mix: 50% news (that region's, or all regions equally on the home page), 30% science and 20% Hacker News.
 - **Topic Tabs**: Every region can be filtered to uplifting, tech, science, nature, culture or sport news. A small model (`bge-small-en-v1.5`, fine-tuned once on a GPU by `tagger/finetune.py`) runs on the host's Intel NPU in its own `tagger` container (or on the CPU without one). It's trained on labels the feeds themselves imply (a Sports section is sport) and retrains itself daily on every headline it has stored.
 - **Article Summaries**: The top 20 stories of every tab get a short summary, shown in place under the headline. A `summarizer` service extracts each article's text and has an LLM (Ollama, e.g. on a GPU machine on your network) summarize it. Sites whose bot checks refuse plain requests are read with an isolated headless browser (`browser`, behind a public-only proxy); otherwise from the feed's own text or an archive.ph snapshot. Optional: set `SUMMARIZER_LLM_URL` in `.env`.
-- **Search**: `[/]search` (or the `/` key) searches every tab's headlines and summaries as you type, entirely in the browser: opening it loads all tabs once (about half a second), then results update on every keystroke, each labelled with the tabs it's in.
+- **Search**: `[/]search` (or the `/` key) searches every tab's headlines and summaries as you type, entirely in the browser: opening it loads every tab's headlines in one request, then results update on every keystroke, each labelled with the tabs it's in.
 - **One Item per Story**: When several outlets cover the same story under different headlines, a tab shows it once, with "+N sources" opening the others. A second small model on the NPU (`multilingual-e5-small`) recognises the same story, also across languages.
 - **Reading Controls**: Sort each tab by the default mix, newest, oldest or random; an *advanced* row has **reset** (back to the defaults), **install** (installs the site as an app; it has a web app manifest and icons) **site icons** (each website's icon before its headlines, served from the site's own domain) **auto refresh** (off, 5m, 15m, 30m or 1h; refreshes the open tab while it's visible) and **back action** (whether Back leaves the site, the default, or returns to the last tab).
 - **Configurable Sources and Weighting**: Regions, topics, their feeds and each feed's share are defined in `app/sources.json`; the page's tabs follow the file.
@@ -88,6 +88,8 @@ The simplest public setup: no open ports, Cloudflare's DDoS protection, and the 
 
 Cloudflare sets `CF-Connecting-IP` to the visitor's IP and rejects requests that try to send their own, so the rate limit sees real IPs. Caddy adds HSTS and the other security headers itself.
 
+To let Cloudflare answer most requests without reaching this server, add a cache rule (Caching → Cache Rules) for `/api/headlines`, `/api/search-index`, `/site-icon/*` and the icon files (`/manifest.webmanifest`, `/favicon.ico`, `/apple-touch-icon.png`, `/icon-192.png`, `/icon-512.png`): eligible for cache, edge TTL from the origin's Cache-Control header. Every response already says how long it stays fresh. The page's stylesheet and script (`/static/`) are cached without a rule.
+
 ## Configuration
 
 Most configuration is managed via the `.env` file. See `.env.example` for a full list of available options and their descriptions.
@@ -101,7 +103,7 @@ Regions, news sources and their weights are defined in `app/sources.json` (forma
 | `ADMIN_API_KEY`    | A secret key to protect administrative endpoints. **Required.**          | `changeme`   |
 | `UVICORN_WORKERS`  | Uvicorn worker processes per container; keep equal to `APP_CPUS`.       | `4`          |
 | `CADDY_HTTP_PORT`  | The port Caddy listens on (this machine and the LAN).                   | `7001`       |
-| `API_RATE_LIMIT`   | Rate limit per client IP for `/` and `/api/headlines`.                   | `100/minute` |
+| `API_RATE_LIMIT`   | Rate limit per client IP for `/`, `/api/headlines` and `/api/search-index`. | `100/minute` |
 | `APP_CPUS`         | Max CPU cores for each app container.                                    | `4`          |
 | `APP_MEM_LIMIT`    | Max memory for each app container (e.g., `512m`, `2G`).                  | `2G`         |
 | `RENDER_GID`       | Host group id owning the NPU (`getent group render`), for the tagger.    | `991`        |
@@ -169,6 +171,7 @@ Because requests are served from memory and never fetch upstream, a single app c
 - `GET /`: Serves the main page (minimalist retro design with region and topic tabs).
 - `/archive` and `/retro` (old URLs) redirect to `/`.
 - `GET /api/headlines?region=<view>&topic=<topic>`: Returns the latest snapshot for `all` (default) or a region (`asia`, `europe`, `americas`, `africa`, `oceania`), optionally for one topic (`uplifting`, `tech`, `science`, `nature`, `culture`, `sport`): `region`, `topic`, `data`, `fetched_at`, `expires_at`. 404 for an unknown region or topic; 503 with `Retry-After` only before that view's first refresh.
+- `GET /api/search-index`: Every view's headlines in one response, for the page's search: `items` (each link once, with `views`, the views it's in), `fetched_at`, `expires_at`. 503 with `Retry-After` only before the first refresh.
 - `GET /site-icon/<domain>`: A website's icon, when the refresher has cached it (404 otherwise).
 - `GET /health`: Health check. Reports `healthy`, `degraded` (Redis down but still serving), or `unhealthy`, plus the headlines' age.
 - `POST /admin/cache/clear`: Triggers an immediate refresh (requires `X-API-Key`). Current headlines stay available meanwhile.

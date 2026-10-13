@@ -89,10 +89,10 @@ So request volume costs almost nothing upstream or in Redis, and users keep gett
   - **`main.py`**: app wiring — middleware, exception handling, lifespan, routes.
   - **`config.py`**: Pydantic settings (environment / `.env`); loads and validates the source catalog from **`sources.json`**; `snapshot_key(view)`.
   - **`deps.py`**: admin API key check, rate limiter and client-IP key function.
-  - **`models.py`**: the `/api/headlines` response schema, shared with the refresher.
+  - **`models.py`**: the API's response schemas (`/api/headlines`, shared with the refresher, and `/api/search-index`).
   - **`routes/`**: `headlines.py`, `frontend.py`, `admin.py`, `health.py`.
   - **`services/`**:
-    - `headlines_cache.py`: per-process copy of every view.
+    - `headlines_cache.py`: per-process copy of every view, and of all of them combined for the page's search (rebuilt only when a view changes).
     - `redis_client.py`: Redis client factory.
     - `feed_service.py`: fetching, per-view mixing, link resolution orchestration.
     - `redirect.py`: the custom Google News resolver.
@@ -280,7 +280,7 @@ Consequence: a newly published snapshot reaches users within about 5s, and the A
 - Each item shows the title (without Google's " - Publisher" suffix), the domain, the source and age, plus "discuss" for Hacker News posts (a feed's comments link is dropped when it's just the article itself) and "summary" for items with one, which opens it under the item, labelled as a machine summary (it stays open across refreshes). A story that other outlets in the view also carry shows "+N sources", which opens their headlines (linked, with their source) under it.
 - Other controls:
   - `r` refreshes;
-  - `/` (or [/]search) opens a search box that searches **every tab's** headlines, sources and summaries, in the browser. Opening it loads all 42 views from `/api/headlines` in parallel (served by Cloudflare's cache; measured ~0.3 s for ~500 KB from India, up to ~1 s abroad on cache misses), reused for 5 minutes. Each keystroke filters in memory: every word typed must start a word in the text (case and accents ignored; "elect" finds "election", "ai" doesn't find "said"); headline matches first, then summary matches, newest first; the same story in several tabs (same link or same headline) is one result, labelled with its tabs ("every region / science"). At most 100 are shown. Matched words (two letters or more) are marked in headlines, sources, summaries and sources lists: bold with a dotted accent underline, built from text nodes and `<mark>` elements, never HTML; a result found only in its summary shows the words around its first match. `Esc` or picking a tab closes it. No server change: it's the existing API.
+  - `/` (or [/]search) opens a search box that searches **every tab's** headlines, sources and summaries, in the browser. Opening it loads every tab's headlines in one response, `/api/search-index` (each link once, with the views it's in: about 300 KB compressed, where loading the 42 views one by one took 41 requests and 540 KB), reused for 5 minutes; if it can't be loaded, the status line says so and reopening search tries again (an older copy, if any, stays in use). Each keystroke filters in memory: every word typed must start a word in the text (case and accents ignored; "elect" finds "election", "ai" doesn't find "said"); headline matches first, then summary matches, newest first, whatever the sort; the same story in several tabs (same link or same headline) is one result, labelled with its tabs ("every region / science"). At most 100 are shown. Matched words (two letters or more) are marked in headlines, sources, summaries and sources lists: bold with a dotted accent underline, built from text nodes and `<mark>` elements, never HTML; a result found only in its summary shows the words around its first match. `Esc` or picking a tab closes it.
   - `a` (or [a]dvanced) shows a second row: **reset** (forgets every setting on this device: region, topic, sort, theme, bypass, site icons, auto refresh, back action, and closes open summaries), **install** (the browser's own install prompt, when it offers one; the site has a web app manifest, so Chrome can install it), **site icons** (off by default: each website's icon before its headlines, at text size), **back action** (`exit` by default: Back leaves the site; `last tab`: Back returns to the previous tab), **auto refresh** (cycles off, 5m, 15m, 30m, 1h: the open view is fetched again once it's older than that, checked every 30 s and on returning to the tab, never while the tab is hidden), and **bypass** (off by default; "archive" opens known paywalled sites via `archive.ph/newest/<url>`, which goes straight to the latest snapshot);
   - `s` (or [s]ort) cycles the order: **mix** (the server's: each feed's own ranking, interleaved by weight), newest first, oldest first, or random (reshuffled each time it's chosen, kept across refreshes); remembered;
   - `d` toggles dark mode.
@@ -292,6 +292,7 @@ Consequence: a newly published snapshot reaches users within about 5s, and the A
 | `GET /static/retro.css`, `GET /static/retro.js` | The page's stylesheet and script. With the current `?v=` hash (the page's links): cached for a year (`immutable`); otherwise `no-cache`. |
 | `GET /retro` | Old evaluation URL; `301` redirect to `/`. |
 | `GET /api/headlines?region=<view>&topic=<topic>` | Snapshot JSON for `all` (default) or a region id, and optionally one topic: `region`, `topic` (null for a main view), `data` (each item: `title`, `link`, `source`, `published`, `last_updated`, `comments` or null), `fetched_at`, `expires_at`. **404** for an unknown region or topic (the message lists valid ones). **503 with `Retry-After: 10`** only before that view's first snapshot exists. |
+| `GET /api/search-index` | Every view's headlines in one response, for the page's search: `items` (each link once: the item as in `/api/headlines`, plus `views`, the views it's in, e.g. `["all", "asia", "asia:tech"]`, in tab order), `fetched_at` (the newest view's), `expires_at` (the soonest any view is due to be refreshed). Cached like `/api/headlines`. **503 with `Retry-After: 10`** only before the first snapshot exists. |
 | `GET /health` | `healthy` / `degraded` / `unhealthy`, plus the "all" view's `headlines.age_seconds` and `headlines.stale` (see §8). |
 | `POST /admin/cache/clear` | Requests an immediate refresh; requires `X-API-Key`. |
 | `GET /metrics` | Prometheus metrics (blocked at Caddy). |
@@ -343,7 +344,7 @@ bge-small was chosen over EmbeddingGemma for memory (the tagger uses ~450 MB) an
 | Aspect | Behaviour |
 | --- | --- |
 | Limit | `API_RATE_LIMIT`, default **100 requests per minute per client IP**, fixed window. |
-| Routes limited | `GET /` and `GET /api/headlines` (all regions share one counter), each route with its own counter. `/health`, `/metrics`, `/admin/*` and the `/retro` redirect are not limited. |
+| Routes limited | `GET /`, `GET /api/headlines` (all regions share one counter) and `GET /api/search-index`, each route with its own counter. `/health`, `/metrics`, `/admin/*` and the `/retro` redirect are not limited. |
 | Client identity | The `X-Real-IP` header, which Caddy always overwrites with the IP it resolved. Clients connecting from untrusted addresses can't influence it; trusted proxies (the Docker network, where the Cloudflare Tunnel connector connects from) forward the real visitor IP. |
 | When exceeded | `429` with `{"error": "Rate limit exceeded: 100 per 1 minute"}`. |
 | Storage | Counters live in Redis, so limits are shared across all workers and containers. Checks use 0.5s timeouts and no retries. |

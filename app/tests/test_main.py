@@ -37,6 +37,15 @@ async def publish_snapshot(redis_client, title="Cached News", fetched_at=None, v
     await redis_client.set(snapshot_key(view), json.dumps(snapshot))
 
 
+async def publish_view(redis_client, view, *links, fetched_at=None):
+    """A snapshot of a view whose items are these links (each titled after its link)."""
+    fetched_at = fetched_at or time.time()
+    data = [{"title": link, "link": link, "source": "BBC", "published": FIXED_TIME_UNIX, "last_updated": fetched_at}
+            for link in links]
+    await redis_client.set(snapshot_key(view), json.dumps({
+        "region": view, "data": data, "fetched_at": fetched_at, "expires_at": fetched_at + settings.REFRESH_INTERVAL_SECONDS}))
+
+
 # --- Test Endpoints ---
 
 async def test_health_check_success(client, mock_redis):
@@ -118,7 +127,7 @@ def test_page_assets_are_kept_by_content_hash(client, name, content_type):
     assert client.get(f"/static/{name}").headers["cache-control"] == "no-cache"
     assert client.get("/static/missing.js").status_code == 404
 
-@pytest.mark.parametrize("path", ["/", "/api/headlines", "/health"])
+@pytest.mark.parametrize("path", ["/", "/api/headlines", "/api/search-index", "/health"])
 def test_head_requests(client, path):
     assert client.head(path).status_code != 405
 
@@ -176,6 +185,52 @@ async def test_get_headlines_by_topic(client, mock_redis):
     assert client.get(f"/api/headlines?region={region}").json()["data"][0]["title"] == "Regional"
     assert client.get(f"/api/headlines?region={region}&topic={topic}").json()["data"][0]["title"] == "Regional topic"
     assert client.get(f"/api/headlines?topic={topic}").json()["data"][0]["title"] == "Everywhere topic"
+
+async def test_search_index_has_each_link_once_with_its_views(client, mock_redis):
+    """Every view's headlines in one response, for the page's search: each link once, with the views it's in."""
+    region, topic = CATALOG.regions[0].id, CATALOG.topics[0].id
+    now = time.time()
+    await publish_view(mock_redis, topic_view(region, topic), "https://a.example/shared", fetched_at=now - 30)
+    await publish_view(mock_redis, region, "https://a.example/regional", "https://a.example/shared", fetched_at=now - 60)
+    await publish_view(mock_redis, ALL_VIEW, "https://a.example/shared", fetched_at=now - 60)
+
+    response = client.get("/api/search-index")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [(item["link"], item["views"]) for item in body["items"]] == [
+        ("https://a.example/shared", [ALL_VIEW, region, topic_view(region, topic)]),  # Tab order: a region, then its topics
+        ("https://a.example/regional", [region]),
+    ]
+    assert body["items"][1]["source"] == "BBC"  # The whole item, as in /api/headlines
+    # Fresh until the soonest view is due to be refreshed
+    assert body["fetched_at"] == now - 30 and body["expires_at"] == now - 60 + settings.REFRESH_INTERVAL_SECONDS
+    max_age = int(response.headers["cache-control"].split("=")[1])
+    assert 0 < max_age <= settings.REFRESH_INTERVAL_SECONDS - 60
+    assert f"max-age={max(max_age, 60)}," in response.headers["cdn-cache-control"]
+
+def test_search_index_before_first_refresh(client):
+    response = client.get("/api/search-index")
+    assert response.status_code == 503 and response.headers["retry-after"] == "10"
+
+async def test_search_index_is_rebuilt_only_when_a_view_changes(mock_redis, monkeypatch):
+    from services.headlines_cache import HeadlinesCache
+
+    views = [ALL_VIEW, CATALOG.regions[0].id]
+    await publish_view(mock_redis, ALL_VIEW, "https://a.example/1")
+    cache = HeadlinesCache(mock_redis, views)
+    first = await cache.search_index(views)
+    assert await cache.search_index(views) is first
+
+    await publish_view(mock_redis, views[1], "https://a.example/2")  # A view's first snapshot
+    second = await cache.search_index(views)
+    assert second is not first and '"https://a.example/2"' in second.body
+
+    monkeypatch.setattr(settings, "LOCAL_CACHE_SECONDS", 0)
+    await publish_view(mock_redis, ALL_VIEW, "https://a.example/3")  # A newer snapshot of a view
+    third = await cache.search_index(views)
+    assert '"https://a.example/3"' in third.body and '"https://a.example/1"' not in third.body
+    assert await cache.search_index(views) is third
 
 def test_get_headlines_unknown_topic(client):
     response = client.get("/api/headlines?topic=gossip")

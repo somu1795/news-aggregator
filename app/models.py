@@ -1,6 +1,6 @@
 """
 API data models, shared by the refresher (which writes snapshots) and the
-headlines route (which serves them).
+headlines routes (which serve them).
 """
 
 from typing import List, Optional
@@ -33,3 +33,14 @@ class APIResponse(BaseModel):
     data: List[HeadlineItem]
     fetched_at: float
     expires_at: float  # When the refresher is next expected to publish
+
+
+class SearchItem(HeadlineItem):
+    views: List[str]  # The views it's in: "all", a region id, or "<view>:<topic>"
+
+
+class SearchIndex(BaseModel):
+    """Every view's items in one response, each link once (GET /api/search-index, for the page's search)."""
+    items: List[SearchItem]
+    fetched_at: float  # The newest view's
+    expires_at: float  # The soonest any view is due to be refreshed

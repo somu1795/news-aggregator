@@ -285,54 +285,64 @@
     }
 
     // --- Search: every tab's headlines and summaries, in the browser ---
-    // Opening it loads every tab (cached by Cloudflare; ~0.3-1 s), then each keystroke filters
-    // in memory. Every word typed must start a word in the headline, source or summary (case and
-    // accents ignored); headline matches first, newest first.
+    // Opening it loads every tab's headlines in one response (/api/search-index, cached by Cloudflare),
+    // then each keystroke filters in memory. Every word typed must start a word in the headline, source
+    // or summary (case and accents ignored); headline matches first, newest first.
     var SEARCH_LIMIT = 100;
     var SEARCH_STALE_MS = 5 * 60 * 1000;
-    var search = { active: false, query: "", index: null, loadedAt: 0, loading: false, count: 0 };
+    var search = { active: false, query: "", index: null, loadedAt: 0, loading: false, error: null, count: 0 };
 
     function searching() { return search.active && search.query.trim() !== ""; }
     function normalize(text) {
         return (text || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
     }
-    function allViews() {
-        var pairs = [];
-        VIEWS.forEach(function (v) { TOPICS.forEach(function (t) { pairs.push([v.id, t.id]); }); });
-        return pairs;
-    }
     function loadSearchIndex() {
         if (search.loading || (search.index && Date.now() - search.loadedAt < SEARCH_STALE_MS)) return;
         search.loading = true;
+        search.error = null;
         updateSearchNote();
-        Promise.all(allViews().map(function (view) {
-            var state = stateOf(view[0], view[1]);
-            return state.data && Date.now() - state.loadedAt < STALE_MS ? null : load(view[0], view[1]);
-        })).then(function () {
-            var seen = Object.create(null), index = [];  // No inherited keys: a headline "constructor" is just a headline
-            allViews().forEach(function (view) {
-                (stateOf(view[0], view[1]).data || []).forEach(function (item) {
-                    // One result per story: the same link, or the same headline from another outlet
-                    var key = normalize(cleanTitle(item.title, item.source)).replace(/[^a-z0-9]+/g, " ").trim();
-                    var entry = seen[item.link] || seen[key];
-                    if (!entry) {
-                        entry = seen[item.link] = seen[key] = {
-                            item: item, views: [],
-                            title: normalize(cleanTitle(item.title, item.source)),
-                            text: normalize(cleanTitle(item.title, item.source) + " " + item.source + " " + (item.summary || "")),
-                        };
-                        index.push(entry);
-                    }
-                    entry.views.push(view);
-                });
+        getJson("/api/search-index")
+            .then(function (body) {
+                search.index = indexOf(Array.isArray(body.items) ? body.items : []);
+                search.loadedAt = Date.now();
+            })
+            .catch(function (error) {
+                search.error = error.message;  // Keep any older index; reopening search tries again
+            })
+            .then(function () {
+                search.loading = false;
+                updateSearchNote();
+                render();
+                updateStatus();
             });
-            search.index = index;
-            search.loadedAt = Date.now();
-            search.loading = false;
-            updateSearchNote();
-            render();
-            updateStatus();
+    }
+    // One entry per story: the server lists each link once, with the views it's in ("asia:tech");
+    // the same headline from another outlet joins the first one's entry
+    function indexOf(items) {
+        var seen = Object.create(null), index = [];  // No inherited keys: a headline "constructor" is just a headline
+        items.forEach(function (item) {
+            var title = normalize(cleanTitle(item.title, item.source));
+            var key = title.replace(/[^a-z0-9]+/g, " ").trim();
+            var entry = seen[key];
+            if (!entry) {
+                entry = seen[key] = {
+                    item: item, views: [], title: title,
+                    text: normalize(cleanTitle(item.title, item.source) + " " + item.source + " " + (item.summary || "")),
+                };
+                index.push(entry);
+            }
+            (item.views || []).forEach(function (view) {
+                var parts = view.split(":");
+                entry.views.push([parts[0], parts[1] || DEFAULT_TOPIC]);
+            });
         });
+        // A story from several outlets: its tabs in tab order, which sets the order of its "where" label
+        index.forEach(function (entry) { entry.views.sort(function (a, b) { return tabPosition(a) - tabPosition(b); }); });
+        return index;
+    }
+    function tabPosition(view) {  // [region, topic]: each region, then its topics
+        return VIEWS.findIndex(function (v) { return v.id === view[0]; }) * TOPICS.length +
+            TOPICS.findIndex(function (t) { return t.id === view[1]; });
     }
     function whereLabel(inViews) {
         var regions = [], topics = [];
@@ -417,7 +427,9 @@
         return (start > 0 ? "\u2026" : "") + text.slice(start, end).trim() + (end < text.length ? "\u2026" : "");
     }
     function updateSearchNote() {
-        searchNote.textContent = search.loading ? "loading every tab..." : "";
+        searchNote.textContent = search.loading ? "loading every tab..." :
+            search.error ? "couldn't load " + (search.index ? "the latest headlines" : "the headlines") + " (" + search.error +
+                "); reopen search to try again" : "";
     }
     function openSearch() {
         search.active = true;
@@ -527,16 +539,17 @@
         if (!items) return;
         var service = BYPASS_SERVICES.filter(function (s) { return s.id === bypass; })[0];
         var words = highlightWords();
-        sorted(items).forEach(function (item, i) {
+        items.forEach(function (item, i) {
             var li = renderItem(item, i, service, words);
             if (li) list.appendChild(li);
         });
     }
 
-    // The open view's items, or the search results; null if there's nothing to list (with a notice saying why)
+    // The open view's items in the chosen order, or the search results in theirs (whatever the sort);
+    // null if there's nothing to list (with a notice saying why)
     function itemsToShow() {
         if (searching()) {
-            if (!search.index) return null;  // Still loading; the status line says so
+            if (!search.index) return null;  // Still loading, or failed; the status line says so
             var results = searchResults();
             if (results.length) return results;
             showNotice("nothing matches “" + search.query.trim() + "” in any tab.", false);
@@ -547,7 +560,7 @@
             if (state.error) showNotice("could not load " + viewName(current, currentTopic) + ": " + state.error, true);
             return null;
         }
-        if (state.data.length) return state.data;
+        if (state.data.length) return sorted(state.data);
         showNotice("no headlines for " + viewName(current, currentTopic) + " right now.", false);
         return null;
     }
@@ -688,7 +701,7 @@
 
     function updateStatus() {
         if (search.active) {
-            if (!search.index) setStatus("search \u00b7 loading every tab...");
+            if (!search.index) setStatus(search.error ? "search \u00b7 could not load the headlines" : "search \u00b7 loading every tab...");
             else if (!searching()) setStatus("search \u00b7 type to search " + search.index.length + " headlines in every tab");
             else setStatus("search \u00b7 " + search.count + (search.count === 1 ? " result" : " results") +
                 (search.count > SEARCH_LIMIT ? " (showing " + SEARCH_LIMIT + ")" : "") +
@@ -717,6 +730,16 @@
     }
 
     // --- Data ---
+    // An API response's body, or an error with the API's message
+    function getJson(url) {
+        return fetch(url, { headers: { "Accept": "application/json" } }).then(function (response) {
+            return response.json().catch(function () { return {}; }).then(function (body) {
+                if (!response.ok) throw new Error(body.detail || body.error || "HTTP " + response.status);
+                return body;
+            });
+        });
+    }
+
     function load(region, topic) {
         var state = stateOf(region, topic);
         if (state.loading) return state.promise;
@@ -726,13 +749,7 @@
         var url = "/api/headlines?region=" + encodeURIComponent(region) +
             (topic === DEFAULT_TOPIC ? "" : "&topic=" + encodeURIComponent(topic));
         var redraw = true;
-        state.promise = fetch(url, { headers: { "Accept": "application/json" } })
-            .then(function (response) {
-                return response.json().catch(function () { return {}; }).then(function (body) {
-                    if (!response.ok) throw new Error(body.detail || body.error || "HTTP " + response.status);
-                    return body;
-                });
-            })
+        state.promise = getJson(url)
             .then(function (body) {
                 var fetchedAt = body.fetched_at || Date.now() / 1000;
                 // The same snapshot again (e.g. a refresh before the next one is out): the list stays as it
