@@ -83,9 +83,7 @@ The simplest public setup: no open ports, Cloudflare's DDoS protection, and the 
 
 1. In Cloudflare Zero Trust, create a tunnel (Cloudflared, Docker) and copy its token.
 2. Give it a public hostname (your site) with the service `http://caddy:7001`.
-3. In `.env`, set `COMPOSE_PROFILES=cloudflare` and `CLOUDFLARE_TUNNEL_TOKEN=<token>`, then `docker compose up -d`. Two connectors (`cloudflared` and `cloudflared-b`) connect out to Cloudflare on the same tunnel; Cloudflare uses whichever is up.
-
-**Upgrading cloudflared** without downtime: `scripts/upgrade-cloudflared.sh <version>` (e.g. `2026.11.0`) replaces one connector while the other serves, checks that it registered its tunnel connections and the site answers, then does the other; a connector that fails is rolled back to its previous version. Then commit `docker-compose.yml`. Tested: switching both connectors down a version and back up dropped none of 78 requests sent during it. Each connector is pinned to an exact version rather than `latest`, so a pull never changes it unexpectedly. Check [cloudflared's releases](https://github.com/cloudflare/cloudflared/releases) (the Cloudflare dashboard flags outdated connectors); Cloudflare supports a version for about a year.
+3. In `.env`, set `COMPOSE_PROFILES=cloudflare` and `CLOUDFLARE_TUNNEL_TOKEN=<token>`, then `docker compose up -d`. The `cloudflared` container connects out to Cloudflare.
 
 Cloudflare sets `CF-Connecting-IP` to the visitor's IP and rejects requests that try to send their own, so the rate limit sees real IPs. Caddy adds HSTS and the other security headers itself.
 
