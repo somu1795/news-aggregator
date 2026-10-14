@@ -252,7 +252,7 @@
     }
 
     // Each website's icon before its headlines, served from our own domain (/site-icon/<domain>)
-    var siteIcons = read("retroSiteIcons") === "on";
+    var siteIcons = read("retroSiteIcons") !== "off";  // On unless turned off
     function renderSiteIcons() {
         siteIconsBtn.textContent = "site icons: " + (siteIcons ? "on" : "off");
         siteIconsBtn.classList.toggle("on", siteIcons);
@@ -502,7 +502,7 @@
         openRelated = Object.create(null);
         sortMode = "mix";
         shuffleKeys = Object.create(null);
-        siteIcons = false;
+        siteIcons = true;
         autoRefresh = AUTO_REFRESH[0];
         backToLastTab = false;
         bypass = "none";
