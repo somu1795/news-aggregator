@@ -13,7 +13,9 @@ pixel art (services/pixel_icons.py).
 import asyncio
 import base64
 import json
+import os
 import re
+import sys
 from typing import Iterable, List, Optional, Tuple
 from urllib.parse import urljoin, urlparse
 
@@ -23,13 +25,17 @@ import structlog
 from bs4 import BeautifulSoup
 
 from config import settings
-from services.pixel_icons import picture_size, pixel_art
 from services.safe_fetch import UnsafeURL, stream_public
 
 logger = structlog.get_logger(__name__)
 
 _HOST = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$")
 _SEMAPHORE = asyncio.Semaphore(10)
+_DRAWING = asyncio.Semaphore(1)  # One drawing process at a time
+# Pictures are redrawn by a separate process (services/pixel_icons.py), killed if it takes too long
+DRAW_COMMAND = [sys.executable, "-m", "services.pixel_icons"]
+DRAW_TIMEOUT = 20.0
+APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MAX_ICON_BYTES = 64_000
 PAGE_HEADERS = {"User-Agent": settings.BROWSER_USER_AGENT, "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5"}
 IMAGE_HEADERS = {"User-Agent": settings.BROWSER_USER_AGENT, "Accept": "image/*,*/*;q=0.5"}
@@ -72,7 +78,8 @@ async def _own_icons(client: httpx.AsyncClient, host: str) -> List[bytes]:
         page = await _download(client, home, PAGE_HEADERS, MAX_PAGE_BYTES)
         if page:
             base, body = page
-            for link in BeautifulSoup(body, "html.parser").find_all("link", href=True):
+            head = body.split(b"</head>")[0]  # Icons are declared there; the rest isn't parsed
+            for link in BeautifulSoup(head, "html.parser").find_all("link", href=True):
                 rel, href = " ".join(link.get("rel") or []).lower(), link["href"].strip()
                 if "icon" in rel and "mask-icon" not in rel and not href.startswith("data:") \
                         and "svg" not in (link.get("type") or "") and not href.split("?")[0].endswith(".svg"):
@@ -87,24 +94,51 @@ async def _own_icons(client: httpx.AsyncClient, host: str) -> List[bytes]:
     return icons
 
 
+def _frame(candidates: List[bytes]) -> bytes:
+    """As services/pixel_icons.py's main() reads them: each one's length (8 bytes), then its bytes."""
+    return b"".join(len(data).to_bytes(8, "big") + data for data in candidates)
+
+
+async def _draw(candidates: List[bytes]) -> Tuple[int, Optional[bytes]]:
+    """
+    (size, pixel-art SVG) of the best of the candidate pictures, drawn by a separate process;
+    (0, None) if none could be. If that process crashes, hangs or runs out of memory, only
+    this icon is lost.
+    """
+    if not candidates:
+        return 0, None
+    async with _DRAWING:
+        process = await asyncio.create_subprocess_exec(
+            *DRAW_COMMAND, cwd=APP_DIR, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL)
+        try:
+            out, _ = await asyncio.wait_for(process.communicate(_frame(candidates)), DRAW_TIMEOUT)
+        except TimeoutError:
+            process.kill()
+            await process.wait()
+            logger.warning("Site icon drawing timed out")
+            return 0, None
+        except BaseException:  # The icon step itself was cut off: never leave the process running
+            process.kill()
+            await process.wait()
+            raise
+    size, _, svg = out.partition(b"\n")
+    if process.returncode != 0 or not size.isdigit() or not svg.startswith(b"<svg"):
+        return 0, None
+    return int(size), svg
+
+
 async def _pixel_icon(client: httpx.AsyncClient, host: str) -> Optional[Tuple[bytes, str]]:
     """(pixel-art SVG, where its source came from) for a website, or None if no icon was found."""
-    sized = [(picture_size(data), data) for data in await _own_icons(client, host)]
-    own = max(((size, data) for size, data in sized if size), key=lambda pair: pair[0], default=None)
-    if own and own[0] >= GOOD_SIZE:
-        svg = await asyncio.to_thread(pixel_art, own[1])
-        if svg:
-            return svg, "own"
+    size, svg = await _draw(await _own_icons(client, host))
+    if svg and size >= GOOD_SIZE:
+        return svg, "own"
     if settings.ICON_FALLBACK_URL:  # Google's copy, only when its own is missing, small or unusable
         google = await _download(client, settings.ICON_FALLBACK_URL.format(host=host), IMAGE_HEADERS, MAX_SOURCE_BYTES)
-        svg = google and await asyncio.to_thread(pixel_art, google[1])
-        if svg:
-            return svg, "google"
-    if own and own[0] < GOOD_SIZE:
-        svg = await asyncio.to_thread(pixel_art, own[1])
-        if svg:
-            return svg, "own"
-    return None
+        _, google_svg = await _draw([google[1]]) if google else (0, None)
+        if google_svg:
+            return google_svg, "google"
+    return (svg, "own") if svg else None
 
 
 async def _fetch(client: httpx.AsyncClient, redis_client: aioredis.Redis, host: str) -> Optional[str]:

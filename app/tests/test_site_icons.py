@@ -139,3 +139,38 @@ def test_thin_lines_survive_and_only_raster_pictures_are_read():
     assert pixel_art(b"not a picture") is None
     assert pixel_art(picture(3000, mode="RGB")) is None  # Too many pixels, however small the file
     assert picture_size(picture(3000, mode="RGB")) == 0 and picture_size(picture(180)) == 180  # So it's never picked
+
+
+def test_neither_the_api_nor_the_refresher_loads_the_image_library():
+    """Only the separate drawing process does: an image library problem can't stop the site or its refresh."""
+    import os
+    import subprocess
+    import sys
+    env = {**os.environ, "ALLOWED_HOSTS": "testserver", "REDIS_URL": "memory://"}
+    check = "import sys, main, refresher; assert 'PIL' not in sys.modules, 'Pillow was imported'"
+    result = subprocess.run([sys.executable, "-c", check], cwd=os.path.dirname(os.path.dirname(__file__)),
+                            env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr[-500:]
+
+
+@pytest.mark.parametrize("command", [
+    "import os; os.abort()",  # The image library crashes
+    "import time; time.sleep(60)",  # Or hangs
+    "x = bytearray(1 << 30)",  # Or wants far too much memory
+])
+async def test_a_picture_that_breaks_the_drawing_process_costs_only_its_icon(monkeypatch, command):
+    import sys
+    import time
+    from services import site_icons
+    monkeypatch.setattr(site_icons, "DRAW_COMMAND", [sys.executable, "-c",
+                                                     "import resource; resource.setrlimit(resource.RLIMIT_AS, (256 << 20,) * 2); " + command])
+    monkeypatch.setattr(site_icons, "DRAW_TIMEOUT", 1.0)
+    started = time.monotonic()
+    assert await site_icons._draw([picture(64)]) == (0, None)
+    assert time.monotonic() - started < 5  # A hung process is killed at the timeout
+
+
+async def test_the_drawing_process_redraws_the_largest_usable_picture():
+    from services import site_icons
+    size, svg = await site_icons._draw([picture(32), picture(3000, mode="RGB"), b"junk", picture(180)])
+    assert size == 180 and svg.startswith(b"<svg") and b"#c81e1e" in svg  # 3000 px is over the limit: skipped

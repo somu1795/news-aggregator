@@ -4,6 +4,11 @@ website's own icon redrawn as 16×16 pixel art in its own colours
 (services/site_icons.py finds the icon). Served as an SVG of square pixels,
 so it stays sharp at any size.
 
+Runs as its own short-lived process (`python -m services.pixel_icons`, see
+main()), never inside the refresher: the pictures come from other people's
+servers, and one that crashes, hangs or exhausts the image library must not
+take the refresher (and the site's headlines) with it.
+
 Each pixel is decided from a 6×6 block of a 96×96 copy of the icon: the
 block's average colour, matched to the icon's 8 main colours (no blended
 in-between shades). A block that is mostly the icon's background but crossed
@@ -12,6 +17,9 @@ artist would draw them.
 """
 
 import io
+import resource
+import struct
+import sys
 from collections import Counter
 from typing import Dict, List, Optional, Tuple
 
@@ -22,7 +30,8 @@ CELL = 6
 COLOURS = 8
 STROKE_SHARE = 0.25  # Of a block, for a line crossing the background to take it
 FORMATS = ["ICO", "PNG", "JPEG", "GIF", "WEBP", "BMP"]  # Raster icons only; nothing else is decoded
-MAX_PIXELS = 2048 * 2048  # Larger pictures are refused (Pillow raises), whatever the file size
+MAX_PIXELS = 1024 * 1024  # Larger pictures are refused, whatever the file size (~10 MB to redraw at most)
+MEMORY_LIMIT = 256 * 1024 * 1024  # Of the process's address space; a 1024×1024 picture peaks at ~57 MB
 
 RGB = Tuple[int, int, int]
 
@@ -138,3 +147,32 @@ def picture_size(data: bytes) -> int:
     except Exception:
         return 0
     return max(width, height) if width * height <= MAX_PIXELS else 0
+
+
+def best_pixel_art(candidates: List[bytes]) -> Tuple[int, Optional[bytes]]:
+    """(its size, pixel art) of the largest candidate that can be redrawn; (0, None) if none can."""
+    for size, data in sorted(((picture_size(d), d) for d in candidates), key=lambda pair: -pair[0]):
+        svg = pixel_art(data) if size else None
+        if svg:
+            return size, svg
+    return 0, None
+
+
+def main() -> None:
+    """
+    Reads framed candidate icons on stdin and writes "<size>\n<svg>" for the best one
+    (nothing if none can be redrawn), with the process's memory capped.
+    """
+    resource.setrlimit(resource.RLIMIT_AS, (MEMORY_LIMIT, MEMORY_LIMIT))
+    data, candidates = sys.stdin.buffer.read(), []
+    while len(data) >= 8:
+        (length,) = struct.unpack(">Q", data[:8])
+        candidates.append(data[8:8 + length])
+        data = data[8 + length:]
+    size, svg = best_pixel_art(candidates)
+    if svg:
+        sys.stdout.buffer.write(b"%d\n" % size + svg)
+
+
+if __name__ == "__main__":
+    main()
