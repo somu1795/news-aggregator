@@ -67,9 +67,10 @@ docker run --rm --entrypoint sh -v "${PROJECT}_redis_data:/data" -v "$WORK/data:
     -c 'cp /backup/dump.rdb /data/ && chown redis:redis /data/dump.rdb'
 docker run --rm --entrypoint sh -v "${PROJECT}_tagger_data:/data" -v "$WORK/data:/backup:ro" "$helper" \
     -c 'cp /backup/tagger.db /backup/classifier.pkl /data/ && chown -R 1001:1001 /data'
-if [ -e "$WORK/data/archive.db" ]; then
+if [ -e "$WORK/data/archive.db" ]; then  # Optional: the site starts without it
     docker run --rm --entrypoint sh -v "${PROJECT}_archive_data:/archive" -v "$WORK/data:/backup:ro" "$helper" \
-        -c 'cp /backup/archive.db /archive/ && chown -R 1001:1001 /archive'
+        -c 'cp /backup/archive.db /archive/ && chown -R 1001:1001 /archive' \
+        || log "Warning: the headline archive wasn't restored; the site starts without it"
 fi
 
 log "Starting the stack"

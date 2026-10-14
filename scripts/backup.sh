@@ -67,18 +67,23 @@ docker cp "$tagger":/data/backup-tagger.db "$STAGE/data/tagger.db"
 docker cp "$tagger":/data/classifier.pkl "$STAGE/data/classifier.pkl"
 compose exec -T tagger rm -f /data/backup-tagger.db
 
-# 2b. The headline archive, the same way (a new install has none until its first refresh)
-refresher="$(compose ps -q refresher)"
-if compose exec -T refresher test -e /archive/archive.db; then
+# 2b. The headline archive, the same way (a new install has none until its first refresh).
+# Optional: if it fails, the rest is still backed up, and the log says so
+backup_archive() {
+    local refresher
+    refresher="$(compose ps -q refresher)" && [ -n "$refresher" ] || return 1
+    compose exec -T refresher test -e /archive/archive.db || return 0
     compose exec -T refresher python -c "
 import sqlite3
 src, dst = sqlite3.connect('/archive/archive.db'), sqlite3.connect('/archive/backup-archive.db')
 src.backup(dst)
 dst.close()
-"
-    docker cp "$refresher":/archive/backup-archive.db "$STAGE/data/archive.db"
-    compose exec -T refresher rm -f /archive/backup-archive.db
-fi
+" && docker cp "$refresher":/archive/backup-archive.db "$STAGE/data/archive.db"
+    local result=$?
+    compose exec -T refresher rm -f /archive/backup-archive.db || true
+    return $result
+}
+backup_archive || { log "Warning: the headline archive wasn't backed up"; rm -f "$STAGE/data/archive.db"; }
 
 # 3. The project folder as it is now (code, .git, .env, untracked notes), without caches
 tar -C "$(dirname "$REPO")" --exclude='__pycache__' --exclude='.pytest_cache' \
