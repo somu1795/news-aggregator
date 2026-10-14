@@ -82,6 +82,8 @@ opentelemetry-api==1.45.1
     # via fastapi
 packaging==26.3
     # via limits
+pillow==12.3.0
+    # via -r requirements.in
 prometheus-client==0.26.0
     # via prometheus-fastapi-instrumentator
 prometheus-fastapi-instrumentator==8.1.0

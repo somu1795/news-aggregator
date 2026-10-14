@@ -166,6 +166,8 @@ class Settings(BaseSettings):
 
     # --- Site icons (publisher favicons on the page) ---
     ICON_SOURCE_URL: str = "https://icons.duckduckgo.com/ip3/{host}.ico"
+    # For a website without an icon there or on its own pages; redrawn as pixel art. Empty disables it.
+    ICON_FALLBACK_URL: str = "https://www.google.com/s2/favicons?domain={host}&sz=64"
     ICON_TTL_SECONDS: int = 7 * 86400
     ICON_FAILED_TTL_SECONDS: int = 86400
     ICON_REFRESH_TIMEOUT_SECONDS: int = 60  # Cap on the icon step of a refresh cycle
