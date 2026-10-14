@@ -53,6 +53,15 @@ async def test_a_headline_is_stored_once_and_keeps_its_summary(mock_redis, archi
     assert rows(archive_db()) == {"https://pub.example/1": ("Story 1, updated", 101.0, "A summary.", 1000.0, 2000.0)}
 
 
+async def test_every_title_a_headline_had_is_kept(mock_redis, archive_db):
+    await publish(mock_redis, {"all": [item(1)]}, 1000.0)
+    await publish(mock_redis, {"all": [{**item(1), "title": "Story 1, updated"}]}, 2000.0)
+    await publish(mock_redis, {"all": [{**item(1), "title": "Story 1, updated"}]}, 3000.0)
+
+    assert archive_db().execute("SELECT title, first_seen FROM titles ORDER BY first_seen").fetchall() == [
+        ("Story 1", 1000.0), ("Story 1, updated", 2000.0)]
+
+
 async def test_each_view_is_recorded_hourly_in_display_order(mock_redis, archive_db):
     related = {"title": "Other take", "link": "https://other.example/1", "source": "Other"}
     await publish(mock_redis, {"all": [item(2), item(1, related=[related])]}, 1000.0)

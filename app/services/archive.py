@@ -26,6 +26,13 @@ CREATE TABLE IF NOT EXISTS items (
 );
 CREATE INDEX IF NOT EXISTS items_first_seen ON items (first_seen);
 CREATE INDEX IF NOT EXISTS items_published ON items (published);
+-- Every title a headline has had (items.title is the latest), and when each was first seen
+CREATE TABLE IF NOT EXISTS titles (
+    item       INTEGER NOT NULL REFERENCES items (id),
+    title      TEXT NOT NULL,
+    first_seen REAL NOT NULL,
+    PRIMARY KEY (item, title)
+);
 -- A view's headlines in display order: a JSON list with one list per story,
 -- its headline's id then the ids of the headlines folded under it
 CREATE TABLE IF NOT EXISTS snapshots (
@@ -76,6 +83,8 @@ def archive(views: Dict[str, List[Dict]], seen: float) -> None:
             ids.update(db.execute(
                 f"SELECT link, id FROM items WHERE link IN ({','.join('?' * len(links))})", links,
             ).fetchall())
+        db.executemany("INSERT OR IGNORE INTO titles (item, title, first_seen) VALUES (?, ?, ?)",
+                       [(ids[link], item["title"], seen) for link, item in rows.items()])
         last = dict(db.execute("SELECT view, max(taken) FROM snapshots GROUP BY view").fetchall())
         db.executemany("INSERT INTO snapshots (view, taken, items) VALUES (?, ?, ?)", [
             (view, seen, json.dumps([[ids[item["link"]]] + [ids[r["link"]] for r in item.get("related") or []]

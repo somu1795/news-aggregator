@@ -104,8 +104,9 @@ So request volume costs almost nothing upstream or in Redis, and users keep gett
 ### Refresher (`refresher` service)
 - Runs `refresher.py` from the same image. **Exactly one replica.**
 - Owns all upstream traffic: feeds, Google link resolution, writing the snapshots (see §4).
-- Keeps the **headline archive** (`services/archive.py`): every headline it publishes, kept forever in a SQLite file of its own (`/archive/archive.db` in the `archive_data` volume, WAL mode), for a future timeline (choosing a date, scrolling back). Nothing reads it yet. Two tables:
+- Keeps the **headline archive** (`services/archive.py`): every headline it publishes, kept forever in a SQLite file of its own (`/archive/archive.db` in the `archive_data` volume, WAL mode), for a future timeline (choosing a date, scrolling back). Nothing reads it yet. Three tables:
   - `items`: one row per link: title (the latest), source, published time, discussion link, summary, and when it was first and last published. A headline only ever folded under another (`related`) is stored too, without a published time. A summary is kept once made, though the summarizer's copy in Redis expires after 7 days.
+  - `titles`: every title a headline has had (feeds correct and update them), each with when it was first seen.
   - `snapshots`: each view's order once an hour (`ARCHIVE_SNAPSHOT_SECONDS`): a JSON list with one list per story, its headline's id then the ids folded under it. Enough to show a past front page again.
   - Written after every publish (both phases), in a thread; a failure is logged (`Headlines not archived`) and never stops a refresh. Measured on the 43 views: 1,840 headlines, 0.01–0.03 s a refresh; an hour's snapshots are ~38 KB. At most ~6 MB a day, so a few GB a year; it is backed up daily with the rest (README).
 
