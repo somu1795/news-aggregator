@@ -123,6 +123,14 @@
         var query = params.toString();
         return query ? "/?" + query : "/";
     }
+    // The address without a tab in it: switching tabs doesn't show the tab there, and a shared link's
+    // tab (/?region=asia) goes on the first switch, so the address never names the wrong one
+    function addressWithoutTab() {
+        var url = new URL(location.href);
+        url.searchParams.delete("region");
+        url.searchParams.delete("topic");
+        return url.pathname + url.search + url.hash;
+    }
     function renderNav(el, items, selected, hrefFor, onSelect, hint) {
         el.textContent = "";
         items.forEach(function (item, i) {
@@ -788,12 +796,13 @@
             write("retroRegion", region);
             write("retroTopic", topic);
         }
-        // The address follows the tab (refresh and shared links open it). By default it's updated in
-        // place, so Back leaves the site; with back action "last tab", each switch is a history entry
+        // The address stays as it is (the last tab is remembered, so a refresh reopens it). By default
+        // the switch replaces the history entry, so Back leaves the site; with back action "last tab",
+        // each switch is a history entry of its own, holding its tab
         if (byUser && changed) {
             var entry = { region: region, topic: topic };
-            if (backToLastTab) history.pushState(entry, "", urlFor(region, topic));
-            else history.replaceState(entry, "", urlFor(region, topic));
+            if (backToLastTab) history.pushState(entry, "", addressWithoutTab());
+            else history.replaceState(entry, "", addressWithoutTab());
         }
         document.title = region === DEFAULT_VIEW && topic === DEFAULT_TOPIC ? "news.txt" : "news.txt / " + viewName(region, topic);
         renderTabs();
@@ -829,8 +838,13 @@
         if (event.key === "Escape") { closeSearch(); searchBtn.focus(); }
     });
     document.addEventListener("visibilitychange", autoRefreshIfDue);  // Catch up on returning to the tab
-    window.addEventListener("popstate", function () {
-        selectView(fromUrl("region", isView) || DEFAULT_VIEW, fromUrl("topic", isTopic) || DEFAULT_TOPIC, false);
+    window.addEventListener("popstate", function (event) {
+        // Back or Forward to another tab: it's in the history entry, not the address
+        var entry = event.state || {};
+        selectView(isView(entry.region) ? entry.region : fromUrl("region", isView) || DEFAULT_VIEW,
+            isTopic(entry.topic) ? entry.topic : fromUrl("topic", isTopic) || DEFAULT_TOPIC, false);
+        write("retroRegion", current);  // A refresh reopens the tab shown, as after a click
+        write("retroTopic", currentTopic);
     });
     document.addEventListener("keydown", function (event) {
         if (event.ctrlKey || event.metaKey || event.altKey) return;
@@ -864,7 +878,7 @@
     var linked = params.has("region") || params.has("topic");
     var initialRegion = linked ? fromUrl("region", isView) || DEFAULT_VIEW : (isView(read("retroRegion")) ? read("retroRegion") : HOME_VIEW);
     var initialTopic = linked ? fromUrl("topic", isTopic) || DEFAULT_TOPIC : (isTopic(read("retroTopic")) ? read("retroTopic") : DEFAULT_TOPIC);
-    history.replaceState({ region: initialRegion, topic: initialTopic }, "", urlFor(initialRegion, initialTopic));
+    history.replaceState({ region: initialRegion, topic: initialTopic }, "", location.href);  // The address stays as typed
     current = null;
     selectView(initialRegion, initialTopic, false);
 })();
