@@ -2,8 +2,7 @@
 Website icons ("site icons" on the page): one small icon per publisher domain,
 fetched by the refresher from an icon service and cached in Redis, then served
 by the app from our own domain, so visitors' browsers never contact the
-publishers or the icon service. A website without one gets a pixel-art tile
-with its initial instead (services/pixel_icons.py).
+publishers or the icon service.
 """
 
 import asyncio
@@ -18,7 +17,6 @@ import redis.asyncio as aioredis
 import structlog
 
 from config import settings
-from services.pixel_icons import pixel_icon
 
 logger = structlog.get_logger(__name__)
 
@@ -66,17 +64,12 @@ async def cache_icons(client: httpx.AsyncClient, redis_client: aioredis.Redis, l
     return stored
 
 
-async def get_icon(redis_client: aioredis.Redis, host: str) -> Optional[tuple[str, bytes, bool]]:
-    """
-    (content type, bytes, generated) of a website's icon: the cached one, or a pixel-art
-    tile if it has none. None if the refresher hasn't looked for it yet.
-    """
+async def get_icon(redis_client: aioredis.Redis, host: str) -> Optional[tuple[str, bytes]]:
+    """(content type, bytes) of a cached icon, or None."""
     if not _HOST.match(host):
         return None
     value = await redis_client.get(icon_key(host))
-    if value is None:
+    if not value:
         return None
-    if value == "":  # Marked: the icon service had none
-        return "image/svg+xml", pixel_icon(host), True
     icon = json.loads(value)
-    return icon["type"], base64.b64decode(icon["data"]), False
+    return icon["type"], base64.b64decode(icon["data"])
