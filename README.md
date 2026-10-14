@@ -88,7 +88,7 @@ The simplest public setup: no open ports, Cloudflare's DDoS protection, and the 
 
 Cloudflare sets `CF-Connecting-IP` to the visitor's IP and rejects requests that try to send their own, so the rate limit sees real IPs. Caddy adds HSTS and the other security headers itself.
 
-To let Cloudflare answer most requests without reaching this server, add a cache rule (Caching → Cache Rules) for `/api/headlines`, `/api/search-index`, `/site-icon/*` and the icon files (`/manifest.webmanifest`, `/favicon.ico`, `/apple-touch-icon.png`, `/icon-192.png`, `/icon-512.png`): eligible for cache, edge TTL from the origin's Cache-Control header. Every response already says how long it stays fresh. The page's stylesheet and script (`/static/`) are cached without a rule.
+To let Cloudflare answer most requests without reaching this server, add a cache rule (Caching → Cache Rules) for `/api/headlines`, `/api/search-index`, `/site-icon/*` and the icon files (`/manifest.webmanifest`, `/favicon.ico`, `/apple-touch-icon.png`, `/icon-192.png`, `/icon-512.png`): eligible for cache, edge TTL from the origin's Cache-Control header. Every response already says how long it stays fresh. The page's stylesheet and script (`/static/`) are cached without a rule. What is cached where, the settings it depends on (keep the caching level at Standard) and what happens after a deploy: ARCHITECTURE.md, §5, Caching.
 
 ## Configuration
 

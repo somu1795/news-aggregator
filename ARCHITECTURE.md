@@ -298,6 +298,31 @@ Consequence: a newly published snapshot reaches users within about 5s, and the A
 | `POST /admin/cache/clear` | Requests an immediate refresh; requires `X-API-Key`. |
 | `GET /metrics` | Prometheus metrics (blocked at Caddy). |
 
+### Caching: browsers and Cloudflare
+
+Each cacheable response says how long it stays fresh (`Cache-Control`), and browsers and Cloudflare read the same header. Only two things exist for Cloudflare alone:
+
+1. **`CDN-Cache-Control`** on `/api/headlines` and `/api/search-index` (`_cached()` and `EDGE_MIN_SECONDS` in `routes/headlines.py`). Browsers ignore it. It keeps an edge copy for at least 60 s even when the next refresh is due sooner, serves the old copy for up to 60 s while fetching a new one (`stale-while-revalidate`), and for a day if this server can't be reached (`stale-if-error`).
+2. **The cache rule** in the Cloudflare dashboard (not in this repo; README, Cloudflare Tunnel). Cloudflare doesn't cache JSON or paths without a file extension unless a rule says so.
+
+Without Cloudflare nothing needs changing: everything else is browser caching, which Cloudflare reuses.
+
+| Path | `Cache-Control` | At Cloudflare |
+| --- | --- | --- |
+| `/`, error pages | none | Never cached, and must stay so: each response has its own CSP nonce and the visitor's starting tab (from `CF-IPCountry`). |
+| `/api/headlines`, `/api/search-index` | seconds until the next refresh is due | By the cache rule, for `CDN-Cache-Control` (above). |
+| `/static/retro.css`, `/static/retro.js` | current `?v=` hash: a year, `immutable`; otherwise `no-cache` | Cached without a rule (`.css`/`.js`). The query string must stay in the cache key. |
+| `/site-icon/<domain>` | 7 days; 404: 5 minutes | By the cache rule. |
+| `/favicon.svg`, `/favicon.ico`, `/apple-touch-icon.png`, `/icon-192.png`, `/icon-512.png` (Caddy) | 7 days | Cached by file extension; the rule lists all of them except `favicon.svg`, which makes no difference. |
+| `/manifest.webmanifest` (Caddy) | 1 day | By the cache rule. |
+
+Cloudflare settings this depends on:
+- **Caching level: Standard**, so the query string is part of the cache key. With "Ignore query string", a new `?v=` would get the old file for a year.
+- **No "Cache everything" for HTML**: the page and error pages stay uncached (above).
+- **Browser Cache TTL** is Cloudflare's default, 4 hours. For paths outside the rule, Cloudflare raises a shorter `Cache-Control` to 4 hours. That only shows on `/static/` with an outdated `?v=` (`no-cache` reaches the browser as `max-age=14400`), which the page never requests. Adding `/static/*` to the rule, or setting Browser Cache TTL to "Respect existing headers", would let `no-cache` through.
+
+After a deploy: the page isn't cached, so visitors get it at once, and its new hashes give the stylesheet and script new URLs. An edge copy of the API can be up to about two minutes older than the newest snapshot (the 60 s minimum, then 60 s stale while it's re-fetched). Icons already at the edge keep their headers for up to 7 days; purge `/site-icon/*` if those headers change.
+
 ## 6. Topic Tagging
 
 The tagger (`tagger/tagger.py`) gives each headline zero or more of `tech`, `science`, `nature`, `culture`, `sport`, `uplifting`. Most hard news (politics, crime, economy) gets none.
