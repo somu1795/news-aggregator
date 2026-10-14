@@ -60,3 +60,24 @@ async def test_icons_opened_directly_cannot_run_anything(client, mock_redis):
     response = client.get("/site-icon/svg.example")
     assert response.status_code == 200 and response.headers["content-type"] == "image/svg+xml"
     assert response.headers["content-security-policy"] == "default-src 'none'; sandbox"
+
+
+async def test_a_site_without_an_icon_gets_a_pixel_tile(client, mock_redis):
+    await mock_redis.set(icon_key("africa.espn.com"), "")  # The icon service had none
+    response = client.get("/site-icon/africa.espn.com")
+    assert response.status_code == 200 and response.headers["content-type"] == "image/svg+xml"
+    assert response.headers["cache-control"] == f"public, max-age={settings.ICON_FAILED_TTL_SECONDS}"
+    assert response.headers["content-security-policy"] == "default-src 'none'; sandbox"
+    assert response.content == client.get("/site-icon/africa.espn.com").content  # Always the same tile
+    assert client.get("/site-icon/never-looked-up.example").status_code == 404
+
+
+def test_pixel_tiles_show_the_sites_initial():
+    from services.pixel_icons import GLYPHS, LETTER, pixel_icon, site_name
+    assert [site_name(h) for h in ("africa.espn.com", "espn.com.au", "bbc.co.uk", "english.kyodonews.net", "ms.now")] == [
+        "espn", "espn", "bbc", "kyodonews", "ms"]
+    assert all(len(g) == 10 and len({len(row) for row in g}) == 1 for g in GLYPHS.values())
+    espn, ft = pixel_icon("espn.com"), pixel_icon("ft.com")
+    assert espn == pixel_icon("espn.com.au") and espn != ft  # Same site, same tile
+    assert espn.startswith(b"<svg") and LETTER.encode() in espn and b"<script" not in espn
+    assert pixel_icon("9news.com.au") != pixel_icon("xnews.com.au")
