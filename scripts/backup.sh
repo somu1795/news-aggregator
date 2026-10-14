@@ -8,7 +8,7 @@
 # Each destination gets:
 #   archives/news-aggregator-<UTC time>.tar.zst   the project folder (code, .git with unpushed
 #                                                 commits, .env, untracked notes), Redis's dump,
-#                                                 the tagger's database and classifier
+#                                                 the tagger's database and classifier, the archive
 #   archives/news-aggregator-<UTC time>.tar.zst.sha256
 #   archives/news-aggregator-<UTC time>.images    the images that archive runs on
 #   images/<image>@<id>.tar.zst                   each image version, saved once
@@ -66,6 +66,19 @@ dst.close()
 docker cp "$tagger":/data/backup-tagger.db "$STAGE/data/tagger.db"
 docker cp "$tagger":/data/classifier.pkl "$STAGE/data/classifier.pkl"
 compose exec -T tagger rm -f /data/backup-tagger.db
+
+# 2b. The headline archive, the same way (a new install has none until its first refresh)
+refresher="$(compose ps -q refresher)"
+if compose exec -T refresher test -e /archive/archive.db; then
+    compose exec -T refresher python -c "
+import sqlite3
+src, dst = sqlite3.connect('/archive/archive.db'), sqlite3.connect('/archive/backup-archive.db')
+src.backup(dst)
+dst.close()
+"
+    docker cp "$refresher":/archive/backup-archive.db "$STAGE/data/archive.db"
+    compose exec -T refresher rm -f /archive/backup-archive.db
+fi
 
 # 3. The project folder as it is now (code, .git, .env, untracked notes), without caches
 tar -C "$(dirname "$REPO")" --exclude='__pycache__' --exclude='.pytest_cache' \

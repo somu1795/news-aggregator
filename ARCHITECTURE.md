@@ -104,6 +104,10 @@ So request volume costs almost nothing upstream or in Redis, and users keep gett
 ### Refresher (`refresher` service)
 - Runs `refresher.py` from the same image. **Exactly one replica.**
 - Owns all upstream traffic: feeds, Google link resolution, writing the snapshots (see §4).
+- Keeps the **headline archive** (`services/archive.py`): every headline it publishes, kept forever in a SQLite file of its own (`/archive/archive.db` in the `archive_data` volume, WAL mode), for a future timeline (choosing a date, scrolling back). Nothing reads it yet. Two tables:
+  - `items`: one row per link: title (the latest), source, published time, discussion link, summary, and when it was first and last published. A headline only ever folded under another (`related`) is stored too, without a published time. A summary is kept once made, though the summarizer's copy in Redis expires after 7 days.
+  - `snapshots`: each view's order once an hour (`ARCHIVE_SNAPSHOT_SECONDS`): a JSON list with one list per story, its headline's id then the ids folded under it. Enough to show a past front page again.
+  - Written after every publish (both phases), in a thread; a failure is logged (`Headlines not archived`) and never stops a refresh. Measured on the 43 views: 1,840 headlines, 0.01–0.03 s a refresh; an hour's snapshots are ~38 KB. At most ~6 MB a day, so a few GB a year; it is backed up daily with the rest (README).
 
 ### Tagger (`tagger` service)
 - `tagger/tagger.py`, its own image (Ubuntu 24.04, OpenVINO and Intel's NPU user-space driver). Internal only: `POST /tag`, `POST /group` (story grouping), `GET /health`. See §6.
@@ -465,6 +469,7 @@ A visitor makes 2 requests per page load plus 1 per region viewed, so 100/minute
 | `SUMMARIZER_BROWSER_URL` / `SUMMARIZER_BROWSER_PROXY` / `SUMMARIZER_BROWSER2_URL` | set in `docker-compose.yml` | The headless browser, the public-only proxy it must use, and the second browser; empty disables a browser step. |
 | `BROWSER_HOST_TTL_SECONDS` | 7 days | How long a site that blocked a plain request goes straight to the browser. |
 | `FEED_TEXT_TTL_SECONDS` | 2 days | How long the feed's own text of a published item is kept. |
+| `ARCHIVE_PATH` / `ARCHIVE_SNAPSHOT_SECONDS` | empty (`/archive/archive.db` in `docker-compose.yml`) / 3600 | The headline archive's SQLite file (empty disables it), and how often each view's order is recorded in it. |
 | `MAX_HEADLINES` | 80 | Headlines per view (each region, and "all"). |
 | `STORY_GROUP_HEADROOM` / `MAX_RELATED` / `STORY_GROUP_TIMEOUT` | 40 / 8 / 60 s | Views are built this much longer before each story is shown once; other outlets' headlines kept under a story; the tagger's grouping call timeout. |
 | `MAX_HEADLINE_AGE_HOURS` | 48 | Items older than this are dropped before mixing. |

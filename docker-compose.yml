@@ -67,9 +67,11 @@ services:
     environment:
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
       - LOG_LEVEL=INFO
+      - ARCHIVE_PATH=/archive/archive.db
     volumes:
       # Edit sources.json and `docker compose restart refresher` — no rebuild needed.
       - ./app/sources.json:/app/sources.json:ro
+      - archive_data:/archive  # Every published headline, kept (SQLite, see app/services/archive.py)
     deploy:
       resources:
         limits:
@@ -291,6 +293,7 @@ networks:
   egress:
 
 volumes:
+  archive_data:
   browser2_cache:
   tagger_data:
   redis_data:

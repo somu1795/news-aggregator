@@ -191,6 +191,10 @@ class Settings(BaseSettings):
     BROWSER_HOST_TTL_SECONDS: int = 7 * 86400  # A blocking site goes straight to the browser for this long
     FEED_TEXT_TTL_SECONDS: int = 2 * 86400  # The feed's own text of published items, for the summarizer
 
+    # --- Archive (every published headline, kept; see services/archive.py) ---
+    ARCHIVE_PATH: str = ""  # A SQLite file, written by the refresher; empty disables the archive
+    ARCHIVE_SNAPSHOT_SECONDS: int = 3600  # How often each view's order is recorded
+
     # --- News Sources ---
     SOURCES_FILE: str = "sources.json"  # Relative to this directory, or an absolute path
 

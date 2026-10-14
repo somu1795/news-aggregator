@@ -14,6 +14,9 @@ RUN apt-get update && \
 RUN addgroup --system --gid 1001 app && \
     adduser --system --uid 1001 --ingroup app app
 
+# The archive's directory (the refresher's archive_data volume takes its owner from it)
+RUN mkdir /archive && chown app:app /archive
+
 WORKDIR /app
 
 # Copy and install Python dependencies

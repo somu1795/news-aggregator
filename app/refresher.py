@@ -7,7 +7,8 @@ it fetches all feeds, resolves links, and publishes one snapshot per view
 phase, it has the tagger tag every headline and publishes one snapshot per
 region (and "all") per topic. The API only ever reads those snapshots, so
 user traffic never triggers upstream fetches. Items carry their article
-summary when the summarizer (summarizer.py) has made one.
+summary when the summarizer (summarizer.py) has made one. Every published
+item is also kept in the archive (services/archive.py), when ARCHIVE_PATH is set.
 
 If a refresh fails, or a view comes back empty, that view's previous snapshot
 is left in place: users keep getting slightly older headlines instead of errors.
@@ -29,6 +30,7 @@ from config import CATALOG, feed_text_key, settings, snapshot_key, summary_key
 from logging_config import configure_logging
 from metrics import REFRESHES
 from models import APIResponse
+from services.archive import archive
 from services.feed_service import get_fresh_views, get_topic_views
 from services.redis_client import create_redis_client
 from services.site_icons import cache_icons
@@ -81,7 +83,7 @@ async def store_feed_texts(redis_client: aioredis.Redis, views: Dict[str, List[D
 
 
 async def publish(redis_client: aioredis.Redis, views: Dict[str, List[Dict]], fetched_at: float) -> None:
-    """Writes one snapshot per view, with summaries. A view id is a region id or "region:topic"."""
+    """Writes one snapshot per view, with summaries, and archives them. A view id is a region id or "region:topic"."""
     await add_summaries(redis_client, views)
     await store_feed_texts(redis_client, views)
     async with redis_client.pipeline(transaction=False) as pipe:
@@ -97,6 +99,11 @@ async def publish(redis_client: aioredis.Redis, views: Dict[str, List[Dict]], fe
             pipe.set(snapshot_key(view), snapshot.model_dump_json())
             HEADLINES_FETCHED.labels(region=view).set(len(items))
         await pipe.execute()
+    if settings.ARCHIVE_PATH:
+        try:
+            await asyncio.to_thread(archive, views, fetched_at)
+        except Exception as e:  # The archive must never stop the site's refresh
+            logger.warning("Headlines not archived", error=str(e) or type(e).__name__)
 
 
 async def refresh_once(http_client: httpx.AsyncClient, redis_client: aioredis.Redis) -> int:

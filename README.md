@@ -118,7 +118,8 @@ For what needs reviewing and when (pinned versions, feeds, lists), see [MAINTENA
 
 - the **project folder** as it is: code, `.git` (including commits not pushed yet), `.env` (secrets: keep the backup disks private), and untracked notes;
 - **Redis's** snapshot (`dump.rdb`: published views, summaries, resolved links, site icons, which sites need the browser);
-- the **tagger's** database (every stored headline, its labels and embeddings; copied with SQLite's online backup) and classifier.
+- the **tagger's** database (every stored headline, its labels and embeddings; copied with SQLite's online backup) and classifier;
+- the **headline archive** (every published headline, link and summary, and each view's order hourly; the same way). It grows by a few MB a day, and so does each archive.
 
 It also saves each **Docker image** the stack runs on, once per version (`images/`), so a restore needs no downloads. It keeps the newest 14 archives and the images they use, and refuses to run if a destination folder is missing (an unmounted disk). Not backed up, as they rebuild themselves: the NPU compile cache, Byparr's GeoIP database, Caddy's volumes. A run takes a few seconds (about a minute when images changed); an archive is about 30 MB, the images about 2.2 GB.
 
@@ -128,7 +129,7 @@ It also saves each **Docker image** the stack runs on, once per version (`images
 /mnt/media/app_bkp/news_aggregator/restore.sh   # The latest archive into ~/news-aggregator
 ```
 
-It verifies the checksums, unpacks the project, loads the images, puts the data into fresh volumes and starts the stack. The Cloudflare Tunnel reconnects with the token from `.env`, so the site is back at the same address. Give `restore.sh` an archive and a folder to restore an older one elsewhere. The project folder and its volumes must not exist yet (`docker compose down -v` removes the volumes of a broken install). Tested: a restore from the backup took 21 seconds, served the backed-up views and summaries at once, and the tagger kept its history and classifier.
+It verifies the checksums, unpacks the project, loads the images, puts the data into fresh volumes and starts the stack. The Cloudflare Tunnel reconnects with the token from `.env`, so the site is back at the same address. Give `restore.sh` an archive and a folder to restore an older one elsewhere. The project folder and its volumes must not exist yet (`docker compose down -v` removes the volumes of a broken install). Tested: a restore from the backup took 21 seconds, served the backed-up views and summaries at once, and the tagger kept its history and classifier. Backups made before the headline archive existed restore without one.
 
 ## Running Tests
 
