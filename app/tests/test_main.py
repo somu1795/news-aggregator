@@ -415,3 +415,34 @@ def test_page_starts_on_the_visitors_region(client, country, region):
     headers = {"Accept": "text/html", **({"CF-IPCountry": country} if country else {})}
     page = client.get("/", headers=headers).text
     assert json.loads(page.split('<script id="home-data" type="application/json">')[1].split("</script>")[0]) == region
+
+
+@pytest.mark.parametrize("accept", [None, "*/*", "text/html", "text/html,application/json;q=0.9"])
+def test_root_serves_the_page_unless_only_json_is_asked_for(client, accept):
+    """Crawlers and tools often send */* or no Accept header: they get the page, not the status JSON."""
+    response = client.get("/", headers={"Accept": accept} if accept else {})
+    assert "text/html" in response.headers["content-type"]
+    assert "Accept" in response.headers["vary"].split(", ")
+
+
+def test_root_json_varies_on_accept(client):
+    assert "Accept" in client.get("/", headers={"Accept": "application/json"}).headers["vary"].split(", ")
+
+
+def test_page_describes_the_site_as_structured_data(client):
+    page = client.get("/", headers={"Accept": "text/html"}).text
+    data = json.loads(page.split('<script type="application/ld+json">')[1].split("</script>")[0])
+    assert data["@type"] == "WebSite" and data["name"] == "news.txt"
+    assert data["url"] == "https://testserver/"
+
+
+def test_robots_txt_allows_crawling_and_points_to_the_sitemap(client):
+    response = client.get("/robots.txt")
+    assert response.headers["content-type"].startswith("text/plain")
+    assert response.text == "User-agent: *\nAllow: /\n\nSitemap: https://testserver/sitemap.xml\n"
+
+
+def test_sitemap_lists_the_page(client):
+    response = client.get("/sitemap.xml")
+    assert response.headers["content-type"].startswith("application/xml")
+    assert "<loc>https://testserver/</loc>" in response.text

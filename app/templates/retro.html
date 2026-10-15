@@ -9,6 +9,8 @@
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <link rel="apple-touch-icon" href="/apple-touch-icon.png">
     <link rel="manifest" href="/manifest.webmanifest">
+    <script type="application/ld+json">{{ {"@context": "https://schema.org", "@type": "WebSite", "name": "news.txt", "url": site_url,
+        "description": "Headlines from Asia, Europe, the Americas, Africa and Oceania, plus science and Hacker News. Updated every few minutes."} | tojson }}</script>
     <meta name="theme-color" content="#f3efe4" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#120f0a" media="(prefers-color-scheme: dark)">
     <link rel="stylesheet" href="{{ assets['retro.css'] }}" nonce="{{ csp_nonce }}">

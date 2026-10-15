@@ -169,7 +169,8 @@ Because requests are served from memory and never fetch upstream, a single app c
 
 ## API Endpoints
 
-- `GET /`: Serves the main page (minimalist retro design with region and topic tabs).
+- `GET /`: Serves the main page (minimalist retro design with region and topic tabs); JSON status only to clients that ask for JSON alone.
+- `GET /robots.txt`, `GET /sitemap.xml`: For search engines (everything may be crawled; the sitemap lists the page). Built from the request's host, so no domain is hard-coded.
 - `/archive` and `/retro` (old URLs) redirect to `/`.
 - `GET /api/headlines?region=<view>&topic=<topic>`: Returns the latest snapshot for `all` (default) or a region (`asia`, `europe`, `americas`, `africa`, `oceania`), optionally for one topic (`uplifting`, `tech`, `science`, `nature`, `culture`, `sport`): `region`, `topic`, `data`, `fetched_at`, `expires_at`. 404 for an unknown region or topic; 503 with `Retry-After` only before that view's first refresh.
 - `GET /api/search-index`: Every view's headlines in one response, for the page's search: `items` (each link once, with `views`, the views it's in), `fetched_at`, `expires_at`. 503 with `Retry-After` only before the first refresh.
