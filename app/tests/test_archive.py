@@ -91,3 +91,12 @@ async def test_nothing_is_archived_without_a_path(mock_redis, monkeypatch):
     monkeypatch.setattr(archive_module, "connect", lambda path: called.append(path))
     await publish(mock_redis, {"all": [item(1)]}, 1000.0)
     assert called == []
+
+
+async def test_google_news_publisher_suffix_is_not_a_new_title(mock_redis, archive_db):
+    await publish(mock_redis, {"all": [item(1)]}, 1000.0)
+    await publish(mock_redis, {"all:tech": [{**item(1), "title": "Story 1 - Pub"}]}, 1000.0)  # Same link via Google News
+
+    db = archive_db()
+    assert db.execute("SELECT title FROM items").fetchall() == [("Story 1",)]
+    assert db.execute("SELECT title FROM titles").fetchall() == [("Story 1",)]

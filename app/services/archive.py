@@ -64,6 +64,12 @@ def connect(path: str) -> sqlite3.Connection:
     return db
 
 
+def clean_title(title: str, source: str) -> str:
+    """The title without the " - Publisher" Google News appends (the page drops it too), so it isn't a second title."""
+    suffix = f" - {source}"
+    return title[:-len(suffix)] if source and len(title) > len(suffix) and title.endswith(suffix) else title
+
+
 def archive(views: Dict[str, List[Dict]], seen: float) -> None:
     """Stores every item of the published views (and those folded under them); records each view's order hourly."""
     rows = {}
@@ -74,7 +80,8 @@ def archive(views: Dict[str, List[Dict]], seen: float) -> None:
                 rows.setdefault(related["link"], related)
     with closing(connect(settings.ARCHIVE_PATH)) as db, db:
         db.executemany(UPSERT, [{
-            "link": link, "title": item["title"], "source": item["source"], "published": item.get("published"),
+            "link": link, "title": clean_title(item["title"], item["source"]), "source": item["source"],
+            "published": item.get("published"),
             "comments": item.get("comments"), "summary": item.get("summary"), "seen": seen,
         } for link, item in rows.items()])
         ids = {}
@@ -84,7 +91,7 @@ def archive(views: Dict[str, List[Dict]], seen: float) -> None:
                 f"SELECT link, id FROM items WHERE link IN ({','.join('?' * len(links))})", links,
             ).fetchall())
         db.executemany("INSERT OR IGNORE INTO titles (item, title, first_seen) VALUES (?, ?, ?)",
-                       [(ids[link], item["title"], seen) for link, item in rows.items()])
+                       [(ids[link], clean_title(item["title"], item["source"]), seen) for link, item in rows.items()])
         last = dict(db.execute("SELECT view, max(taken) FROM snapshots GROUP BY view").fetchall())
         db.executemany("INSERT INTO snapshots (view, taken, items) VALUES (?, ?, ?)", [
             (view, seen, json.dumps([[ids[item["link"]]] + [ids[r["link"]] for r in item.get("related") or []]
