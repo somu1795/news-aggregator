@@ -134,8 +134,20 @@ def test_group_puts_the_same_story_together(tagger, monkeypatch):
     assert tagger.group(items) == groups and tagger.story_embedder.embedded == []
 
 
-def test_group_compares_with_leaders_so_stories_dont_chain(tagger, monkeypatch):
+def test_group_joins_a_story_worded_several_ways(tagger, monkeypatch):
+    monkeypatch.setattr(tagger_module, "STORY_THRESHOLD", 0.65)
+    monkeypatch.setattr(tagger_module, "STORY_LEADER_THRESHOLD", 0.5)
+    a = "big dogs age faster study finds"
+    b = "big dogs age faster scientists say"       # 0.67 to a
+    c = "why big dogs age faster scientists say"   # 0.93 to b, 0.62 to a: joins through b
+    d = "minister resigns over budget vote"
+    groups = tagger.group([Item(title=a), Item(title=b), Item(title=c), Item(title=d)])
+    assert groups[0] == groups[1] == groups[2] != groups[3]
+
+
+def test_group_stays_close_to_its_leader_so_stories_dont_chain(tagger, monkeypatch):
     monkeypatch.setattr(tagger_module, "STORY_THRESHOLD", 0.7)
+    monkeypatch.setattr(tagger_module, "STORY_LEADER_THRESHOLD", 0.5)
     a = "red blue green yellow orange purple"
     b = "red blue green yellow orange black white"   # Close to a
     c = "red blue green black white pink grey"       # Close to b, not to a

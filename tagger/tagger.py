@@ -55,6 +55,11 @@ STORY_MODEL_DIR = Path(os.environ.get("STORY_MODEL_DIR", "/models/multilingual-e
 # pairs of live headlines: it catches 80% of same-story pairs, and the only wrong merges
 # were templated series (horoscopes, puzzle answers) and one pair of comparison articles.
 STORY_THRESHOLD = float(os.environ.get("STORY_THRESHOLD", "0.92"))
+# ...and the least it must share with the group's leader, so a group can't drift into a chain of
+# ever-less-related stories. Checked on the live headlines of Oct 15, 2026: joining on any member
+# at 0.92 with this floor added 18 same-story pairs and no wrong ones (e.g. one study reported as
+# "Large dogs age more quickly…", "Why do small dogs live longer…", "The dog breeds that live longer…").
+STORY_LEADER_THRESHOLD = float(os.environ.get("STORY_LEADER_THRESHOLD", "0.88"))
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 DEVICE = os.environ.get("TAGGER_DEVICE", "NPU")
 RETRAIN_INTERVAL_HOURS = float(os.environ.get("RETRAIN_INTERVAL_HOURS", "24"))
@@ -283,9 +288,10 @@ class Tagger:
         """
         A group number per item: items about the same story share one. Items are taken in
         the order given (the caller's ranking); each joins the group of the most similar
-        earlier group leader at or above STORY_THRESHOLD, or leads a new group. Comparing
-        with leaders only (not every member) keeps a group from drifting into a chain of
-        ever-less-related stories.
+        earlier headline at or above STORY_THRESHOLD, if it is also within
+        STORY_LEADER_THRESHOLD of that group's leader (its first headline), or leads a new
+        group. Any member catches a story worded several ways; the leader's floor keeps a
+        group from drifting into a chain of ever-less-related stories.
         """
         titles = [clean_title(item.title, item.source) for item in items]
         unique = list(dict.fromkeys(titles))
@@ -307,17 +313,18 @@ class Tagger:
             self.db.commit()
         X = np.stack([vectors[t] for t in unique]) if unique else np.zeros((0, 384), dtype=np.float32)
         X /= np.maximum(np.linalg.norm(X, axis=1, keepdims=True), 1e-9)
-        leaders: List[int] = []  # Rows of X
-        group_of = {}
-        for row, title in enumerate(unique):
-            if leaders:
-                sims = X[leaders] @ X[row]
-                best = int(np.argmax(sims))
-                if sims[best] >= STORY_THRESHOLD:
-                    group_of[title] = group_of[unique[leaders[best]]]
-                    continue
-            group_of[title] = len(leaders)
-            leaders.append(row)
+        leaders: List[int] = []  # Row of each group's first headline
+        group_of_row = np.zeros(len(unique), dtype=np.int64)
+        for row in range(len(unique)):
+            sims = X[:row] @ X[row]
+            close = sims >= STORY_THRESHOLD
+            close &= sims[np.array(leaders, dtype=np.int64)[group_of_row[:row]]] >= STORY_LEADER_THRESHOLD
+            if close.any():
+                group_of_row[row] = group_of_row[int(np.argmax(np.where(close, sims, -1.0)))]
+            else:
+                group_of_row[row] = len(leaders)
+                leaders.append(row)
+        group_of = dict(zip(unique, group_of_row.tolist()))
         return [group_of[title] for title in titles]
 
     def retrain(self, force: bool = False) -> None:
