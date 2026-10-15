@@ -98,6 +98,7 @@ mark {
     text-underline-offset: 3px;
 }
 .snippet { grid-column: 2; margin: .2rem 0 .1rem; padding-left: 1.5ch; border-left: 1px solid var(--muted); font-size: .9em; }
+.snippet:has(+ .summary:not([hidden])) { display: none; }  /* The open summary shows the match in full */
 .advanced .note { flex-basis: 100%; }
 .site-icon { width: 1em; height: 1em; vertical-align: -0.125em; margin-right: .6ch; border-radius: 2px; }
 .regions { display: flex; flex-wrap: wrap; gap: .25rem 1.5ch; margin-top: .9rem; }
