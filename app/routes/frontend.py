@@ -2,7 +2,7 @@
 Frontend routes.
 
 GET /         — the main page (minimalist retro design), or JSON for clients that ask only for JSON.
-GET /robots.txt, /sitemap.xml — for search engines: everything may be crawled; the one page is "/".
+GET /robots.txt, /sitemap.xml — search engines and AI search may crawl, AI training is asked not to; the page is "/".
 GET /archive, /retro — old URLs (the removed classic page, an evaluation URL); redirect to /.
 GET /static/<file> — the page's stylesheet and script (StaticAssets, mounted in main.py).
 """
@@ -81,9 +81,27 @@ def _site_url(request: Request) -> str:
     return f"https://{request.url.netloc}/"
 
 
+# Search engines and AI assistants' search and on-demand readers may crawl (they link back);
+# crawlers that only collect training data are asked not to. Content-Signal: Cloudflare's convention.
+_ROBOTS = """User-agent: *
+Content-Signal: search=yes, ai-train=no
+Allow: /
+
+User-agent: GPTBot
+User-agent: ClaudeBot
+User-agent: CCBot
+User-agent: Google-Extended
+User-agent: Applebot-Extended
+User-agent: meta-externalagent
+Disallow: /
+
+Sitemap: {site_url}sitemap.xml
+"""
+
+
 @router.get("/robots.txt", include_in_schema=False)
 async def robots(request: Request):
-    return PlainTextResponse(f"User-agent: *\nAllow: /\n\nSitemap: {_site_url(request)}sitemap.xml\n",
+    return PlainTextResponse(_ROBOTS.format(site_url=_site_url(request)),
                              headers={"Cache-Control": "public, max-age=86400"})
 
 

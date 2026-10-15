@@ -436,10 +436,14 @@ def test_page_describes_the_site_as_structured_data(client):
     assert data["url"] == "https://testserver/"
 
 
-def test_robots_txt_allows_crawling_and_points_to_the_sitemap(client):
+def test_robots_txt_allows_search_but_not_ai_training(client):
     response = client.get("/robots.txt")
     assert response.headers["content-type"].startswith("text/plain")
-    assert response.text == "User-agent: *\nAllow: /\n\nSitemap: https://testserver/sitemap.xml\n"
+    groups = [group.splitlines() for group in response.text.strip().split("\n\n")]
+    assert groups[0] == ["User-agent: *", "Content-Signal: search=yes, ai-train=no", "Allow: /"]
+    assert groups[1][-1] == "Disallow: /" and "User-agent: GPTBot" in groups[1] and "User-agent: ClaudeBot" in groups[1]
+    assert not any("SearchBot" in line or "-User" in line for line in groups[1])  # AI search readers stay allowed
+    assert groups[2] == ["Sitemap: https://testserver/sitemap.xml"]
 
 
 def test_sitemap_lists_the_page(client):

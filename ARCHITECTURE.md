@@ -299,7 +299,7 @@ Consequence: a newly published snapshot reaches users within about 5s, and the A
 | Endpoint | Response |
 | --- | --- |
 | `GET /` | Main page (with `Vary: Accept`); small JSON status only when the client accepts `application/json` and not `text/html`. Crawlers and tools sending `*/*` or nothing get the page. |
-| `GET /robots.txt`, `GET /sitemap.xml` | For search engines, built from the request's host; Cloudflare adds its managed content-signal block to robots.txt. |
+| `GET /robots.txt`, `GET /sitemap.xml` | Built from the request's host. Search engines and AI search readers may crawl; AI training crawlers are disallowed, with `Content-Signal: search=yes, ai-train=no`. (Cloudflare's managed robots.txt, used while the origin had none, is no longer served.) |
 | `GET /archive`, `GET /retro` | Old URLs; redirect to `/`. |
 | `GET /static/retro.css`, `GET /static/retro.js` | The page's stylesheet and script. With the current `?v=` hash (the page's links): cached for a year (`immutable`); otherwise `no-cache`. |
 | `GET /retro` | Old evaluation URL; `301` redirect to `/`. |
