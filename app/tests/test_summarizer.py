@@ -273,3 +273,42 @@ async def test_the_second_browser_tries_when_the_first_fails(mock_redis, with_br
     assert first.call_count == 1 and second.call_count == 1
     assert json.loads(second.calls[0].request.content)["proxy"] == {"url": PROXY}
     assert json.loads(await mock_redis.get(summary_key("https://pub.example/1")))["via"] == "browser2"
+
+
+TAGGER = "http://tagger.test"
+
+
+@respx.mock
+async def test_unsure_story_pairs_are_judged_and_sent_back(monkeypatch):
+    monkeypatch.setattr(settings, "TAGGER_URL", TAGGER)
+    pairs = [{"a": "Big dogs age faster", "b": "Why small dogs live longer", "similarity": 0.9},
+             {"a": "City v PSG preview", "b": "City v Ipswich preview", "similarity": 0.91}]
+    respx.get(f"{TAGGER}/story-candidates").mock(side_effect=[httpx.Response(200, json={"pairs": pairs}),
+                                                              httpx.Response(200, json={"pairs": []})])
+    respx.post(f"{LLM}/api/chat").mock(side_effect=[llm_reply("Yes"), llm_reply("no")])
+    stored = respx.post(f"{TAGGER}/story-verdicts").mock(return_value=httpx.Response(200, json={"stored": 2}))
+    async with httpx.AsyncClient() as client:
+        assert await summarizer.judge_stories(client) == 2
+    verdicts = json.loads(stored.calls.last.request.content)["verdicts"]
+    assert [(v["a"], v["same"]) for v in verdicts] == [("Big dogs age faster", True), ("City v PSG preview", False)]
+
+
+@respx.mock
+async def test_story_judging_stops_quietly_without_the_tagger(monkeypatch):
+    monkeypatch.setattr(settings, "TAGGER_URL", TAGGER)
+    respx.get(f"{TAGGER}/story-candidates").mock(side_effect=httpx.ConnectError("unreachable"))
+    async with httpx.AsyncClient() as client:
+        assert await summarizer.judge_stories(client) == 0
+
+
+@respx.mock
+async def test_story_judging_reports_the_llm_down(monkeypatch):
+    monkeypatch.setattr(settings, "TAGGER_URL", TAGGER)
+    respx.get(f"{TAGGER}/story-candidates").mock(
+        return_value=httpx.Response(200, json={"pairs": [{"a": "x", "b": "y", "similarity": 0.9}]}))
+    respx.post(f"{LLM}/api/chat").mock(side_effect=httpx.ConnectError("unreachable"))
+    verdicts = respx.post(f"{TAGGER}/story-verdicts")
+    async with httpx.AsyncClient() as client:
+        with pytest.raises(LLMUnavailable):
+            await summarizer.judge_stories(client)
+    assert not verdicts.called

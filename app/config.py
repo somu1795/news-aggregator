@@ -190,6 +190,8 @@ class Settings(BaseSettings):
     SUMMARIZER_BROWSER_PROXY: str = ""
     SUMMARIZER_BROWSER2_URL: str = ""  # A second browser (Byparr, same API), tried when the first fails
     SUMMARY_BROWSER_TIMEOUT: float = 60.0  # Per page, challenge included
+    STORY_JUDGE_BATCH: int = 20  # Unsure story pairs asked for at a time (~0.1 s each on the LLM)
+    STORY_JUDGE_SECONDS: float = 240.0  # Longest the LLM judges pairs before looking for articles again
     BROWSER_HOST_TTL_SECONDS: int = 7 * 86400  # A blocking site goes straight to the browser for this long
     FEED_TEXT_TTL_SECONDS: int = 2 * 86400  # The feed's own text of published items, for the summarizer
 

@@ -153,3 +153,36 @@ def test_group_stays_close_to_its_leader_so_stories_dont_chain(tagger, monkeypat
     c = "red blue green black white pink grey"       # Close to b, not to a
     groups = tagger.group([Item(title=a), Item(title=b), Item(title=c)])
     assert groups[0] == groups[1] and groups[2] != groups[0]
+
+
+def test_unsure_pairs_are_kept_for_the_judge(tagger, monkeypatch):
+    monkeypatch.setattr(tagger_module, "STORY_THRESHOLD", 0.9)
+    monkeypatch.setattr(tagger_module, "STORY_LEADER_THRESHOLD", 0.9)
+    monkeypatch.setattr(tagger_module, "STORY_CANDIDATE_THRESHOLD", 0.6)
+    a, b, c = "big dogs age faster study finds", "big dogs age faster scientists say", "minister resigns over budget vote"
+    groups = tagger.group([Item(title=a), Item(title=b), Item(title=c)])
+    assert groups[0] != groups[1]  # ~0.7: below the threshold, above the candidates'
+    [pair] = tagger.story_candidates(10)  # Not c: unrelated
+    assert (pair["a"], pair["b"]) == tuple(sorted((a, b))) and 0.6 <= pair["similarity"] < 0.9
+
+
+def test_a_verdict_overrides_similarity_and_retires_the_candidate(tagger, monkeypatch):
+    monkeypatch.setattr(tagger_module, "STORY_THRESHOLD", 0.9)
+    monkeypatch.setattr(tagger_module, "STORY_LEADER_THRESHOLD", 0.9)
+    monkeypatch.setattr(tagger_module, "STORY_CANDIDATE_THRESHOLD", 0.6)
+    a, b = "big dogs age faster study finds", "big dogs age faster scientists say"
+    tagger.group([Item(title=a), Item(title=b)])
+    assert tagger.store_verdicts([tagger_module.Verdict(a=b, b=a, same=True, model="m")]) == 1  # Either order
+    assert tagger.story_candidates(10) == []
+    groups = tagger.group([Item(title=a), Item(title=b)])
+    assert groups[0] == groups[1]
+    assert tagger.story_candidates(10) == []  # Judged pairs aren't asked again
+
+
+def test_a_no_verdict_keeps_similar_headlines_apart(tagger, monkeypatch):
+    monkeypatch.setattr(tagger_module, "STORY_THRESHOLD", 0.7)  # 0.71 apart
+    monkeypatch.setattr(tagger_module, "STORY_LEADER_THRESHOLD", 0.7)
+    a, b = "champions league live latest updates bodo dortmund", "champions league live latest updates villa fenerbahce"
+    assert len(set(tagger.group([Item(title=a), Item(title=b)]))) == 1
+    tagger.store_verdicts([tagger_module.Verdict(a=a, b=b, same=False, model="m")])
+    assert len(set(tagger.group([Item(title=a), Item(title=b)]))) == 2

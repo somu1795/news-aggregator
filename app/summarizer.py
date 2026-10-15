@@ -28,6 +28,12 @@ An article's text is read, each step only if the previous ones failed:
 Paywalled sites (config.PAYWALLED_HOSTS) go direct, archive, then feed text: a
 browser doesn't get past a paywall. Articles none of these can read are marked
 and retried after SUMMARY_RETRY_SECONDS.
+
+When nothing waits to be summarized, the same LLM also judges pairs of headlines
+that story grouping was unsure of (the tagger's /story-candidates: similar, but
+not similar enough to group): same story or not. The verdicts go back to the
+tagger (/story-verdicts), and every later grouping follows them, so such stories
+come together on a later refresh. Only a yes or no comes back from the LLM.
 """
 
 import asyncio
@@ -71,6 +77,19 @@ PROMPT = (
     "You summarize news articles for a headlines site. Write 2-3 plain sentences "
     "(at most 70 words) in English saying what the article reports. Use only facts "
     "stated in the article. No preamble, no opinions, no markdown."
+)
+
+
+STORY_PROMPT = (
+    "Do these two news headlines cover the same news: the same event, announcement, study, match, release or "
+    "incident, even if worded differently or from a different angle (a result and its reaction, a study and an "
+    "explainer of it)? Answer with one word: yes or no."
+)
+
+STORY_JUDGEMENTS = Counter(
+    "summarizer_story_judgements_total",
+    "Pairs of headlines judged for story grouping, by verdict (same, different)",
+    ["verdict"],
 )
 
 
@@ -236,6 +255,64 @@ async def summarize(client: httpx.AsyncClient, title: str, text: str) -> str:
     return summary
 
 
+async def same_story(client: httpx.AsyncClient, a: str, b: str) -> bool:
+    """The LLM's verdict on two headlines: the same story or not (anything but a yes counts as not)."""
+    try:
+        response = await client.post(
+            f"{settings.SUMMARIZER_LLM_URL}/api/chat",
+            json={
+                "model": settings.SUMMARIZER_MODEL,
+                "messages": [
+                    {"role": "system", "content": STORY_PROMPT},
+                    {"role": "user", "content": f"Headline 1: {a}\nHeadline 2: {b}"},
+                ],
+                "stream": False,
+                "think": False,
+                "keep_alive": "2m",
+                "options": {"temperature": 0, "num_predict": 3},
+            },
+            timeout=httpx.Timeout(settings.SUMMARY_LLM_TIMEOUT, connect=5.0),
+        )
+        response.raise_for_status()
+    except httpx.HTTPError as e:
+        raise LLMUnavailable(str(e) or type(e).__name__)
+    return response.json()["message"]["content"].strip().lower().startswith("yes")
+
+
+async def judge_stories(client: httpx.AsyncClient) -> int:
+    """
+    Judges the tagger's unsure pairs, most important first, for up to STORY_JUDGE_SECONDS or
+    until none are left. Returns how many were judged; raises LLMUnavailable. If the tagger
+    can't be reached, nothing is judged this time.
+    """
+    loop, judged = asyncio.get_running_loop(), Tally()
+    started = loop.time()
+    while loop.time() - started < settings.STORY_JUDGE_SECONDS:
+        try:
+            response = await client.get(f"{settings.TAGGER_URL}/story-candidates",
+                                        params={"limit": settings.STORY_JUDGE_BATCH}, timeout=15.0)
+            response.raise_for_status()
+            pairs = response.json()["pairs"]
+            if not pairs:
+                break
+            verdicts = []
+            for pair in pairs:
+                same = await same_story(client, pair["a"], pair["b"])
+                verdicts.append({"a": pair["a"], "b": pair["b"], "same": same, "model": settings.SUMMARIZER_MODEL})
+            response = await client.post(f"{settings.TAGGER_URL}/story-verdicts", json={"verdicts": verdicts}, timeout=15.0)
+            response.raise_for_status()
+        except httpx.HTTPError as e:  # The tagger, not the LLM (that raises LLMUnavailable)
+            logger.warning("Story pairs not judged: tagger unavailable", error=str(e) or type(e).__name__)
+            break
+        for verdict in verdicts:
+            label = "same" if verdict["same"] else "different"
+            judged[label] += 1
+            STORY_JUDGEMENTS.labels(verdict=label).inc()
+    if judged:
+        logger.info("Judged story pairs", **judged)
+    return sum(judged.values())
+
+
 async def summarize_new(client: httpx.AsyncClient, redis_client: aioredis.Redis) -> int:
     """One pass over the top items. Returns how many were summarized; raises LLMUnavailable."""
     items = await top_items(redis_client)
@@ -286,6 +363,7 @@ async def run() -> None:
         while True:
             try:
                 await summarize_new(client, redis_client)
+                await judge_stories(client)  # Summaries come first: only once there are none to make
                 if available is False:
                     logger.info("LLM server is back")
                 available = True
