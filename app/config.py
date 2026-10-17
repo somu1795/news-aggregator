@@ -135,7 +135,7 @@ class Settings(BaseSettings):
     METRICS_PORT: int = 9100  # Prometheus port exposed by the refresher process
 
     # --- Feed Fetching & Mixing Settings ---
-    MAX_HEADLINES: int = 80  # Per view (each region, and "all")
+    MAX_HEADLINES: int = 100  # Per view (each region, and "all")
     # Views are built this many items longer, so that once each story is shown only once
     # (its other headlines folded under it, see services/story_groups.py) they still fill up
     STORY_GROUP_HEADROOM: int = 40
