@@ -142,7 +142,7 @@ services:
           cpus: '1.5'
           # Heavy news pages take Chromium to ~1.4 GB; at 1G they stalled, timed out or crashed tabs
           memory: 2G
-          pids: 512
+          pids: 1024  # Processes and threads: a heavy page takes Chromium to ~400, and at the limit it can't even quit
     restart: unless-stopped
 
   # A second headless browser (Byparr, a modified Firefox; same API as FlareSolverr),
