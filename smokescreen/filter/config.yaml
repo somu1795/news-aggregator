@@ -1,0 +1,5 @@
+# The filtered browser proxy (browser-egress-filtered): Smokescreen's defaults
+# (public addresses only), plus the block list. Clients have no role, so the
+# ACL's default rule applies to them: everything but the listed domains.
+allow_missing_role: true
+acl_file: /filter/acl.yaml

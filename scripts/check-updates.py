@@ -76,8 +76,6 @@ def bare(version):
 
 CHECKS = [
     # name, pinned version, where it's pinned, how to find the latest
-    ("cloudflared", lambda: pinned("docker-compose.yml", r"cloudflare/cloudflared:([\w.]+)"), "docker-compose.yml",
-     lambda: github_latest("cloudflare/cloudflared")),
     ("FlareSolverr", lambda: pinned("docker-compose.yml", r"flaresolverr/flaresolverr:(v?[\w.]+)"), "docker-compose.yml",
      lambda: github_latest("FlareSolverr/FlareSolverr")),
     ("Byparr", lambda: pinned("docker-compose.yml", r"thephaseless/byparr:([\w.]+)"), "docker-compose.yml",

@@ -19,7 +19,11 @@ An article's text is read, each step only if the previous ones failed:
    addresses (Smokescreen), as pages run their own JavaScript. A site that
    blocked a plain request is remembered for BROWSER_HOST_TTL_SECONDS: its
    articles go to the browser first. Once that expires, the next article tries
-   a plain request again (and the site is remembered again if it's refused);
+   a plain request again (and the site is remembered again if it's refused).
+   The browser first loads the page without ads, trackers and video players
+   (through a second proxy that refuses them, SUMMARIZER_BROWSER_FILTERED_PROXY):
+   lighter and faster. If that fails, it loads the whole page ("browser-full"),
+   and a site that only works that way is remembered for BROWSER_HOST_TTL_SECONDS;
    If it fails, a second browser with a different engine (Byparr, a modified
    Firefox, at SUMMARIZER_BROWSER2_URL, behind the same proxy) tries: it gets
    past some checks the first doesn't, but is slower;
@@ -49,7 +53,8 @@ import structlog
 import trafilatura
 from prometheus_client import Counter, start_http_server
 
-from config import CATALOG, browser_host_key, feed_text_key, is_paywalled, settings, snapshot_key, summary_key
+from config import (CATALOG, browser_host_key, feed_text_key, full_page_host_key, is_paywalled, settings, snapshot_key,
+                    summary_key)
 from logging_config import configure_logging
 from services.redis_client import create_redis_client
 from services.safe_fetch import UnsafeURL, check_public, stream_public
@@ -69,7 +74,7 @@ BOT_CHECK_HEADERS = ("cf-mitigated", "x-datadome", "x-amzn-waf-action")  # Cloud
 
 ARTICLE_READS = Counter(
     "summarizer_article_reads_total",
-    "Articles by how their text was read (direct, browser, browser2, feed, archive) or failed",
+    "Articles by how their text was read (direct, browser, browser-full, browser2, feed, archive) or failed",
     ["method"],
 )
 
@@ -134,11 +139,25 @@ async def fetch_text(client: httpx.AsyncClient, redis_client: aioredis.Redis, li
                 await redis_client.set(browser_host_key(host), 1, ex=settings.BROWSER_HOST_TTL_SECONDS)
             errors.append(str(e))
 
+    # Without ads and trackers first, unless the site is known to need them
+    filtered = (bool(settings.SUMMARIZER_BROWSER_FILTERED_PROXY)
+                and not await redis_client.exists(full_page_host_key(host)))
+
+    async def from_browser_filtered() -> str:
+        return await fetch_browser_text(client, settings.SUMMARIZER_BROWSER_URL, link,
+                                        settings.SUMMARIZER_BROWSER_FILTERED_PROXY)
+
     async def from_browser() -> str:
-        return await fetch_browser_text(client, settings.SUMMARIZER_BROWSER_URL, link)
+        text = await fetch_browser_text(client, settings.SUMMARIZER_BROWSER_URL, link,
+                                        settings.SUMMARIZER_BROWSER_PROXY)
+        if filtered:  # It failed without them: this site needs the whole page
+            await redis_client.set(full_page_host_key(host), 1, ex=settings.BROWSER_HOST_TTL_SECONDS)
+            logger.info("Site needs the whole page in the browser", host=host)
+        return text
 
     async def from_browser2() -> str:
-        return await fetch_browser_text(client, settings.SUMMARIZER_BROWSER2_URL, link)
+        return await fetch_browser_text(client, settings.SUMMARIZER_BROWSER2_URL, link,
+                                        settings.SUMMARIZER_BROWSER_PROXY)
 
     async def from_feed() -> str:
         text = await redis_client.get(feed_text_key(link))
@@ -153,7 +172,15 @@ async def fetch_text(client: httpx.AsyncClient, redis_client: aioredis.Redis, li
     if is_paywalled(host):
         steps = [("archive", from_archive), ("feed", from_feed)]
     else:
-        steps = (([("browser", from_browser)] if browser else [])
+        if not browser:
+            browser_steps = []
+        elif filtered:
+            browser_steps = [("browser", from_browser_filtered), ("browser-full", from_browser)]
+        else:
+            # A site known to need the whole page, or no filtered proxy
+            whole = "browser-full" if settings.SUMMARIZER_BROWSER_FILTERED_PROXY else "browser"
+            browser_steps = [(whole, from_browser)]
+        steps = (browser_steps
                  + ([("browser2", from_browser2)] if settings.SUMMARIZER_BROWSER2_URL else [])
                  + [("feed", from_feed), ("archive", from_archive)])
     for method, step in steps:
@@ -187,15 +214,15 @@ async def fetch_page_text(client: httpx.AsyncClient, url: str, favor_precision: 
     return await extract_text(body, favor_precision)
 
 
-async def fetch_browser_text(client: httpx.AsyncClient, browser_url: str, link: str) -> str:
-    """The article's text as a real browser (FlareSolverr's API) at browser_url sees it, through the public-only proxy."""
+async def fetch_browser_text(client: httpx.AsyncClient, browser_url: str, link: str, proxy: str) -> str:
+    """The article's text as a real browser (FlareSolverr's API) at browser_url sees it, through proxy (public-only)."""
     try:
         await check_public(httpx.URL(link))
     except UnsafeURL as e:
         raise ArticleUnusable(str(e), final=True)
     request = {"cmd": "request.get", "url": link, "maxTimeout": int(settings.SUMMARY_BROWSER_TIMEOUT * 1000)}
-    if settings.SUMMARIZER_BROWSER_PROXY:
-        request["proxy"] = {"url": settings.SUMMARIZER_BROWSER_PROXY}
+    if proxy:
+        request["proxy"] = {"url": proxy}
     try:
         response = await client.post(f"{browser_url}/v1", json=request,
                                      timeout=settings.SUMMARY_BROWSER_TIMEOUT + 30)

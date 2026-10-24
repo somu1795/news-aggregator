@@ -191,6 +191,8 @@ class Settings(BaseSettings):
     # proxy it must use (Smokescreen: public addresses only). Empty disables it.
     SUMMARIZER_BROWSER_URL: str = ""
     SUMMARIZER_BROWSER_PROXY: str = ""
+    # The same proxy without ad, tracker and video domains: tried first. Empty: always SUMMARIZER_BROWSER_PROXY.
+    SUMMARIZER_BROWSER_FILTERED_PROXY: str = ""
     SUMMARIZER_BROWSER2_URL: str = ""  # A second browser (Byparr, same API), tried when the first fails
     SUMMARY_BROWSER_TIMEOUT: float = 60.0  # Per page, challenge included
     STORY_JUDGE_BATCH: int = 20  # Unsure story pairs asked for at a time (~0.1 s each on the LLM)
@@ -246,6 +248,11 @@ CATALOG = load_catalog(Path(__file__).parent / settings.SOURCES_FILE)
 def summary_key(link: str) -> str:
     """Redis key holding an article's summary (or a failure marker), by its link."""
     return "summary:" + hashlib.sha256(link.encode()).hexdigest()[:32]
+
+
+def full_page_host_key(host: str) -> str:
+    """Redis key marking a site whose articles the browser can't read without ads and trackers."""
+    return f"full-page-host:{host}"
 
 
 def feed_text_key(link: str) -> str:

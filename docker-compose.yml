@@ -107,6 +107,7 @@ services:
       - SUMMARY_TOP_N=${SUMMARY_TOP_N:-20}
       - SUMMARIZER_BROWSER_URL=http://browser:8191
       - SUMMARIZER_BROWSER_PROXY=http://browser-egress:4750
+      - SUMMARIZER_BROWSER_FILTERED_PROXY=http://browser-egress-filtered:4750
       - SUMMARIZER_BROWSER2_URL=http://browser2:8191
     volumes:
       - ./app/sources.json:/app/sources.json:ro
@@ -184,6 +185,26 @@ services:
     image: news-aggregator-smokescreen
     build: ./smokescreen
     command: ["--listen-ip", "0.0.0.0", "--listen-port", "4750", "--timeout", "30s"]
+    networks: [browser, egress]
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+          pids: 128
+    restart: unless-stopped
+
+  # The same proxy, but it also refuses ad, tracker and video-player domains
+  # (smokescreen/filter/acl.yaml, from scripts/update-blocklist.py), so pages load
+  # lighter and faster. The summarizer reads pages through it first; a page that
+  # fails without them is retried through browser-egress, and its site remembered.
+  browser-egress-filtered:
+    init: true
+    <<: *hardened
+    image: news-aggregator-smokescreen
+    command: ["--config-file", "/filter/config.yaml", "--listen-ip", "0.0.0.0", "--listen-port", "4750", "--timeout", "30s"]
+    volumes:
+      - ./smokescreen/filter:/filter:ro
     networks: [browser, egress]
     deploy:
       resources:

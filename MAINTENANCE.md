@@ -17,7 +17,6 @@ What in this project is written by hand and ages, how often to look at it, and a
 ### Monthly: security updates (`scripts/check-updates.py` reports them)
 | What | Where |
 | --- | --- |
-| cloudflared | `docker-compose.yml` |
 | Python app packages | `app/requirements.in` → `app/requirements.txt` |
 | Base images: Python, Caddy, Redis | `app/Dockerfile`, `caddy/Dockerfile`, `docker-compose.yml` |
 | FlareSolverr, Byparr (sites keep changing their bot checks) | `docker-compose.yml` |
@@ -28,6 +27,7 @@ What in this project is written by hand and ages, how often to look at it, and a
 | The news and topic feeds | `app/sources.json` | Failing fetches (checklist step 3), a feed whose content changed (e.g. an outlet turned into an events guide), new outlets worth adding (TODO.md) |
 | Browser identity sent with requests | `app/config.py` `BROWSER_USER_AGENT` | The update check reports it when it's more than two Chrome versions behind |
 | Paywalled sites | `app/config.py` `PAYWALLED_HOSTS` | Summaries failing for a site that added a paywall |
+| The browsers' ad and tracker block list | `smokescreen/filter/acl.yaml`: run `scripts/update-blocklist.py`, then `docker compose restart browser-egress-filtered` | Ad networks change domains; sites that break without a blocked domain are retried with it on their own (`docker compose logs summarizer \| grep 'whole page'`) |
 | Bot-check signals | `app/summarizer.py` `BLOCKING_STATUSES`, `BOT_CHECK_HEADERS` | Many unreadable articles from one site with a new status or header |
 
 ### Once or twice a year

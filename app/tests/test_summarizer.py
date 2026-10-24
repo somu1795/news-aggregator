@@ -10,7 +10,7 @@ import pytest
 import respx
 
 import summarizer
-from config import Catalog, browser_host_key, feed_text_key, settings, snapshot_key, summary_key
+from config import Catalog, browser_host_key, feed_text_key, full_page_host_key, settings, snapshot_key, summary_key
 from refresher import publish
 from summarizer import LLMUnavailable, summarize_new, top_items
 
@@ -274,6 +274,66 @@ async def test_the_second_browser_tries_when_the_first_fails(mock_redis, with_br
     assert json.loads(second.calls[0].request.content)["proxy"] == {"url": PROXY}
     assert json.loads(await mock_redis.get(summary_key("https://pub.example/1")))["via"] == "browser2"
 
+
+FILTERED_PROXY = "http://filtered-proxy.example:4750"
+
+
+def browser_by_proxy(pages):
+    """A browser whose page depends on the proxy each request names."""
+    return lambda request: browser_page(pages[json.loads(request.content)["proxy"]["url"]])
+
+
+@respx.mock
+async def test_the_browser_loads_pages_without_ads_first(mock_redis, with_browser, monkeypatch):
+    monkeypatch.setattr(settings, "SUMMARIZER_BROWSER_FILTERED_PROXY", FILTERED_PROXY)
+    await put_view(mock_redis, "all", [1])
+    respx.get("https://pub.example/1").mock(return_value=httpx.Response(403))
+    browser = respx.post(f"{BROWSER}/v1").mock(side_effect=browser_by_proxy({FILTERED_PROXY: ARTICLE, PROXY: ARTICLE}))
+    llm_up()
+
+    async with httpx.AsyncClient() as client:
+        assert await summarize_new(client, mock_redis) == 1
+
+    assert [json.loads(call.request.content)["proxy"]["url"] for call in browser.calls] == [FILTERED_PROXY]
+    assert json.loads(await mock_redis.get(summary_key("https://pub.example/1")))["via"] == "browser"
+    assert not await mock_redis.exists(full_page_host_key("pub.example"))
+
+
+@respx.mock
+async def test_a_site_that_needs_its_ads_gets_the_whole_page_and_is_remembered(mock_redis, with_browser, monkeypatch):
+    monkeypatch.setattr(settings, "SUMMARIZER_BROWSER_FILTERED_PROXY", FILTERED_PROXY)
+    await put_view(mock_redis, "all", [1, 2])
+    await mock_redis.set(browser_host_key("pub.example"), 1)  # Straight to the browser
+    # Without what the proxy refuses, the article never appears
+    browser = respx.post(f"{BROWSER}/v1").mock(
+        side_effect=browser_by_proxy({FILTERED_PROXY: "<p>Loading…</p>", PROXY: ARTICLE}))
+    llm_up()
+
+    async with httpx.AsyncClient() as client:
+        assert await summarize_new(client, mock_redis) == 2
+
+    # Story 1: without ads, then the whole page; story 2, same site: the whole page at once
+    proxies = [json.loads(call.request.content)["proxy"]["url"] for call in browser.calls]
+    assert proxies == [FILTERED_PROXY, PROXY, PROXY]
+    for n in (1, 2):
+        assert json.loads(await mock_redis.get(summary_key(f"https://pub.example/{n}")))["via"] == "browser-full"
+    assert 0 < await mock_redis.ttl(full_page_host_key("pub.example")) <= settings.BROWSER_HOST_TTL_SECONDS
+
+
+@respx.mock
+async def test_a_site_is_not_remembered_when_the_whole_page_fails_too(mock_redis, with_browser, monkeypatch):
+    monkeypatch.setattr(settings, "SUMMARIZER_BROWSER_FILTERED_PROXY", FILTERED_PROXY)
+    await put_view(mock_redis, "all", [1])
+    await mock_redis.set(browser_host_key("pub.example"), 1)
+    await mock_redis.set(feed_text_key("https://pub.example/1"), "The council met. " * 50)
+    respx.post(f"{BROWSER}/v1").mock(return_value=browser_page("<p>Checking your connection</p>"))
+    llm_up()
+
+    async with httpx.AsyncClient() as client:
+        assert await summarize_new(client, mock_redis) == 1
+
+    assert json.loads(await mock_redis.get(summary_key("https://pub.example/1")))["via"] == "feed"
+    assert not await mock_redis.exists(full_page_host_key("pub.example"))
 
 TAGGER = "http://tagger.test"
 
