@@ -7,17 +7,6 @@
     --visited: #7a6a8c;
     color-scheme: light;
 }
-@media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) {
-        --paper: #120f0a;
-        --ink: #f2b84b;
-        --muted: #a17a37;
-        --rule: #3a2e1a;
-        --accent: #ffd27a;
-        --visited: #c99a52;
-        color-scheme: dark;
-    }
-}
 :root[data-theme="dark"] {
     --paper: #120f0a;
     --ink: #f2b84b;

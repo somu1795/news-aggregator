@@ -243,7 +243,8 @@ services:
   # (no inbound port needed). In the tunnel's Public Hostname, point the site at
   # http://caddy:7001. Started only with COMPOSE_PROFILES=cloudflare in .env.
   cloudflared:
-    image: cloudflare/cloudflared:2026.10.0
+    image: cloudflare/cloudflared:latest
+    pull_policy: always  # Every `docker compose up` fetches the newest release
     <<: *hardened
     profiles: [cloudflare]
     command: tunnel --no-autoupdate run

@@ -78,11 +78,9 @@
         return labelOf(region).toLowerCase() + (topic === DEFAULT_TOPIC ? "" : " / " + topicLabel(topic).toLowerCase());
     }
 
-    // --- Theme: follows the OS until toggled ---
+    // --- Theme: light until toggled ---
     function isDark() {
-        var forced = document.documentElement.getAttribute("data-theme");
-        if (forced) return forced === "dark";
-        return window.matchMedia("(prefers-color-scheme: dark)").matches;
+        return document.documentElement.getAttribute("data-theme") === "dark";
     }
     function applyTheme(theme) {
         if (theme) document.documentElement.setAttribute("data-theme", theme);
@@ -861,7 +859,6 @@
         }
         else if (/^[1-9]$/.test(event.key) && VIEWS[Number(event.key) - 1]) selectView(VIEWS[Number(event.key) - 1].id, currentTopic, true);
     });
-    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () { applyTheme(); });
     setInterval(function () {
         updateStatus();  // Keep "updated Xm ago" honest
         autoRefreshIfDue();
