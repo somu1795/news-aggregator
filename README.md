@@ -94,7 +94,7 @@ To let Cloudflare answer most requests without reaching this server, add a cache
 
 Most configuration is managed via the `.env` file. See `.env.example` for a full list of available options and their descriptions.
 
-Regions, news sources and their weights are defined in `app/sources.json` (format and rules in [ARCHITECTURE.md §10](ARCHITECTURE.md#10-configuration-reference)). The file is mounted into the refresher, so after changing feeds or weights run `docker compose restart refresher`; after adding or renaming a region or topic also restart `app`, since the page's tabs come from the same file. Other tunables (refresh interval — 5 minutes by default — timeouts, headline count) are in `app/config.py` and can be overridden with environment variables of the same name.
+Regions, news sources and their weights are defined in `app/sources.json` (format and rules in [ARCHITECTURE.md §10](ARCHITECTURE.md#10-configuration-reference)). The file is mounted into the refresher, so after changing feeds or weights run `docker compose restart refresher`; after adding or renaming a region or topic also restart `app`, since the page's tabs come from the same file. Other tunables (timeouts, cache lifetimes, story grouping) are in `app/config.py`; a setting there can be set from `.env` only once `docker-compose.yml` passes it to the service that uses it, as it does for those in the table below.
 
 | Variable           | Description                                                              | Default      |
 | ------------------ | ------------------------------------------------------------------------ | ------------ |
@@ -109,6 +109,15 @@ Regions, news sources and their weights are defined in `app/sources.json` (forma
 | `RENDER_GID`       | Host group id owning the NPU (`getent group render`), for the tagger.    | `991`        |
 | `REDIS_PASSWORD`   | Password for Redis. **Required.** Generate with `openssl rand -hex 24`.  | none         |
 | `SUMMARIZER_LLM_URL` | Ollama server for article summaries, e.g. `http://<host>:11434`; empty disables them. | empty |
+| `SUMMARIZER_MODEL` | Ollama model for summaries and story pairs.                              | `qwen3:8b`   |
+| `SUMMARY_TOP_N`    | The first N headlines of every tab get a summary.                        | `20`         |
+| `DEFAULT_THEME`    | `light` or `dark`, for visitors who haven't toggled it with `d`.         | `light`      |
+| `MAX_HEADLINES`    | Headlines per tab.                                                       | `100`        |
+| `MAX_HEADLINE_AGE_HOURS` | Older headlines are dropped.                                       | `48`         |
+| `MAX_PER_PUBLISHER` | At most this many headlines per publisher in a tab.                     | `3`          |
+| `MAX_RELATED`      | Other outlets' headlines folded under a story.                           | `8`          |
+| `REFRESH_INTERVAL_SECONDS` | How often the feeds are fetched.                                 | `300`        |
+| `TOPIC_FEEDS_INTERVAL_SECONDS` | How often the topic feeds (Google News sections) are fetched. | `1800`       |
 
 ## Backup and Restore
 

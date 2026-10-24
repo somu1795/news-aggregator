@@ -78,7 +78,8 @@
         return labelOf(region).toLowerCase() + (topic === DEFAULT_TOPIC ? "" : " / " + topicLabel(topic).toLowerCase());
     }
 
-    // --- Theme: light until toggled ---
+    // --- Theme: the server's DEFAULT_THEME until toggled ---
+    var DEFAULT_THEME = document.documentElement.getAttribute("data-theme");
     function isDark() {
         return document.documentElement.getAttribute("data-theme") === "dark";
     }
@@ -504,8 +505,7 @@
         autoRefresh = AUTO_REFRESH[0];
         backToLastTab = false;
         bypass = "none";
-        document.documentElement.removeAttribute("data-theme");
-        applyTheme(null);
+        applyTheme(DEFAULT_THEME);
         renderBypass();
         renderSort();
         renderSiteIcons();

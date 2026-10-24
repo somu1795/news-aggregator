@@ -26,6 +26,7 @@ services:
       # One worker per CPU in APP_CPUS. Benchmarked: 4 workers on 4 CPUs match
       # 9 workers' throughput at half the memory; scale out with more containers.
       - UVICORN_WORKERS=${UVICORN_WORKERS:-4}
+      - DEFAULT_THEME=${DEFAULT_THEME:-light}
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
       - LOG_LEVEL=INFO
       # Lets /metrics aggregate all Uvicorn workers (see app/entrypoint.sh)
@@ -68,6 +69,13 @@ services:
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
       - LOG_LEVEL=INFO
       - ARCHIVE_PATH=/archive/archive.db
+      # Tunable from .env (see .env.example)
+      - MAX_HEADLINES=${MAX_HEADLINES:-100}
+      - MAX_HEADLINE_AGE_HOURS=${MAX_HEADLINE_AGE_HOURS:-48}
+      - MAX_PER_PUBLISHER=${MAX_PER_PUBLISHER:-3}
+      - MAX_RELATED=${MAX_RELATED:-8}
+      - REFRESH_INTERVAL_SECONDS=${REFRESH_INTERVAL_SECONDS:-300}
+      - TOPIC_FEEDS_INTERVAL_SECONDS=${TOPIC_FEEDS_INTERVAL_SECONDS:-1800}
     volumes:
       # Edit sources.json and `docker compose restart refresher` — no rebuild needed.
       - ./app/sources.json:/app/sources.json:ro
@@ -95,6 +103,7 @@ services:
       - LOG_LEVEL=INFO
       - SUMMARIZER_LLM_URL=${SUMMARIZER_LLM_URL:-}
       - SUMMARIZER_MODEL=${SUMMARIZER_MODEL:-qwen3:8b}
+      - SUMMARY_TOP_N=${SUMMARY_TOP_N:-20}
       - SUMMARIZER_BROWSER_URL=http://browser:8191
       - SUMMARIZER_BROWSER_PROXY=http://browser-egress:4750
       - SUMMARIZER_BROWSER2_URL=http://browser2:8191

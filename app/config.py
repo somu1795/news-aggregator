@@ -9,7 +9,7 @@ so they can be edited without touching code.
 import hashlib
 import json
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -117,6 +117,9 @@ class Settings(BaseSettings):
 
     # --- Rate Limiting ---
     API_RATE_LIMIT: str = "100/minute"
+
+    # --- Page ---
+    DEFAULT_THEME: Literal["light", "dark"] = "light"  # Until a visitor toggles it with "d"
 
     # --- Redis Settings ---
     REDIS_URL: str = "redis://redis:6379"

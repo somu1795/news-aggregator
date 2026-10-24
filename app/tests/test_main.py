@@ -417,6 +417,14 @@ def test_page_starts_on_the_visitors_region(client, country, region):
     assert json.loads(page.split('<script id="home-data" type="application/json">')[1].split("</script>")[0]) == region
 
 
+@pytest.mark.parametrize("theme, color", [("light", "#f3efe4"), ("dark", "#120f0a")])
+def test_page_opens_in_the_default_theme(client, monkeypatch, theme, color):
+    monkeypatch.setattr(settings, "DEFAULT_THEME", theme)
+    page = client.get("/", headers={"Accept": "text/html"}).text
+    assert f'<html lang="en" data-theme="{theme}">' in page
+    assert f'<meta name="theme-color" content="{color}">' in page
+
+
 @pytest.mark.parametrize("accept", [None, "*/*", "text/html", "text/html,application/json;q=0.9"])
 def test_root_serves_the_page_unless_only_json_is_asked_for(client, accept):
     """Crawlers and tools often send */* or no Accept header: they get the page, not the status JSON."""

@@ -279,7 +279,7 @@ After the main views are published, the refresher builds the topic views (`get_t
 Consequence: a newly published snapshot reaches users within about 5s, and the API makes at most one Redis read per view per worker every 5s, whatever the traffic.
 
 ### The main page (`/`)
-- Minimalist retro design: monospace; light "paper" and dark amber themes; light until toggled.
+- Minimalist retro design: monospace; light "paper" and dark amber themes; `DEFAULT_THEME` (light) until toggled.
 - **Region tabs**: `all · asia · europe · americas · africa · oceania`, and below them **topic tabs**: `everything · uplifting · tech · science · nature · culture · sport`. Any region combines with any topic; "everything" is the region's main view.
   - Tabs are real links (`/?region=asia&topic=sport`): shareable ("Copy link") and open in a new tab; such an address opens its tab. Switching tabs doesn't change the address: it stays as typed (`/`), and a shared link's tab is dropped from it on the first switch, so it never names the wrong tab. A refresh reopens the last tab, which is remembered. By default a switch adds no history entry: Back leaves the site (in the installed app too) instead of stepping back through every tab visited. The advanced row's **back action** (`exit` by default, or `last tab`) switches to one history entry per tab change, holding its tab, so Back and Forward return to the previous and next tab.
   - Clicking switches in place without reloading.

@@ -62,7 +62,7 @@ async def root(request: Request):
         nonce = secrets.token_urlsafe(16)
         response = templates.TemplateResponse(
             request, "retro.html", {"views": _VIEWS, "topics": _TOPICS, "paywalled": PAYWALLED_HOSTS, "csp_nonce": nonce,
-             "assets": _ASSETS, "site_url": _site_url(request),
+             "assets": _ASSETS, "site_url": _site_url(request), "default_theme": settings.DEFAULT_THEME,
              # Starting tab for visitors who haven't chosen one (country from Cloudflare)
              "home_region": region_for_country(request.headers.get("cf-ipcountry"))},
         )
