@@ -140,7 +140,8 @@ services:
       resources:
         limits:
           cpus: '1.5'
-          memory: 1G
+          # Heavy news pages take Chromium to ~1.4 GB; at 1G they stalled, timed out or crashed tabs
+          memory: 2G
           pids: 512
     restart: unless-stopped
 
