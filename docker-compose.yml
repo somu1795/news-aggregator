@@ -27,6 +27,7 @@ services:
       # 9 workers' throughput at half the memory; scale out with more containers.
       - UVICORN_WORKERS=${UVICORN_WORKERS:-4}
       - DEFAULT_THEME=${DEFAULT_THEME:-light}
+      - ENABLE_API_DOCS=${ENABLE_API_DOCS:-false}  # Interactive API docs at /docs
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
       - LOG_LEVEL=INFO
       # Lets /metrics aggregate all Uvicorn workers (see app/entrypoint.sh)
