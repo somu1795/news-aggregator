@@ -26,12 +26,15 @@ pytestmark = pytest.mark.asyncio
 
 
 @pytest.fixture(autouse=True)
-def fresh_feed_state(monkeypatch):
-    """Each test starts with no remembered feeds or paused hosts, and no request jitter."""
-    from services import feed_service
-    monkeypatch.setattr(feed_service, "_feeds", {})
-    monkeypatch.setattr(feed_service, "_backoff", {})
+def no_request_jitter(monkeypatch):
     monkeypatch.setattr(settings, "FEED_JITTER_SECONDS", 0.0)
+
+
+@pytest.fixture
+def poller():
+    """A refresher's feed memory, empty: no remembered feeds or paused hosts."""
+    from services.feeds.poller import FeedPoller
+    return FeedPoller()
 
 
 @pytest_asyncio.fixture(scope="function")

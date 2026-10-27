@@ -12,8 +12,7 @@ import respx
 from fakeredis.aioredis import FakeRedis
 from prometheus_client import REGISTRY
 
-from services.link_resolver import decode_with_signature, resolve_link
-from services.redirect import RESOLVED_URL_PREFIX
+from services.links.google_news import RESOLVED_URL_PREFIX, decode_with_signature, resolve_link
 
 pytestmark = pytest.mark.asyncio
 
@@ -79,7 +78,7 @@ async def test_fallback_used_when_custom_resolver_fails(redis, monkeypatch):
 @respx.mock
 async def test_both_fail_returns_custom_result(redis, monkeypatch):
     """If the fallback also fails, the custom resolver's result is kept."""
-    monkeypatch.setattr("services.redirect.settings.FETCH_RETRIES", 1)
+    monkeypatch.setattr("services.links.google_news.settings.FETCH_RETRIES", 1)
     page = '<html><body>nothing useful</body></html>'
     respx.get(GOOGLE_URL).mock(return_value=httpx.Response(200, text=page))
     respx.get(ARTICLE_PAGE).mock(return_value=httpx.Response(200, text=page))
@@ -95,7 +94,7 @@ async def test_both_fail_returns_custom_result(redis, monkeypatch):
 @respx.mock
 async def test_fallback_error_is_contained(redis, monkeypatch):
     """Network errors in the fallback never propagate; the custom result is returned."""
-    monkeypatch.setattr("services.redirect.settings.FETCH_RETRIES", 1)
+    monkeypatch.setattr("services.links.google_news.settings.FETCH_RETRIES", 1)
     respx.get(GOOGLE_URL).mock(side_effect=httpx.ConnectError("down"))
 
     async with httpx.AsyncClient() as client:
@@ -125,7 +124,7 @@ async def test_decoder_rejects_google_or_malformed_results():
 
 
 def test_only_google_news_hosts_count_as_unresolved():
-    from services.link_resolver import _is_unresolved
+    from services.links.google_news import _is_unresolved
     assert _is_unresolved("https://news.google.com/rss/articles/abc")
     assert not _is_unresolved("https://evil.example/?u=news.google.com")
     assert not _is_unresolved("https://news.google.com.evil.example/a")

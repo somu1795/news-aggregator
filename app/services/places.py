@@ -4,7 +4,7 @@ Which regions a headline is about, from the places it names.
 Shared topic feeds (Mongabay, the Guardian's environment feeds, good-news
 outlets) cover the whole world, so without this every region's topic view
 shows the same stories. A headline that names a country, its people, or a
-major city or state is shown in that place's region (feed_service.
+major city or state is shown in that place's region (views/topic_views.
 build_topic_views); one that names no place stays in every region.
 
 The names are each region's places and abbreviations in regions.yaml (the

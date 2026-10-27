@@ -33,7 +33,9 @@ from logging_config import configure_logging
 from metrics import REFRESHES
 from models import APIResponse
 from services.archive import archive
-from services.feed_service import get_fresh_views, get_topic_views
+from services.feeds.poller import FeedPoller
+from services.views.main_views import get_fresh_views
+from services.views.topic_views import get_topic_views
 from services.redis_client import create_redis_client
 from services.site_icons import cache_icons
 from services.story_groups import group_stories
@@ -108,12 +110,12 @@ async def publish(redis_client: aioredis.Redis, views: Dict[str, List[Dict]], fe
             logger.warning("Headlines not archived", error=str(e) or type(e).__name__)
 
 
-async def refresh_once(http_client: httpx.AsyncClient, redis_client: aioredis.Redis) -> int:
+async def refresh_once(http_client: httpx.AsyncClient, redis_client: aioredis.Redis, poller: FeedPoller) -> int:
     """
     Fetches headlines and publishes one snapshot per non-empty view, then the
     topic views. Returns the number of main views published.
     """
-    views, results_by_source = await get_fresh_views(http_client, redis_client)
+    views, results_by_source = await get_fresh_views(http_client, redis_client, poller)
     fetched_at = time.time()
     published = {view: items for view, items in views.items() if items}
     if not published:
@@ -130,18 +132,18 @@ async def refresh_once(http_client: httpx.AsyncClient, redis_client: aioredis.Re
     REFRESHES.labels(result="success").inc()
     LAST_REFRESH_SUCCESS.set(fetched_at)
     logger.info("Published headline snapshots", counts={view: len(items) for view, items in published.items()})
-    await refresh_topics(http_client, redis_client, results_by_source)
+    await refresh_topics(http_client, redis_client, poller, results_by_source)
     await refresh_site_icons(http_client, redis_client)
     return len(published)
 
 
 async def refresh_topics(
-    http_client: httpx.AsyncClient, redis_client: aioredis.Redis, results_by_source: Dict[str, List[Dict]],
+    http_client: httpx.AsyncClient, redis_client: aioredis.Redis, poller: FeedPoller, results_by_source: Dict[str, List[Dict]],
 ) -> int:
     """Publishes every topic view (empty ones too). Returns how many; 0 if it failed and the previous ones were kept."""
     try:
         views = await asyncio.wait_for(
-            get_topic_views(http_client, redis_client, results_by_source), settings.TOPIC_REFRESH_TIMEOUT_SECONDS,
+            get_topic_views(http_client, redis_client, poller, results_by_source), settings.TOPIC_REFRESH_TIMEOUT_SECONDS,
         )
         views = await group_stories(http_client, views)
         await publish(redis_client, views, time.time())
@@ -187,11 +189,12 @@ async def run() -> None:
     limits = httpx.Limits(max_connections=50, max_keepalive_connections=20)
     async with httpx.AsyncClient(http2=True, timeout=settings.REQUEST_TIMEOUT, limits=limits) as http_client:
         logger.info("Refresher started", interval=settings.REFRESH_INTERVAL_SECONDS)
+        poller = FeedPoller()  # What it remembers about each feed and host, for the refresher's whole life
         while True:
             started = time.monotonic()
             try:
                 await asyncio.wait_for(
-                    refresh_once(http_client, redis_client), settings.REFRESH_TIMEOUT_SECONDS,
+                    refresh_once(http_client, redis_client, poller), settings.REFRESH_TIMEOUT_SECONDS,
                 )
             except TimeoutError:
                 REFRESHES.labels(result="timeout").inc()

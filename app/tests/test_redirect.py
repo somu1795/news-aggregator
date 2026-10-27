@@ -14,7 +14,7 @@ import httpx
 import respx
 from fakeredis.aioredis import FakeRedis
 
-from services.redirect import (
+from services.links.google_news import (
     resolve_redirect,
     _parse_batch_execute_response,
     RESOLVED_URL_PREFIX,

@@ -7,7 +7,7 @@ import pytest
 
 from catalog import NewsSource
 from config import settings
-from services.feed_service import mix_headlines
+from services.views.mixing import mix_headlines
 
 NOW = 1_800_000_000.0
 WORLD, SCIENCE, HN = "World", "Science", "Hacker News"

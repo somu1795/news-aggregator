@@ -73,7 +73,7 @@ class Settings(BaseSettings):
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36"
     )
     FETCH_RETRIES: int = 3
-    # Polite polling (services/feed_service.py fetch_and_parse_feed)
+    # Polite polling (services/feeds/poller.py FeedPoller.fetch)
     FEED_MAX_INTERVAL_SECONDS: int = 1800  # A feed that keeps bringing nothing new is fetched at most this rarely
     FEED_BACKOFF_SECONDS: int = 600  # A host that answers 429/503 without Retry-After is paused this long, doubling
     FEED_BACKOFF_MAX_SECONDS: int = 7200

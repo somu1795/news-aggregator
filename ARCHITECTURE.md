@@ -97,9 +97,9 @@ So request volume costs almost nothing upstream or in Redis, and users keep gett
   - **`services/`**:
     - `headlines_cache.py`: per-process copy of every view, and of all of them combined for the page's search (rebuilt only when a view changes).
     - `redis_client.py`: Redis client factory.
-    - `feed_service.py`: fetching, per-view mixing, link resolution orchestration.
-    - `redirect.py`: the custom Google News resolver.
-    - `link_resolver.py`: custom resolver first, then the fallback.
+    - `feeds/`: `poller.py` (`FeedPoller`: fetching feeds politely, remembering each feed and host between cycles; the refresher keeps one for its life), `parse.py` (a feed into headlines).
+    - `views/`: `mixing.py` (`mix_headlines()`: weights, de-duplication, caps), `main_views.py` ("all" and the regions), `topic_views.py` (tagging and the topic views).
+    - `links/`: `resolve_links()` for a list of headlines, and `google_news.py` (the custom Google News resolver first, then the fallback).
   - **`templates/`**: `retro.html` (the page) and the error pages.
   - **`static/`**: `retro.css` and `retro.js`, the page's stylesheet and script. The page links to them by a hash of their content (`?v=`), so browsers and Cloudflare keep them for a year and a changed file gets a new URL; any other version is served with `no-cache`.
   - **`middleware/`**: content-negotiated error pages (HTML for browsers, JSON for API clients).
@@ -192,7 +192,7 @@ How the sources were chosen (all measured live):
 Fetching:
 - All feeds are fetched **concurrently**, at most 15 requests in flight. Redirects are followed, so a moved feed keeps working.
 - Each request has a `REQUEST_TIMEOUT` of **10s** and up to `FETCH_RETRIES` = **3** attempts on network errors, with exponential backoff (1s, then 2s).
-- **Polite polling** (`fetch_and_parse_feed()`; the refresher is one long-lived process, so it remembers each feed between cycles):
+- **Polite polling** (`FeedPoller.fetch()`; the refresher is one long-lived process, so its `FeedPoller` remembers each feed between cycles):
   - **Per-feed interval:** a fetch that brings new headlines keeps the feed on every cycle; one that brings nothing new skips a cycle, then waits twice as long each time (10, 20, then at most `FEED_MAX_INTERVAL_SECONDS`, **30 min**). In between, the feed's last headlines are reused without a request. Busy feeds (Google News sections) stay at 5 minutes; slow ones (BBC regional, The Local, Pacific outlets) drift to 20–30 minutes.
   - **Conditional requests:** the feed's `ETag` and `Last-Modified` are sent back (`If-None-Match`, `If-Modified-Since`), so an unchanged feed answers `304 Not Modified` with no body.
   - **Host backoff:** a `429` or `503` pauses **every feed on that host** (all Google News feeds together) for its `Retry-After`, or 10 minutes doubling up to 2 hours (`FEED_BACKOFF_SECONDS`, `FEED_BACKOFF_MAX_SECONDS`), with no retries. Meanwhile the feeds' last headlines are reused; with no new Google items there are also no new Google links to resolve.
@@ -208,7 +208,7 @@ Fetching:
   - `comments`: the discussion page, when the feed has one (Hacker News).
 
 ### Step 2 — Mix each view (weighted interleave)
-`build_views()` in `services/feed_service.py` builds every view in two stages, using `mix_headlines()` for each list:
+`build_views()` in `services/views/main_views.py` builds every view in two stages, using `mix_headlines()` for each list:
 
 - **Stage 1, news lists.** Each region's news from its sources. "World" news is built from the five regional lists, equally. That keeps every region represented and drops a story two regions both carry, and the per-publisher cap applies across regions, so e.g. BBC appears at most 3 times. Science and Hacker News are each mixed on their own.
 - **Stage 2, views.** Each view interleaves its news list (50%) with science (30%) and Hacker News (20%). The lists were already capped, so this stage only interleaves and de-duplicates. News has the largest single weight, so it leads every view (pattern: *news, news, HN, news, science, …*).
@@ -229,10 +229,10 @@ The result is **deterministic**: the same feeds give the same order, so lists on
 The same story reported by several outlets under different headlines is folded into one item in Step 4.
 
 ### Step 3 — Resolve links
-Google News RSS links point at Google, not at the publisher. Direct links (outlets, Hacker News) are used as-is with no network calls. Each distinct Google link across all views is resolved once, with at most 10 resolutions in flight, through `services/link_resolver.py`:
+Google News RSS links point at Google, not at the publisher. Direct links (outlets, Hacker News) are used as-is with no network calls. Each distinct Google link across all views is resolved once, with at most 10 resolutions in flight, through `services/links/google_news.py`:
 
 1. **Resolved-URL cache (Redis, 24h).** A link resolved within the last 24 hours is reused with no network call. In steady state almost all links come from here; a cold start resolves about 150 links in under 10 seconds.
-2. **Custom resolver (`services/redirect.py`) — always the primary.**
+2. **Custom resolver (`resolve_redirect()` in `services/links/google_news.py`) — always the primary.**
    - Follows HTTP redirects; if they lead off Google, that URL is the answer.
    - Otherwise it reads the `c-wiz[data-p]` payload from the Google article page and calls Google's `batchexecute` endpoint to decode it.
    - Retries up to 3 times with backoff. Results that differ from the input are cached for 24h.
@@ -254,7 +254,7 @@ Outcomes are counted in `redirect_resolutions_total{outcome}` (custom resolver) 
 - A partial view (some feeds down) **is** published, because fresh headlines from part of a region beat none.
 
 ### Step 5 — Topic views
-After the main views are published, the refresher builds the topic views (`get_topic_views()` in `services/feed_service.py`). This phase can fail on its own (tagger down, or over `TOPIC_REFRESH_TIMEOUT_SECONDS`, **150s**): the main views are already out, the topic views keep their previous snapshots, and `headlines_topic_refreshes_total{result="error"}` counts it.
+After the main views are published, the refresher builds the topic views (`get_topic_views()` in `services/views/topic_views.py`). This phase can fail on its own (tagger down, or over `TOPIC_REFRESH_TIMEOUT_SECONDS`, **150s**): the main views are already out, the topic views keep their previous snapshots, and `headlines_topic_refreshes_total{result="error"}` counts it.
 
 1. **Topic feeds.** 55 feeds about one topic each: the Technology, Science, Sports and Entertainment sections of 10 Google News local editions (India and Singapore for Asia; UK; US and Canada; Nigeria, South Africa and Kenya; Australia and New Zealand), plus three Guardian environment feeds and Mongabay (nature) and ten good-news outlets (uplifting: Good News Network, Positive News, Reasons to be Cheerful, Optimist Daily, Upworthy, Good Good Good, DailyGood, Sunny Skyz, Not All News Is Bad, Squirrel News), which belong to no region, and The Better India (uplifting, Asia's). They change slowly and are many, so they're fetched every `TOPIC_FEEDS_INTERVAL_SECONDS` (**30 min**) and reused in between. They appear only in topic views.
 2. **Tagging.** Every fetched headline (news, extras and topic feeds, about 3,500) goes to the tagger with its feed's **label**: the topic of a topic feed (or of Google News Science: `science`), `other` for the Google News national sections, or none. The tagger returns its tags (§6). A headline's tags are the tagger's plus its feed's topic, so a Sports section's items are always `sport`.

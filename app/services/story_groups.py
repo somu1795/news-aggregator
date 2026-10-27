@@ -7,7 +7,7 @@ tagger groups headlines by story (POST /group: a multilingual sentence
 embedding, see tagger/tagger.py). In each view the first-ranked headline of a
 story stays, and its other headlines in that view are folded under it as
 "related", so the view's later stories move up. Views are built longer than
-MAX_HEADLINES (feed_service.build_limit()) and cut to it here.
+MAX_HEADLINES (views/mixing.py build_limit()) and cut to it here.
 
 Grouping is optional: if the tagger fails, views are published ungrouped.
 """

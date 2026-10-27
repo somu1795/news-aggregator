@@ -249,7 +249,7 @@ async def test_refresher_keeps_feed_texts_long_enough_to_summarize(mock_redis):
 
 def test_feed_text_prefers_the_full_content_as_plain_text():
     import feedparser
-    from services.feed_service import feed_text
+    from services.feeds.parse import feed_text
     xml = """<rss xmlns:content="http://purl.org/rss/1.0/modules/content/"><channel><item>
       <title>T</title><link>https://pub.example/1</link><description>Short teaser</description>
       <content:encoded><![CDATA[<p>First   paragraph.</p><p>Second &amp; last.</p>]]></content:encoded>

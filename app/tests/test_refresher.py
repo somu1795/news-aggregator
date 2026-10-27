@@ -13,7 +13,6 @@ import respx
 from prometheus_client import REGISTRY
 
 import catalog as catalog_module
-import services.feed_service as feed_service
 from catalog import ALL_VIEW, Catalog
 from config import settings
 from keys import snapshot_key
@@ -90,12 +89,12 @@ async def read_view(redis, view):
 
 
 @respx.mock
-async def test_refresh_publishes_every_view(mock_redis):
+async def test_refresh_publishes_every_view(mock_redis, poller):
     mock_feeds()
     successes_before = sample("headlines_refreshes_total", {"result": "success"})
 
     async with httpx.AsyncClient() as http_client:
-        assert await refresh_once(http_client, mock_redis) == 3  # all, asia, europe
+        assert await refresh_once(http_client, mock_redis, poller) == 3  # all, asia, europe
 
     asia = await read_view(mock_redis, "asia")
     europe = await read_view(mock_redis, "europe")
@@ -130,11 +129,11 @@ async def test_refresh_publishes_every_view(mock_redis):
 
 
 @respx.mock
-async def test_single_outlet_feed_is_not_capped_in_its_region(mock_redis):
+async def test_single_outlet_feed_is_not_capped_in_its_region(mock_redis, poller):
     """An outlet's own feed (all items from one publisher) fills its weight; the cap would allow only 3."""
     mock_feeds()
     async with httpx.AsyncClient() as http_client:
-        await refresh_once(http_client, mock_redis)
+        await refresh_once(http_client, mock_redis, poller)
     asia = await read_view(mock_redis, "asia")
     everything = await read_view(mock_redis, ALL_VIEW)
     assert abs(sum("asia.example" in h["link"] for h in asia["data"]) - 16 * 0.4) <= 1
@@ -143,21 +142,21 @@ async def test_single_outlet_feed_is_not_capped_in_its_region(mock_redis):
 
 
 @respx.mock
-async def test_empty_view_keeps_its_previous_snapshot(mock_redis, monkeypatch):
+async def test_empty_view_keeps_its_previous_snapshot(mock_redis, poller, monkeypatch):
     monkeypatch.setattr(settings, "FETCH_RETRIES", 1)
     mock_feeds()
     respx.get("https://news.google.com/rss?ceid=GB:en").mock(return_value=httpx.Response(500))
     await mock_redis.set(snapshot_key("europe"), "previous europe")
 
     async with httpx.AsyncClient() as http_client:
-        assert await refresh_once(http_client, mock_redis) == 2  # all, asia
+        assert await refresh_once(http_client, mock_redis, poller) == 2  # all, asia
 
     assert await mock_redis.get(snapshot_key("europe")) == "previous europe"
     assert (await read_view(mock_redis, "asia"))["data"]
 
 
 @respx.mock
-async def test_refresh_keeps_previous_snapshots_when_everything_fails(mock_redis, monkeypatch):
+async def test_refresh_keeps_previous_snapshots_when_everything_fails(mock_redis, poller, monkeypatch):
     monkeypatch.setattr(settings, "FETCH_RETRIES", 1)
     for url in ("https://news.google.com/rss?ceid=IN:en", "https://news.google.com/rss?ceid=GB:en",
                 "https://asia.example/rss", "https://news.ycombinator.com/rss"):
@@ -167,7 +166,7 @@ async def test_refresh_keeps_previous_snapshots_when_everything_fails(mock_redis
     failures_before = sample("feed_fetch_failures_total", {"source": "GN India"})
 
     async with httpx.AsyncClient() as http_client:
-        assert await refresh_once(http_client, mock_redis) == 0
+        assert await refresh_once(http_client, mock_redis, poller) == 0
 
     assert await mock_redis.get(snapshot_key(ALL_VIEW)) == "previous"
     assert sample("headlines_refreshes_total", {"result": "empty"}) == empty_before + 1
@@ -198,13 +197,13 @@ def test_source_labels_must_be_topics(tmp_path):
 
 
 @respx.mock
-async def test_moved_feed_is_followed(mock_redis):
+async def test_moved_feed_is_followed(mock_redis, poller):
     """A feed that redirects (moved, http->https) is still fetched."""
     mock_feeds()
     respx.get("https://asia.example/rss").mock(return_value=httpx.Response(301, headers={"Location": "https://asia.example/new-rss"}))
     respx.get("https://asia.example/new-rss").mock(return_value=httpx.Response(200, content=outlet_feed("asia.example", 30)))
     async with httpx.AsyncClient() as http_client:
-        await refresh_once(http_client, mock_redis)
+        await refresh_once(http_client, mock_redis, poller)
     assert abs(sum("asia.example" in h["link"] for h in (await read_view(mock_redis, "asia"))["data"]) - 16 * 0.4) <= 1
 
 
@@ -240,16 +239,15 @@ def fake_tagger(request):
 @pytest.fixture
 def topic_catalog(monkeypatch):
     monkeypatch.setattr(catalog_module, "_catalog", TOPIC_CATALOG)
-    monkeypatch.setattr(feed_service, "_topic_feeds", {"at": float("-inf"), "results": {}})
     mock_feeds()
     respx.get("https://sports.example/rss").mock(return_value=httpx.Response(200, content=outlet_feed("sports.example", 5)))
 
 
 @respx.mock
-async def test_topic_views_are_published(mock_redis, topic_catalog):
+async def test_topic_views_are_published(mock_redis, poller, topic_catalog):
     tagger = respx.post(TAGGER).mock(side_effect=fake_tagger)
     async with httpx.AsyncClient() as http_client:
-        assert await refresh_once(http_client, mock_redis) == 3
+        assert await refresh_once(http_client, mock_redis, poller) == 3
 
     asia_sport = await read_view(mock_redis, "asia:sport")
     assert asia_sport["region"] == "asia" and asia_sport["topic"] == "sport"
@@ -277,13 +275,13 @@ async def test_topic_views_are_published(mock_redis, topic_catalog):
 
 
 @respx.mock
-async def test_tagger_down_keeps_previous_topic_views(mock_redis, topic_catalog):
+async def test_tagger_down_keeps_previous_topic_views(mock_redis, poller, topic_catalog):
     respx.post(TAGGER).mock(return_value=httpx.Response(503))
     await mock_redis.set(snapshot_key("asia:sport"), "previous")
     failures_before = sample("headlines_topic_refreshes_total", {"result": "error"})
 
     async with httpx.AsyncClient() as http_client:
-        assert await refresh_once(http_client, mock_redis) == 3  # The main views are unaffected
+        assert await refresh_once(http_client, mock_redis, poller) == 3  # The main views are unaffected
 
     assert await mock_redis.get(snapshot_key("asia:sport")) == "previous"
     assert (await read_view(mock_redis, "asia"))["data"]
@@ -291,18 +289,18 @@ async def test_tagger_down_keeps_previous_topic_views(mock_redis, topic_catalog)
 
 
 @respx.mock
-async def test_topic_feeds_are_fetched_every_interval(mock_redis, topic_catalog):
+async def test_topic_feeds_are_fetched_every_interval(mock_redis, poller, topic_catalog):
     respx.post(TAGGER).mock(side_effect=fake_tagger)
     async with httpx.AsyncClient() as http_client:
-        await refresh_once(http_client, mock_redis)
-        await refresh_once(http_client, mock_redis)
+        await refresh_once(http_client, mock_redis, poller)
+        await refresh_once(http_client, mock_redis, poller)
     assert sum(call.request.url.host == "sports.example" for call in respx.calls) == 1
     # The second cycle still shows the topic feed's items
     assert any(h["title"].startswith("sports.example") for h in (await read_view(mock_redis, "asia:sport"))["data"])
 
 
 def test_comments_link_to_the_article_itself_is_dropped():
-    from services.feed_service import discussion_link
+    from services.feeds.parse import discussion_link
     article = "https://mexiconewsdaily.com/news/story/"
     assert discussion_link(article, article) is None
     assert discussion_link(article, article + "#comments") is None
@@ -311,7 +309,7 @@ def test_comments_link_to_the_article_itself_is_dropped():
 
 
 def test_region_topic_views_put_their_own_stories_first():
-    from services.feed_service import build_topic_views
+    from services.views.topic_views import build_topic_views
     catalog = Catalog(
         regions=[
             {"id": r, "label": r, "sources": [{"name": f"{r} news", "url": f"https://{r}.example/rss", "weight": 1.0}],
@@ -343,7 +341,7 @@ def test_region_topic_views_put_their_own_stories_first():
 
 
 def test_a_topic_can_keep_older_stories():
-    from services.feed_service import build_topic_views
+    from services.views.topic_views import build_topic_views
     catalog = Catalog(
         regions=[{"id": "asia", "label": "Asia", "sources": [{"name": "news", "url": "https://n.example/rss", "weight": 1.0}]}],
         extras=[],
@@ -367,7 +365,7 @@ def test_a_topic_can_keep_older_stories():
 
 def test_a_source_can_be_capped():
     from catalog import NewsSource
-    from services.feed_service import mix_headlines
+    from services.views.mixing import mix_headlines
     now = time.time()
     sources = [NewsSource(name="Busy", url="https://b.example/rss", weight=0.9, max_items=2),
                NewsSource(name="Quiet", url="https://q.example/rss", weight=0.1)]
