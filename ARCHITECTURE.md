@@ -114,7 +114,7 @@ So request volume costs almost nothing upstream or in Redis, and users keep gett
   - Written after every publish (both phases), in a thread; a failure is logged (`Headlines not archived`) and never stops a refresh. Measured on the 43 views: 1,840 headlines, 0.01–0.03 s a refresh; an hour's snapshots are ~38 KB. At most ~6 MB a day, so a few GB a year; it is backed up daily with the rest (README).
 
 ### Tagger (`tagger` service)
-- `tagger/tagger.py`, its own image (Ubuntu 24.04, OpenVINO and Intel's NPU user-space driver). Internal only: `POST /tag`, `POST /group` (story grouping), `GET /health`. See §6.
+- `tagger/` (`tagger.py`: the API, topic tagging and retraining; `embedder.py`, `classifier.py`, `store.py`, `stories.py`), its own image (Ubuntu 24.04, OpenVINO and Intel's NPU user-space driver). Internal only: `POST /tag`, `POST /group` (story grouping), `GET /health`. See §6.
 - Runs on the Intel NPU (`/dev/accel`); falls back to the CPU if the NPU can't be used.
 
 ### Summarizer (`summarizer` service)
@@ -510,7 +510,7 @@ A visitor makes 2 requests per page load plus 1 per region viewed, so 100/minute
 
 `max_items` (optional, any source): at most this many of the feed's items per view, so a feed whose quality varies can't fill a view (e.g. The Better India is Asia's only regional good-news feed; uncapped it took 50 of Asia's 80 uplifting slots). `max_age_hours` (optional, a topic): its views keep stories this long instead of `MAX_HEADLINE_AGE_HOURS`.
 
-`label` (optional on `sources` and `extras`): what the feed's items are, for the tagger: a topic (its items are always tagged with it) or `other` (general news, a training label only). Topic ids must be ones the tagger knows (`TOPICS` in `tagger/tagger.py`).
+`label` (optional on `sources` and `extras`): what the feed's items are, for the tagger: a topic (its items are always tagged with it) or `other` (general news, a training label only). Topic ids must be ones the tagger knows (`TOPICS` in `tagger/classifier.py`).
 
 The folder is validated when each service starts (a broken file stops it with its error):
 - `sources.yaml` lists sources for exactly the regions of `regions.yaml`;

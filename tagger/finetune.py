@@ -21,7 +21,8 @@ import torch
 from onnxconverter_common import float16
 from transformers import AutoModel, AutoTokenizer
 
-from tagger import BUNDLED, OTHER, TOPICS, evaluate, train
+from classifier import OTHER, TOPICS, evaluate, train
+from tagger import BUNDLED
 
 BASE = "BAAI/bge-small-en-v1.5"
 EPOCHS, LR, BATCH, SEED = 4, 5e-5, 32, 0

@@ -12,6 +12,8 @@ import zlib
 import numpy as np
 import pytest
 
+import classifier as classifier_module
+import stories as stories_module
 import tagger as tagger_module
 from tagger import Item, Tagger, clean_title
 
@@ -51,7 +53,7 @@ def tagger(tmp_path, monkeypatch):
     (bundled / "seed.json").write_text(json.dumps(SEED))
     (bundled / "eval.json").write_text(json.dumps(EVAL))
     monkeypatch.setattr(tagger_module, "BUNDLED", bundled)
-    monkeypatch.setattr(tagger_module, "TOPIC_THRESHOLD", 0.5)  # The toy embedding's classifier is never very confident
+    monkeypatch.setattr(classifier_module, "TOPIC_THRESHOLD", 0.5)  # The toy embedding's classifier is never very confident
     t = Tagger(FakeEmbedder(), tmp_path, story_embedder=FakeEmbedder())
     t.start()
     return t
@@ -89,7 +91,7 @@ def test_retrain_keeps_the_current_classifier_if_the_candidate_is_worse(tagger, 
 
 def test_retrain_replaces_and_retags(tagger, monkeypatch):
     tagger.tag([Item(title="Team wins cup final")])
-    monkeypatch.setattr(tagger_module.time, "strftime", lambda *args: "20990101T000000Z")
+    monkeypatch.setattr(classifier_module.time, "strftime", lambda *args: "20990101T000000Z")
     tagger.retrain()
     assert tagger.classifier.version.startswith("20990101T000000Z")
     assert tagger.tag([Item(title="Team wins cup final")]) == [["sport"]]
@@ -119,7 +121,7 @@ def test_retrain_uses_only_the_newest_labelled_headlines(tagger, monkeypatch):
 
 
 def test_group_puts_the_same_story_together(tagger, monkeypatch):
-    monkeypatch.setattr(tagger_module, "STORY_THRESHOLD", 0.8)
+    monkeypatch.setattr(stories_module, "STORY_THRESHOLD", 0.8)
     items = [
         Item(title="apple unveils homepod mini two with siri", source="A"),
         Item(title="minister resigns over budget vote", source="B"),
@@ -135,8 +137,8 @@ def test_group_puts_the_same_story_together(tagger, monkeypatch):
 
 
 def test_group_joins_a_story_worded_several_ways(tagger, monkeypatch):
-    monkeypatch.setattr(tagger_module, "STORY_THRESHOLD", 0.65)
-    monkeypatch.setattr(tagger_module, "STORY_LEADER_THRESHOLD", 0.5)
+    monkeypatch.setattr(stories_module, "STORY_THRESHOLD", 0.65)
+    monkeypatch.setattr(stories_module, "STORY_LEADER_THRESHOLD", 0.5)
     a = "big dogs age faster study finds"
     b = "big dogs age faster scientists say"       # 0.67 to a
     c = "why big dogs age faster scientists say"   # 0.93 to b, 0.62 to a: joins through b
@@ -146,8 +148,8 @@ def test_group_joins_a_story_worded_several_ways(tagger, monkeypatch):
 
 
 def test_group_stays_close_to_its_leader_so_stories_dont_chain(tagger, monkeypatch):
-    monkeypatch.setattr(tagger_module, "STORY_THRESHOLD", 0.7)
-    monkeypatch.setattr(tagger_module, "STORY_LEADER_THRESHOLD", 0.5)
+    monkeypatch.setattr(stories_module, "STORY_THRESHOLD", 0.7)
+    monkeypatch.setattr(stories_module, "STORY_LEADER_THRESHOLD", 0.5)
     a = "red blue green yellow orange purple"
     b = "red blue green yellow orange black white"   # Close to a
     c = "red blue green black white pink grey"       # Close to b, not to a
@@ -156,9 +158,9 @@ def test_group_stays_close_to_its_leader_so_stories_dont_chain(tagger, monkeypat
 
 
 def test_unsure_pairs_are_kept_for_the_judge(tagger, monkeypatch):
-    monkeypatch.setattr(tagger_module, "STORY_THRESHOLD", 0.9)
-    monkeypatch.setattr(tagger_module, "STORY_LEADER_THRESHOLD", 0.9)
-    monkeypatch.setattr(tagger_module, "STORY_CANDIDATE_THRESHOLD", 0.6)
+    monkeypatch.setattr(stories_module, "STORY_THRESHOLD", 0.9)
+    monkeypatch.setattr(stories_module, "STORY_LEADER_THRESHOLD", 0.9)
+    monkeypatch.setattr(stories_module, "STORY_CANDIDATE_THRESHOLD", 0.6)
     a, b, c = "big dogs age faster study finds", "big dogs age faster scientists say", "minister resigns over budget vote"
     groups = tagger.group([Item(title=a), Item(title=b), Item(title=c)])
     assert groups[0] != groups[1]  # ~0.7: below the threshold, above the candidates'
@@ -167,9 +169,9 @@ def test_unsure_pairs_are_kept_for_the_judge(tagger, monkeypatch):
 
 
 def test_a_verdict_overrides_similarity_and_retires_the_candidate(tagger, monkeypatch):
-    monkeypatch.setattr(tagger_module, "STORY_THRESHOLD", 0.9)
-    monkeypatch.setattr(tagger_module, "STORY_LEADER_THRESHOLD", 0.9)
-    monkeypatch.setattr(tagger_module, "STORY_CANDIDATE_THRESHOLD", 0.6)
+    monkeypatch.setattr(stories_module, "STORY_THRESHOLD", 0.9)
+    monkeypatch.setattr(stories_module, "STORY_LEADER_THRESHOLD", 0.9)
+    monkeypatch.setattr(stories_module, "STORY_CANDIDATE_THRESHOLD", 0.6)
     a, b = "big dogs age faster study finds", "big dogs age faster scientists say"
     tagger.group([Item(title=a), Item(title=b)])
     assert tagger.store_verdicts([tagger_module.Verdict(a=b, b=a, same=True, model="m")]) == 1  # Either order
@@ -180,8 +182,8 @@ def test_a_verdict_overrides_similarity_and_retires_the_candidate(tagger, monkey
 
 
 def test_a_no_verdict_keeps_similar_headlines_apart(tagger, monkeypatch):
-    monkeypatch.setattr(tagger_module, "STORY_THRESHOLD", 0.7)  # 0.71 apart
-    monkeypatch.setattr(tagger_module, "STORY_LEADER_THRESHOLD", 0.7)
+    monkeypatch.setattr(stories_module, "STORY_THRESHOLD", 0.7)  # 0.71 apart
+    monkeypatch.setattr(stories_module, "STORY_LEADER_THRESHOLD", 0.7)
     a, b = "champions league live latest updates bodo dortmund", "champions league live latest updates villa fenerbahce"
     assert len(set(tagger.group([Item(title=a), Item(title=b)]))) == 1
     tagger.store_verdicts([tagger_module.Verdict(a=a, b=b, same=False, model="m")])

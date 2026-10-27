@@ -18,6 +18,10 @@ embedding, the label its feed implies (a Sports section -> "sport", a national
 news section -> "other", most feeds -> none) and the model's tags. A headline
 is embedded only the first time it is seen.
 
+Code: this file (the API, topic tagging, retraining), embedder.py (the models
+on the NPU), classifier.py (training and scoring), store.py (the database),
+stories.py (story grouping and the judge's pairs).
+
 Training: a logistic regression on the stored embeddings of the newest
 TRAIN_MAX_ROWS labelled headlines (data/seed.json, then what the feeds add). It is retrained every
 RETRAIN_INTERVAL_HOURS; the new classifier replaces the current one only if it
@@ -31,44 +35,27 @@ import json
 import logging
 import os
 import pickle
-import re
 import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
-import numpy as np
 from fastapi import FastAPI
 from pydantic import BaseModel
-from sklearn.linear_model import LogisticRegression
+
+from classifier import OTHER, TOPICS, Classifier, evaluate, train
+from embedder import Embedder
+from stories import StoryGrouping
+from store import clean_title, connect, from_blobs, to_blob
 
 logger = logging.getLogger("tagger")
-
-TOPICS = ["tech", "science", "nature", "culture", "sport", "uplifting"]
-OTHER = "other"  # Label for general news: politics, crime, economy...
 
 MODEL_DIR = Path(os.environ.get("MODEL_DIR", "/models/bge-small-en-v1.5"))
 # Story grouping needs embeddings that tell stories apart: the topic model is fine-tuned to
 # put every football story together. multilingual-e5-small also matches across languages.
 STORY_MODEL_DIR = Path(os.environ.get("STORY_MODEL_DIR", "/models/multilingual-e5-small"))
-# Cosine similarity at which two headlines are the same story. Chosen on 323 hand-labelled
-# pairs of live headlines: it catches 80% of same-story pairs, and the only wrong merges
-# were templated series (horoscopes, puzzle answers) and one pair of comparison articles.
-STORY_THRESHOLD = float(os.environ.get("STORY_THRESHOLD", "0.92"))
-# ...and the least it must share with the group's leader, so a group can't drift into a chain of
-# ever-less-related stories. Checked on the live headlines of Oct 15, 2026: joining on any member
-# at 0.92 with this floor added 18 same-story pairs and no wrong ones (e.g. one study reported as
-# "Large dogs age more quickly…", "Why do small dogs live longer…", "The dog breeds that live longer…").
-STORY_LEADER_THRESHOLD = float(os.environ.get("STORY_LEADER_THRESHOLD", "0.88"))
-# Pairs from here up that end in different groups are "unsure": kept as candidates for a judge
-# (an LLM), whose verdict then overrides the similarity. Below it, headlines are different stories.
-STORY_CANDIDATE_THRESHOLD = float(os.environ.get("STORY_CANDIDATE_THRESHOLD", "0.84"))
-STORY_CANDIDATES_MAX = 2000  # Per grouping: the most important unsure pairs
-CANDIDATE_TTL_SECONDS = 86400  # Not seen in a grouping for this long: no longer on the page, dropped
-VERDICT_TTL_SECONDS = 30 * 86400  # Headlines don't come back after a month
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 DEVICE = os.environ.get("TAGGER_DEVICE", "NPU")
 RETRAIN_INTERVAL_HOURS = float(os.environ.get("RETRAIN_INTERVAL_HOURS", "24"))
@@ -77,165 +64,8 @@ RETRAIN_INTERVAL_HOURS = float(os.environ.get("RETRAIN_INTERVAL_HOURS", "24"))
 TRAIN_MAX_ROWS = int(os.environ.get("TRAIN_MAX_ROWS", "100000"))
 BUNDLED = Path(__file__).parent / "data"
 
-# NPUs need static input shapes; headlines fit in 48 tokens
-BATCH, MAX_TOKENS = 32, 48
-# Decision thresholds. Live news is mostly hard news, so even a small false-positive
-# rate floods a topic view: topics favour precision (0.9 instead of the best-F1 0.5).
-TOPIC_THRESHOLD, UPLIFTING_THRESHOLD = 0.9, 0.8
 
-
-def clean_title(title: str, source: Optional[str] = None) -> str:
-    """Drops Google's " - Publisher" suffix and normalizes whitespace (as in the training data)."""
-    if source and title.endswith(" - " + source):
-        title = title[: -len(source) - 3]
-    return re.sub(r"\s+", " ", title).strip()
-
-
-class Embedder:
-    """
-    A sentence embedding model via OpenVINO, L2-normalized: bge-small (CLS pooling) for
-    topics, multilingual-e5-small (mean pooling, "query: " prefix) for story grouping.
-    """
-
-    def __init__(self, model_dir: Path, device: str, cache_dir: Path, pooling: str = "cls", prefix: str = "") -> None:
-        self.pooling, self.prefix = pooling, prefix
-        import openvino as ov
-        from tokenizers import Tokenizer
-
-        self.tokenizer = Tokenizer.from_file(str(model_dir / "tokenizer.json"))
-        self.tokenizer.enable_truncation(MAX_TOKENS)
-        self.tokenizer.enable_padding(length=MAX_TOKENS)
-        core = ov.Core()
-        model = core.read_model(model_dir / "model.onnx")
-        model.reshape({i.get_any_name(): [BATCH, MAX_TOKENS] for i in model.inputs})
-        # The NPU compile takes ~1 minute; CACHE_DIR makes later starts take seconds
-        config = {"PERFORMANCE_HINT": "THROUGHPUT", "CACHE_DIR": str(cache_dir)}
-        try:
-            self.compiled = core.compile_model(model, device, config)
-            self.device = device
-        except RuntimeError as e:
-            if device == "CPU":
-                raise
-            logger.warning("Could not use %s (%s), falling back to the CPU", device, e)
-            self.compiled = core.compile_model(model, "CPU", config)
-            self.device = "CPU"
-
-    def embed(self, titles: List[str]) -> np.ndarray:
-        out = []
-        for start in range(0, len(titles), BATCH):
-            batch = titles[start:start + BATCH]
-            encoded = self.tokenizer.encode_batch([self.prefix + t for t in batch] + [""] * (BATCH - len(batch)))
-            ids = np.array([e.ids for e in encoded], dtype=np.int64)
-            mask = np.array([e.attention_mask for e in encoded], dtype=np.int64)
-            feeds = {"input_ids": ids, "attention_mask": mask}
-            if any(i.get_any_name() == "token_type_ids" for i in self.compiled.inputs):
-                feeds["token_type_ids"] = np.zeros_like(ids)
-            hidden = self.compiled(feeds)[0][: len(batch)]
-            if self.pooling == "cls":
-                out.append(hidden[:, 0, :])
-            else:
-                mask = mask[: len(batch), :, None]
-                out.append((hidden * mask).sum(axis=1) / mask.sum(axis=1))
-        vectors = np.concatenate(out) if out else np.zeros((0, 384), dtype=np.float32)
-        return vectors / np.linalg.norm(vectors, axis=1, keepdims=True)
-
-
-@dataclass
-class Classifier:
-    version: str
-    topic_model: LogisticRegression  # Classes: the topics and "other"
-    uplifting_model: LogisticRegression  # Uplifting or not: a tone, so separate from the topic
-
-    def predict(self, X: np.ndarray) -> List[List[str]]:
-        classes = list(self.topic_model.classes_)
-        topic_probs = self.topic_model.predict_proba(X)
-        uplifting_probs = self.uplifting_model.predict_proba(X)[:, 1]
-        tags = []
-        for probs, uplifting in zip(topic_probs, uplifting_probs):
-            row = [c for c, p in zip(classes, probs) if p >= TOPIC_THRESHOLD and c not in (OTHER, "uplifting")]
-            if uplifting >= UPLIFTING_THRESHOLD:
-                row.append("uplifting")
-            tags.append(row)
-        return tags
-
-
-def train(X: np.ndarray, labels: List[str]) -> Classifier:
-    def fit(y):
-        return LogisticRegression(max_iter=2000, C=4, class_weight="balanced").fit(X, y)
-
-    version = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + f"-n{len(labels)}"
-    return Classifier(version, fit(labels), fit([label == "uplifting" for label in labels]))
-
-
-def evaluate(classifier: Classifier, X: np.ndarray, gold: List[List[str]]) -> dict:
-    """Macro F1 over the topics, and the share of untagged (hard news) items that got any tag."""
-    predicted = [set(tags) for tags in classifier.predict(X)]
-    gold = [set(tags) for tags in gold]
-    f1s = []
-    for topic in TOPICS:
-        tp = sum(topic in p and topic in g for p, g in zip(predicted, gold))
-        fp = sum(topic in p and topic not in g for p, g in zip(predicted, gold))
-        fn = sum(topic not in p and topic in g for p, g in zip(predicted, gold))
-        f1s.append(2 * tp / (2 * tp + fp + fn) if tp else 0.0)
-    untagged = [p for p, g in zip(predicted, gold) if not g]
-    return {
-        "macro_f1": round(sum(f1s) / len(f1s), 4),
-        "hard_news_leak": round(sum(bool(p) for p in untagged) / len(untagged), 4) if untagged else 0.0,
-    }
-
-
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS headlines (
-    title      TEXT PRIMARY KEY,  -- Cleaned title
-    source     TEXT,
-    link       TEXT,
-    label      TEXT,              -- Implied by its feed: a topic, "other", or NULL
-    tags       TEXT,              -- JSON list, from classifier `model`
-    model      TEXT,
-    embedding  BLOB NOT NULL,     -- float16[384]
-    first_seen REAL NOT NULL,
-    story_embedding BLOB          -- float16[384], from the story model; made when first grouped
-);
--- Pairs of (cleaned) titles that grouping was unsure of, a < b
-CREATE TABLE IF NOT EXISTS story_candidates (
-    a          TEXT NOT NULL,
-    b          TEXT NOT NULL,
-    similarity REAL NOT NULL,
-    rank       INTEGER NOT NULL,  -- The later of the two's positions in the last grouping (lower: more important)
-    seen       REAL NOT NULL,
-    PRIMARY KEY (a, b)
-);
--- A judge's decision on a pair: the same story or not; overrides their similarity
-CREATE TABLE IF NOT EXISTS story_verdicts (
-    a       TEXT NOT NULL,
-    b       TEXT NOT NULL,
-    same    INTEGER NOT NULL,
-    model   TEXT,
-    decided REAL NOT NULL,
-    PRIMARY KEY (a, b)
-);
-"""
-
-
-def connect(path: Path) -> sqlite3.Connection:
-    db = sqlite3.connect(path)
-    db.execute("PRAGMA journal_mode=WAL")
-    db.execute("PRAGMA synchronous=NORMAL")
-    db.executescript(SCHEMA)
-    if "story_embedding" not in {row[1] for row in db.execute("PRAGMA table_info(headlines)")}:
-        db.execute("ALTER TABLE headlines ADD COLUMN story_embedding BLOB")  # Databases made before grouping
-    return db
-
-
-def to_blob(vector: np.ndarray) -> bytes:
-    return vector.astype(np.float16).tobytes()
-
-
-def from_blobs(blobs) -> np.ndarray:
-    return np.stack([np.frombuffer(b, dtype=np.float16) for b in blobs]).astype(np.float32)
-
-
-class Tagger:
+class Tagger(StoryGrouping):
     """
     All database and embedding work runs on one worker thread (one SQLite
     connection, one NPU request at a time); retraining runs on another thread
@@ -311,114 +141,6 @@ class Tagger:
                 rows[title] = (json.dumps(tags), classifier.version, None)
         return [json.loads(rows[title][0]) for title in titles]
 
-    def group(self, items: List["Item"]) -> List[int]:
-        """
-        A group number per item: items about the same story share one. Items are taken in
-        the order given (the caller's ranking); each joins the group of the most similar
-        earlier headline at or above STORY_THRESHOLD, if it is also within
-        STORY_LEADER_THRESHOLD of that group's leader (its first headline), or leads a new
-        group. Any member catches a story worded several ways; the leader's floor keeps a
-        group from drifting into a chain of ever-less-related stories. A judge's verdict on
-        a pair (story_verdicts) counts as the most (same story) or least (not) similar.
-        Pairs left in different groups from STORY_CANDIDATE_THRESHOLD up, with no verdict,
-        are stored for the judge (story_candidates).
-        """
-        titles = [clean_title(item.title, item.source) for item in items]
-        unique = list(dict.fromkeys(titles))
-        vectors = {}
-        for start in range(0, len(unique), 500):
-            chunk = unique[start:start + 500]
-            for title, blob in self.db.execute(
-                f"SELECT title, story_embedding FROM headlines WHERE title IN ({','.join('?' * len(chunk))}) "
-                "AND story_embedding IS NOT NULL", chunk,
-            ):
-                vectors[title] = np.frombuffer(blob, dtype=np.float16).astype(np.float32)
-        missing = [title for title in unique if title not in vectors]
-        if missing:
-            self._store([(clean_title(item.title, item.source), item.source, item.link, None) for item in items])
-            for title, v in zip(missing, self.story_embedder.embed(missing)):
-                vectors[title] = v
-            self.db.executemany("UPDATE headlines SET story_embedding = ? WHERE title = ?",
-                                [(to_blob(vectors[t]), t) for t in missing])
-            self.db.commit()
-        X = np.stack([vectors[t] for t in unique]) if unique else np.zeros((0, 384), dtype=np.float32)
-        X /= np.maximum(np.linalg.norm(X, axis=1, keepdims=True), 1e-9)
-        verdicts = self._verdicts(unique)
-        position = {title: row for row, title in enumerate(unique)}
-        judged: dict = {}  # Later row -> {earlier row: same story}
-        for (a, b), same in verdicts.items():
-            first, second = sorted((position[a], position[b]))
-            judged.setdefault(second, {})[first] = same
-        leaders: List[int] = []  # Row of each group's first headline
-        group_of_row = np.zeros(len(unique), dtype=np.int64)
-        for row in range(len(unique)):
-            sims = X[:row] @ X[row]
-            for earlier, same in judged.get(row, {}).items():
-                sims[earlier] = 1.0 if same else -1.0
-            close = sims >= STORY_THRESHOLD
-            close &= sims[np.array(leaders, dtype=np.int64)[group_of_row[:row]]] >= STORY_LEADER_THRESHOLD
-            if close.any():
-                group_of_row[row] = group_of_row[int(np.argmax(np.where(close, sims, -1.0)))]
-            else:
-                group_of_row[row] = len(leaders)
-                leaders.append(row)
-        try:  # Only feeds the judge: never costs the grouping
-            self._store_candidates(unique, X, group_of_row, verdicts)
-        except Exception as e:
-            logger.warning("Story candidates not stored: %s", e)
-        group_of = dict(zip(unique, group_of_row.tolist()))
-        return [group_of[title] for title in titles]
-
-    def _verdicts(self, titles: List[str]) -> dict:
-        """{(a, b): same story} for the judged pairs among these titles (a < b)."""
-        wanted, verdicts = set(titles), {}
-        for start in range(0, len(titles), 500):
-            chunk = titles[start:start + 500]
-            for a, b, same in self.db.execute(
-                f"SELECT a, b, same FROM story_verdicts WHERE a IN ({','.join('?' * len(chunk))})", chunk,
-            ):
-                if b in wanted:
-                    verdicts[a, b] = bool(same)
-        return verdicts
-
-    def _store_candidates(self, titles: List[str], X: np.ndarray, group_of_row: np.ndarray, verdicts: dict) -> None:
-        """Stores the unsure pairs (see group); drops candidates and verdicts no longer needed."""
-        rows_a, rows_b = np.triu_indices(len(titles), 1)
-        sims = (X @ X.T)[rows_a, rows_b]
-        unsure = (sims >= STORY_CANDIDATE_THRESHOLD) & (group_of_row[rows_a] != group_of_row[rows_b])
-        order = np.argsort(rows_b[unsure], kind="stable")[:STORY_CANDIDATES_MAX]  # rows_b is the later one
-        now = time.time()
-        pairs = []
-        for i, j, sim in zip(rows_a[unsure][order], rows_b[unsure][order], sims[unsure][order]):
-            a, b = sorted((titles[i], titles[j]))
-            if (a, b) not in verdicts:
-                pairs.append((a, b, float(sim), int(j), now))
-        self.db.executemany(
-            "INSERT INTO story_candidates (a, b, similarity, rank, seen) VALUES (?, ?, ?, ?, ?) "
-            "ON CONFLICT (a, b) DO UPDATE SET similarity = excluded.similarity, rank = excluded.rank, seen = excluded.seen",
-            pairs)
-        self.db.execute("DELETE FROM story_candidates WHERE seen < ?", (now - CANDIDATE_TTL_SECONDS,))
-        self.db.execute("DELETE FROM story_verdicts WHERE decided < ?", (now - VERDICT_TTL_SECONDS,))
-        self.db.commit()
-
-    def story_candidates(self, limit: int) -> List[dict]:
-        """Unsure pairs with no verdict yet, from the latest groupings, most important first."""
-        rows = self.db.execute(
-            "SELECT a, b, similarity FROM story_candidates c WHERE seen >= ? "
-            "AND NOT EXISTS (SELECT 1 FROM story_verdicts v WHERE v.a = c.a AND v.b = c.b) "
-            "ORDER BY rank, similarity DESC LIMIT ?", (time.time() - 3600, limit))
-        return [{"a": a, "b": b, "similarity": round(sim, 4)} for a, b, sim in rows]
-
-    def store_verdicts(self, verdicts: List["Verdict"]) -> int:
-        now = time.time()
-        rows = [(*sorted((v.a, v.b)), int(v.same), v.model, now) for v in verdicts if v.a != v.b]
-        self.db.executemany(
-            "INSERT INTO story_verdicts (a, b, same, model, decided) VALUES (?, ?, ?, ?, ?) "
-            "ON CONFLICT (a, b) DO UPDATE SET same = excluded.same, model = excluded.model, decided = excluded.decided",
-            rows)
-        self.db.executemany("DELETE FROM story_candidates WHERE a = ? AND b = ?", [r[:2] for r in rows])
-        self.db.commit()
-        return len(rows)
 
     def retrain(self, force: bool = False) -> None:
         db = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)

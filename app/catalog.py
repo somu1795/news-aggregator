@@ -36,7 +36,7 @@ class TopicSource(BaseModel):
 
 
 class Topic(BaseModel):
-    id: str = Field(pattern=r"^[a-z]+$")  # Must be one of the tagger's topics (tagger/tagger.py TOPICS)
+    id: str = Field(pattern=r"^[a-z]+$")  # Must be one of the tagger's topics (tagger/classifier.py TOPICS)
     label: str
     # Its views keep stories this long instead of MAX_HEADLINE_AGE_HOURS (e.g. good news
     # doesn't go stale, and its few feeds publish a handful of stories a day)

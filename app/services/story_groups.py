@@ -4,7 +4,7 @@ One item per story in each view.
 Many outlets cover the same story ("Apple unveils HomePod mini 2", "Apple
 launches HomePod mini 2 with Siri AI for $149") under different titles. The
 tagger groups headlines by story (POST /group: a multilingual sentence
-embedding, see tagger/tagger.py). In each view the first-ranked headline of a
+embedding, see tagger/stories.py). In each view the first-ranked headline of a
 story stays, and its other headlines in that view are folded under it as
 "related", so the view's later stories move up. Views are built longer than
 MAX_HEADLINES (views/mixing.py build_limit()) and cut to it here.

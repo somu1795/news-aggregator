@@ -43,7 +43,7 @@ ENV PATH=/venv/bin:$PATH
 RUN groupadd --system --gid 1001 app && useradd --system --uid 1001 --gid app app && \
     mkdir /data && chown app:app /data
 WORKDIR /tagger
-COPY --chown=app:app tagger.py .
+COPY --chown=app:app tagger.py embedder.py classifier.py store.py stories.py ./
 COPY --chown=app:app data ./data
 USER app
 

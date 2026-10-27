@@ -48,7 +48,7 @@ What in this project is written by hand and ages, how often to look at it, and a
 | archive.ph | `app/services/summaries/reading.py` `ARCHIVE`, the page's bypass option | Archive reads fail, the bypass links stop opening |
 | Site icon service (DuckDuckGo) | `app/config.py` `ICON_SOURCE_URL` | Icons stop appearing |
 | Summary and same-story prompts | `config/prompts.yaml` | Summaries get worse, or the model changes |
-| Tagger thresholds (topic 0.9, uplifting 0.8, grouping 0.92) | `tagger/tagger.py` | Topic tabs or grouping visibly worse |
+| Tagger thresholds (topic 0.9, uplifting 0.8, grouping 0.92) | `tagger/classifier.py`, `tagger/stories.py` | Topic tabs or grouping visibly worse |
 | Security policy, trusted proxies | `app/routes/frontend.py`, `caddy/Caddyfile` | When the setup in front of Caddy changes |
 | Hostnames, backup paths and schedule | `.env` `ALLOWED_HOSTS`, crontab | When domains or disks change |
 
