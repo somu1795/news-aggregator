@@ -61,9 +61,10 @@ DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 DEVICE = os.environ.get("TAGGER_DEVICE", "NPU")
 RETRAIN_INTERVAL_HOURS = float(os.environ.get("RETRAIN_INTERVAL_HOURS", "24"))
 # Retraining uses the newest labelled headlines only (plus the seed, see Tagger.training_rows): ~5,500
-# arrive a day, and all of them would outgrow the container's memory. At 500,000 (~3 months) they
-# take ~0.8 GB while it retrains, ~4 minutes on 8 CPUs.
-TRAIN_MAX_ROWS = int(os.environ.get("TRAIN_MAX_ROWS", "500000"))
+# arrive a day, and all of them would outgrow the container's memory. 100,000 (~2-3 weeks) take
+# ~150 MB while it retrains, ~45 s on 8 CPUs. A larger window wasn't shown to help (a small model on
+# 384 numbers; older news can weigh it towards last quarter's), so revisit it with a current eval set.
+TRAIN_MAX_ROWS = int(os.environ.get("TRAIN_MAX_ROWS", "100000"))
 BUNDLED = Path(__file__).parent / "data"
 
 

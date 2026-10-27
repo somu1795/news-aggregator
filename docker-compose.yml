@@ -237,7 +237,7 @@ services:
         limits:
           cpus: '8'  # Retraining (scikit-learn, on the CPU): 44 s at 8, 5.6 min at 2, beside tagging and grouping
           # Two models (topics, and story grouping); measured use is in ARCHITECTURE.md §6
-          # ~1.1 GB normally; retraining adds ~0.8 GB at its 500,000-row window (~1.9 GB in all)
+          # ~1.1 GB normally; retraining adds ~0.15 GB at its 100,000-row window (~0.8 GB at 500,000)
           memory: 3G
           pids: 256
     healthcheck:
