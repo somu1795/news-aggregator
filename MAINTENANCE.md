@@ -28,7 +28,7 @@ What in this project is written by hand and ages, how often to look at it, and a
 | Browser identity sent with requests | `app/config.py` `BROWSER_USER_AGENT` | The update check reports it when it's more than two Chrome versions behind |
 | Paywalled sites | `config/site.yaml` `paywalled_hosts` | Summaries failing for a site that added a paywall |
 | The browsers' ad and tracker block list | `smokescreen/filter/acl.yaml`: run `scripts/update-blocklist.py`, then `docker compose restart browser-egress-filtered` | Ad networks change domains; sites that break without a blocked domain are retried with it on their own (`docker compose logs summarizer \| grep 'whole page'`) |
-| Bot-check signals | `app/summarizer.py` `BLOCKING_STATUSES`, `BOT_CHECK_HEADERS` | Many unreadable articles from one site with a new status or header |
+| Bot-check signals | `app/services/summaries/reading.py` `BLOCKING_STATUSES`, `BOT_CHECK_HEADERS` | Many unreadable articles from one site with a new status or header |
 
 ### Once or twice a year
 | What | Where |
@@ -45,9 +45,9 @@ What in this project is written by hand and ages, how often to look at it, and a
 | What | Where | Sign it broke |
 | --- | --- | --- |
 | Google link resolution | `app/services/links/google_news.py` | `redirect_fallbacks_total` rises, or headlines link to `news.google.com` |
-| archive.ph | `app/summarizer.py` `ARCHIVE`, the page's bypass option | Archive reads fail, the bypass links stop opening |
+| archive.ph | `app/services/summaries/reading.py` `ARCHIVE`, the page's bypass option | Archive reads fail, the bypass links stop opening |
 | Site icon service (DuckDuckGo) | `app/config.py` `ICON_SOURCE_URL` | Icons stop appearing |
-| Summary prompt | `app/summarizer.py` `PROMPT` | Summaries get worse, or the model changes |
+| Summary and same-story prompts | `config/prompts.yaml` | Summaries get worse, or the model changes |
 | Tagger thresholds (topic 0.9, uplifting 0.8, grouping 0.92) | `tagger/tagger.py` | Topic tabs or grouping visibly worse |
 | Security policy, trusted proxies | `app/routes/frontend.py`, `caddy/Caddyfile` | When the setup in front of Caddy changes |
 | Hostnames, backup paths and schedule | `.env` `ALLOWED_HOSTS`, crontab | When domains or disks change |

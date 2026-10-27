@@ -118,7 +118,7 @@ So request volume costs almost nothing upstream or in Redis, and users keep gett
 - Runs on the Intel NPU (`/dev/accel`); falls back to the CPU if the NPU can't be used.
 
 ### Summarizer (`summarizer` service)
-- Runs `summarizer.py` from the app image. **One replica.** Optional: without `SUMMARIZER_LLM_URL` it idles.
+- Runs `summarizer.py` from the app image (the loop; reading articles is `services/summaries/reading.py`, the LLM calls `services/summaries/llm.py`, the prompts `config/prompts.yaml`). **One replica.** Optional: without `SUMMARIZER_LLM_URL` it idles.
 - Every minute it reads the published snapshots and takes the first 20 items of every view without a summary: the main views first, then the topic views, top positions first.
 - For each, it reads the article's text (trafilatura; at most 6,000 characters; a precise extraction first, then a looser one if that finds too little) and asks an **Ollama** server for 2–3 sentences, using only the article's facts. The model is `qwen3:8b` (thinking off), and the server is a desktop GPU (RTX 3060 Ti) on the tailnet. Ollama loads the model on demand and frees the GPU two minutes after the last request.
 - The summary is stored in Redis at `summary:<hash of link>` for 7 days, with how its text was read (`via`). The refresher adds it to the item (`summary`) when it next publishes, so summaries appear within one refresh of being made.

@@ -11,6 +11,7 @@ import respx
 
 import catalog as catalog_module
 import summarizer
+from services.summaries import reading
 from catalog import Catalog
 from config import settings
 from keys import browser_host_key, feed_text_key, full_page_host_key, snapshot_key, summary_key
@@ -85,7 +86,7 @@ async def test_summarizes_new_articles_and_marks_unusable_ones(mock_redis):
     await mock_redis.set(summary_key("https://pub.example/3"), json.dumps({"text": "Already done."}))
     respx.get("https://pub.example/1").mock(return_value=httpx.Response(200, html=ARTICLE))
     respx.get("https://pub.example/2").mock(return_value=httpx.Response(200, html="<p>Subscribe to read</p>"))
-    respx.get(summarizer.ARCHIVE + "https://pub.example/2").mock(return_value=httpx.Response(404))
+    respx.get(reading.ARCHIVE + "https://pub.example/2").mock(return_value=httpx.Response(404))
     llm = llm_up("<think></think>The council approved a new bridge.")
 
     async with httpx.AsyncClient() as client:
@@ -128,9 +129,9 @@ async def test_paywalled_articles_are_read_from_the_archive(mock_redis):
     await mock_redis.set(snapshot_key("all"), json.dumps({"data": [
         {**item(1), "link": paid}, {**item(2), "link": missing}]}))
     respx.get(paid).mock(return_value=httpx.Response(403))
-    respx.get(summarizer.ARCHIVE + paid).mock(return_value=httpx.Response(200, html=ARTICLE))
+    respx.get(reading.ARCHIVE + paid).mock(return_value=httpx.Response(200, html=ARTICLE))
     respx.get(missing).mock(return_value=httpx.Response(403))
-    respx.get(summarizer.ARCHIVE + missing).mock(return_value=httpx.Response(404))  # No snapshot yet
+    respx.get(reading.ARCHIVE + missing).mock(return_value=httpx.Response(404))  # No snapshot yet
     llm_up()
 
     async with httpx.AsyncClient() as client:
