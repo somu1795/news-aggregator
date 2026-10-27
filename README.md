@@ -39,7 +39,8 @@ For the full details — diagram, how and when data is refreshed, link resolutio
 - **Backend**: FastAPI, Python 3.14.8 (Debian 13 "trixie" slim image)
 - **Snapshot store, cache & rate limits**: Redis 8.10
 - **Internal Proxy**: Caddy 2.11
-- **Topic tagging**: bge-small-en-v1.5 on OpenVINO (Intel NPU), scikit-learn, SQLite
+- **Topic tagging**: bge-small-en-v1.5 on OpenVINO (Intel NPU), scikit-learn (CPU), SQLite
+- **Site configuration**: YAML files in `config/` (regions, topics, sources, name, prompts)
 - **Containerization**: Docker, Docker Compose
 - **Testing**: Pytest, fakeredis, respx
 

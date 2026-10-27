@@ -329,7 +329,7 @@ Without Cloudflare nothing needs changing: everything else is browser caching, w
 | `/static/retro.css`, `/static/retro.js` | current `?v=` hash: a year, `immutable`; otherwise `no-cache` | Cached without a rule (`.css`/`.js`). The query string must stay in the cache key. |
 | `/site-icon/<domain>` | 7 days; 404: 5 minutes | By the cache rule. |
 | `/favicon.svg`, `/favicon.ico`, `/apple-touch-icon.png`, `/icon-192.png`, `/icon-512.png` (Caddy) | 7 days | Cached by file extension; the rule lists all of them except `favicon.svg`, which makes no difference. |
-| `/manifest.webmanifest` (Caddy) | 1 day | By the cache rule. |
+| `/manifest.webmanifest` (app, named from `config/site.yaml`) | 1 day | By the cache rule. |
 
 Cloudflare settings this depends on:
 - **Caching level: Standard**, so the query string is part of the cache key. With "Ignore query string", a new `?v=` would get the old file for a year.
@@ -340,7 +340,7 @@ After a deploy: the page isn't cached, so visitors get it at once, and its new h
 
 ## 6. Topic Tagging
 
-The tagger (`tagger/tagger.py`) gives each headline zero or more of `tech`, `science`, `nature`, `culture`, `sport`, `uplifting`. Most hard news (politics, crime, economy) gets none.
+The tagger (`tagger/`) gives each headline zero or more of `tech`, `science`, `nature`, `culture`, `sport`, `uplifting`. Most hard news (politics, crime, economy) gets none.
 
 **How it tags:**
 - **Embedding:** `bge-small-en-v1.5` (33M parameters, MIT licence), fine-tuned on the seed labels (below), run by OpenVINO on the Intel NPU. The NPU needs static shapes, so titles are padded to batches of 32 × 48 tokens. The first start compiles the model for the NPU (~1 min); the result is cached in the volume, so later starts take seconds.
@@ -349,7 +349,9 @@ The tagger (`tagger/tagger.py`) gives each headline zero or more of `tech`, `sci
 
 **Storage:** SQLite (`/data/tagger.db` in the `tagger_data` volume, WAL mode). One row per headline, by cleaned title: source, link, feed label, tags, the classifier version that tagged it, and its embedding (float16, 768 bytes). A headline is embedded only the first time it's seen; after a retrain, stored headlines are re-tagged from their stored embeddings without re-embedding. Each headline takes roughly 1 KB.
 
-**Retraining:** every `RETRAIN_INTERVAL_HOURS` (**24**, counted from the last attempt, kept or not: `/data/last_retrain` records it, so a restart neither postpones a retraining nor starts one at once because rejected candidates left the saved classifier old), on the newest 100,000 labelled headlines in the database. The candidate replaces the current classifier only if its macro F1 on the hand-labelled `tagger/data/eval.json` (598 headlines, never trained on) is at least as good. Both scores are logged. Training runs on its own thread; tagging continues meanwhile. Measured: the first retrain, after one cycle's new labels, went from F1 0.623 to 0.633 and from 8.9% to 8.1% hard-news leak (with the base model, before fine-tuning).
+**Retraining:** every `RETRAIN_INTERVAL_HOURS` (**24**, counted from the last attempt, kept or not: `/data/last_retrain` records it, so a restart neither postpones a retraining nor starts one at once because rejected candidates left the saved classifier old), on the newest 100,000 labelled headlines in the database. The candidate replaces the current classifier only if its macro F1 on the hand-labelled `tagger/data/eval.json` (598 headlines, never trained on) is at least as good. Both scores are logged. Training runs on its own thread; tagging continues meanwhile, but slower: while a retraining ran at the old 2-CPU limit, tagging took 24 s instead of 0.6 s and grouping over 60 s instead of 5 s, so the refresh's topic grouping timed out. Measured: the first retrain, after one cycle's new labels, went from F1 0.623 to 0.633 and from 8.9% to 8.1% hard-news leak (with the base model, before fine-tuning).
+
+**Hardware:** the embeddings run on the NPU; the classifier's predictions, the story-grouping maths and retraining run on the CPU (scikit-learn). The container may use **8 CPUs**: retraining's fit takes ~44 s at 8 and 5.6 minutes at 2 (Oct 27, 97,001 headlines; reading and converting them takes ~1.5 s, the fit is the rest). The integrated GPU is not used. Compared on the same data: the same objective fitted with PyTorch took 18–21 s on 8 CPUs and 10–13 s on the integrated GPU (Intel Arc, through PyTorch's XPU build and Intel's newer GPU runtime), with the same tags on 99.4% of 5,000 recent headlines and macro F1 0.624 against scikit-learn's 0.622 (within the evaluation set's noise). Not worth a ~10 GB GPU image, a second GPU runtime and fitting code of our own for ~30 s a day; PyTorch stays where heavy training belongs, `finetune.py` on a GPU machine.
 
 **Evaluation set:** `tagger/data/eval.json` has 598 hand-labelled headlines: 325 from the first version (48 of their labels were corrected, e.g. hurling and rugby headlines labelled `tech`, obituaries labelled `science`), and 273 added from three days of live headlines (120 general news, the rest from topic feeds, labelled without seeing the feed). Labelling rules: tech covers technology, AI and video games; science covers research, space and medicine; nature covers environment, climate, weather and wildlife; culture covers entertainment, celebrities, arts and fashion; uplifting is a tone and can combine with a topic; politics, crime, economy and conflict get no tag. On it, the classifier in use scores F1 0.648 with 5.3% hard-news leak; a retrain on the 15,900 labelled headlines stored after three days scored F1 0.636 with 3.2% leak, so the gate (F1 only) kept the current one.
 
@@ -529,6 +531,7 @@ Pinned in the Dockerfiles, `docker-compose.yml`, `.woodpecker.yml`, `app/require
 | --- | --- |
 | Python base image | `python:3.14.8-slim-trixie` (Debian 13) |
 | Caddy | `caddy:2.11.7-alpine` |
+| cloudflared | `latest`, pulled at every `docker compose up` (`pull_policy: always`) |
 | Redis | `redis:8.10.2-alpine` |
 | CI Docker CLI | `docker:29.9.0-cli` |
 | FastAPI / Starlette / Uvicorn | 0.143.0 / 1.7.0 / 0.54.0 |
