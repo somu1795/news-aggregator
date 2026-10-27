@@ -111,13 +111,20 @@ def test_eval_headlines_are_never_trained_on(tagger, monkeypatch):
     assert trained == [len(SEED)]
 
 
-def test_retrain_uses_only_the_newest_labelled_headlines(tagger, monkeypatch):
+def test_retrain_uses_the_newest_labelled_headlines_and_always_the_seed(tagger, monkeypatch):
+    tagger.tag([Item(title="Old sports story", label="sport")])
+    tagger.db.execute("UPDATE headlines SET first_seen = 1 WHERE title = 'Old sports story'")  # Older than the seed
+    tagger.db.commit()
     tagger.tag([Item(title="Brand new sports story", label="sport")])
     trained = []
     monkeypatch.setattr(tagger_module, "TRAIN_MAX_ROWS", 3)
-    monkeypatch.setattr(tagger_module, "train", lambda X, labels: trained.append(labels) or tagger.classifier)
+    monkeypatch.setattr(tagger_module, "train", lambda X, labels: trained.append((X, labels)) or tagger.classifier)
     tagger.retrain()
-    assert len(trained[0]) == 3 and trained[0][0] == "sport"  # Newest first, capped
+    X, labels = trained[0]
+    # The newest 3 (the brand new story and 2 seed headlines), then the rest of the seed; never the old story
+    assert len(labels) == 1 + len(SEED) and labels[0] == "sport"
+    assert X.shape == (len(labels), 384) and X.dtype == np.float32
+    assert sorted(labels[1:]) == sorted(row["label"] for row in SEED)
 
 
 def test_group_puts_the_same_story_together(tagger, monkeypatch):

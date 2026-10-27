@@ -23,7 +23,7 @@ on the NPU), classifier.py (training and scoring), store.py (the database),
 stories.py (story grouping and the judge's pairs).
 
 Training: a logistic regression on the stored embeddings of the newest
-TRAIN_MAX_ROWS labelled headlines (data/seed.json, then what the feeds add). It is retrained every
+TRAIN_MAX_ROWS labelled headlines, plus always data/seed.json's. It is retrained every
 RETRAIN_INTERVAL_HOURS; the new classifier replaces the current one only if it
 scores at least as well on the hand-labelled evaluation set (data/eval.json),
 which is never trained on.
@@ -42,6 +42,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import List, Optional
 
+import numpy as np
 from fastapi import FastAPI
 from pydantic import BaseModel
 
@@ -59,9 +60,10 @@ STORY_MODEL_DIR = Path(os.environ.get("STORY_MODEL_DIR", "/models/multilingual-e
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 DEVICE = os.environ.get("TAGGER_DEVICE", "NPU")
 RETRAIN_INTERVAL_HOURS = float(os.environ.get("RETRAIN_INTERVAL_HOURS", "24"))
-# Retraining uses the newest labelled headlines only: ~14,000 arrive a day, and all
-# of them (float32 embeddings) would outgrow the container's memory within months
-TRAIN_MAX_ROWS = int(os.environ.get("TRAIN_MAX_ROWS", "100000"))
+# Retraining uses the newest labelled headlines only (plus the seed, see Tagger.training_rows): ~5,500
+# arrive a day, and all of them would outgrow the container's memory. At 500,000 (~3 months) they
+# take ~0.8 GB while it retrains, ~4 minutes on 8 CPUs.
+TRAIN_MAX_ROWS = int(os.environ.get("TRAIN_MAX_ROWS", "500000"))
 BUNDLED = Path(__file__).parent / "data"
 
 
@@ -80,6 +82,7 @@ class Tagger(StoryGrouping):
         self.db = connect(self.db_path)
         eval_rows = json.loads((BUNDLED / "eval.json").read_text())
         self.eval_titles = {row["title"] for row in eval_rows}
+        self.seed_titles = {row["title"] for row in json.loads((BUNDLED / "seed.json").read_text())}
         self.eval_X = embedder.embed([row["title"] for row in eval_rows])
         self.eval_gold = [row["tags"] for row in eval_rows]
         self.classifier: Optional[Classifier] = None
@@ -142,15 +145,41 @@ class Tagger(StoryGrouping):
         return [json.loads(rows[title][0]) for title in titles]
 
 
+    def training_rows(self, db: sqlite3.Connection):
+        """
+        The newest TRAIN_MAX_ROWS labelled headlines, plus every seed headline that has aged out of them,
+        never the evaluation set's: (float32 embeddings, labels). The seed holds most of the few nature
+        and uplifting examples; measured on Oct 27's data, a window without it scored macro F1 0.598
+        instead of 0.618. Embeddings are copied straight into one array, so the rows aren't held twice.
+        """
+        X = np.empty((TRAIN_MAX_ROWS + len(self.seed_titles), 384), dtype=np.float32)
+        labels: List[str] = []
+        seed_seen = set()
+
+        def add(rows):
+            for title, label, blob in rows:
+                if title not in self.eval_titles:
+                    X[len(labels)] = np.frombuffer(blob, dtype=np.float16)
+                    labels.append(label)
+                    if title in self.seed_titles:
+                        seed_seen.add(title)
+
+        add(db.execute("SELECT title, label, embedding FROM headlines WHERE label IS NOT NULL "
+                       "ORDER BY first_seen DESC LIMIT ?", (TRAIN_MAX_ROWS,)))
+        aged_out = sorted(self.seed_titles - seed_seen)
+        for start in range(0, len(aged_out), 500):
+            chunk = aged_out[start:start + 500]
+            add(db.execute(f"SELECT title, label, embedding FROM headlines WHERE label IS NOT NULL "
+                           f"AND title IN ({','.join('?' * len(chunk))})", chunk))
+        return X[:len(labels)], labels
+
     def retrain(self, force: bool = False) -> None:
         db = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
         try:
-            rows = [(t, label, blob) for t, label, blob in db.execute(
-                "SELECT title, label, embedding FROM headlines WHERE label IS NOT NULL ORDER BY first_seen DESC LIMIT ?",
-                (TRAIN_MAX_ROWS,)) if t not in self.eval_titles]
+            X, labels = self.training_rows(db)
         finally:
             db.close()
-        candidate = train(from_blobs([blob for *_, blob in rows]), [label for _, label, _ in rows])
+        candidate = train(X, labels)
         new_score = evaluate(candidate, self.eval_X, self.eval_gold)
         current = self.classifier
         current_score = evaluate(current, self.eval_X, self.eval_gold) if current else None
