@@ -200,12 +200,21 @@ async def on_worker(fn, *args):
     return await asyncio.get_running_loop().run_in_executor(_worker, fn, *args)
 
 
+def retrain_due(tagger: Tagger) -> float:
+    """
+    When the next retraining is due: RETRAIN_INTERVAL_HOURS after the last attempt, kept or not
+    (last_retrain), or after the saved classifier if that's newer. Counted from files, so a restart
+    neither postpones it nor, after a rejected attempt left the classifier old, retrains at once.
+    """
+    marker = tagger.model_path.with_name("last_retrain")
+    last = max(path.stat().st_mtime for path in (tagger.model_path, marker) if path.exists())
+    return last + RETRAIN_INTERVAL_HOURS * 3600
+
+
 async def retrain_periodically(tagger: Tagger) -> None:
-    # Counted from the last training (the saved classifier), so restarts don't postpone it
-    last = tagger.model_path.stat().st_mtime
     while True:
-        await asyncio.sleep(max(0.0, last + RETRAIN_INTERVAL_HOURS * 3600 - time.time()))
-        last = time.time()  # Also after a rejected or failed attempt: wait a full interval
+        await asyncio.sleep(max(0.0, retrain_due(tagger) - time.time()))
+        tagger.model_path.with_name("last_retrain").touch()  # Also after a rejected or failed attempt: wait a full interval
         try:
             await asyncio.to_thread(tagger.retrain)
         except Exception:

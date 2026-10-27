@@ -188,3 +188,30 @@ def test_a_no_verdict_keeps_similar_headlines_apart(tagger, monkeypatch):
     assert len(set(tagger.group([Item(title=a), Item(title=b)]))) == 1
     tagger.store_verdicts([tagger_module.Verdict(a=a, b=b, same=False, model="m")])
     assert len(set(tagger.group([Item(title=a), Item(title=b)]))) == 2
+
+
+def test_a_restart_does_not_retrain_again_after_a_rejected_attempt(tagger, monkeypatch):
+    """A rejected candidate leaves the saved classifier old; the next start must still wait a full interval."""
+    import asyncio
+    import os
+    import time
+    week_ago = time.time() - 7 * 86400
+    os.utime(tagger.model_path, (week_ago, week_ago))  # Saved a week ago; every later candidate was rejected
+    assert tagger_module.retrain_due(tagger) < time.time()  # Due now
+
+    attempts = []
+
+    async def one_cycle():
+        def attempt():
+            attempts.append(time.time())
+            raise RuntimeError("candidate rejected or failed")  # Either way the saved classifier stays as it was
+        monkeypatch.setattr(tagger, "retrain", attempt)
+        loop = asyncio.create_task(tagger_module.retrain_periodically(tagger))
+        while not attempts:
+            await asyncio.sleep(0.01)
+        loop.cancel()
+
+    asyncio.run(one_cycle())
+    assert len(attempts) == 1
+    # A restart now (a new retrain_periodically) waits a full interval from that attempt
+    assert tagger_module.retrain_due(tagger) >= attempts[0] + tagger_module.RETRAIN_INTERVAL_HOURS * 3600 - 1
