@@ -235,7 +235,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '6'  # Retraining (scikit-learn, on the CPU) runs beside tagging and grouping
+          cpus: '8'  # Retraining (scikit-learn, on the CPU): 44 s at 8, 5.6 min at 2, beside tagging and grouping
           # Two models (topics, and story grouping); measured use is in ARCHITECTURE.md §6
           memory: 2G
           pids: 256
