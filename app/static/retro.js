@@ -19,6 +19,7 @@
         { id: "archive", name: "archive", prefix: "https://archive.ph/newest/" }
     ];
     var PAYWALLED = JSON.parse(document.getElementById("paywalled-data").textContent);
+    var SITE_NAME = document.title;  // site.yaml name, set by the server
 
     var list = document.getElementById("list");
     var statusEl = document.getElementById("status");
@@ -802,7 +803,7 @@
             if (backToLastTab) history.pushState(entry, "", addressWithoutTab());
             else history.replaceState(entry, "", addressWithoutTab());
         }
-        document.title = region === DEFAULT_VIEW && topic === DEFAULT_TOPIC ? "news.txt" : "news.txt / " + viewName(region, topic);
+        document.title = region === DEFAULT_VIEW && topic === DEFAULT_TOPIC ? SITE_NAME : SITE_NAME + " / " + viewName(region, topic);
         renderTabs();
         render();
         updateStatus();

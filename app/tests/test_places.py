@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from config import Catalog
+from catalog import Catalog
 from services.places import regions_in
 
 
@@ -32,8 +32,8 @@ def test_regions_in(title, regions):
 def test_shared_stories_go_to_the_region_they_name():
     from services.feed_service import build_topic_views
     catalog = Catalog(
-        regions=[{"id": r, "label": r, "sources": [{"name": f"{r} news", "url": f"https://{r}.example/rss", "weight": 1.0}]}
-                 for r in ("africa", "asia")],
+        regions=[{"id": r, "label": r, "sources": [{"name": f"{r} news", "url": f"https://{r}.example/rss", "weight": 1.0}],
+                  "places": places} for r, places in (("africa", ["Sierra Leone"]), ("asia", ["Iran"]))],
         extras=[],
         topics=[{"id": "nature", "label": "Nature"}],
         topic_extras=[{"name": "Mongabay", "url": "https://mongabay.example/rss", "label": "nature"}],

@@ -20,6 +20,7 @@ from starlette.responses import Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from config import settings
+from site_config import get_site
 
 logger = structlog.get_logger(__name__)
 
@@ -88,7 +89,7 @@ class SmartExceptionMiddleware:
                 response = templates.TemplateResponse(
                     request,
                     template_name,
-                    {"detail": detail},
+                    {"detail": detail, "site": get_site()},
                     status_code=status_code,
                 )
                 response.headers["Content-Security-Policy"] = _CSP

@@ -45,17 +45,11 @@
 	respond @metrics_via_cloudflare "Forbidden" 403
 	respond @metrics_from_outside "Forbidden" 403
 
-	# Site icons and the web app manifest are static files baked into this image (caddy/static)
+	# Site icons are static files baked into this image (caddy/static); the app serves the manifest (site.yaml)
 	@icons path /favicon.svg /favicon.ico /apple-touch-icon.png /icon-192.png /icon-512.png
 	handle @icons {
 		root * /srv/static
 		header Cache-Control "public, max-age=604800"
-		file_server
-	}
-	handle /manifest.webmanifest {
-		root * /srv/static
-		header Content-Type application/manifest+json
-		header Cache-Control "public, max-age=86400"
 		file_server
 	}
 

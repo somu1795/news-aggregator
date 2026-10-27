@@ -108,7 +108,9 @@ python-dotenv==1.2.4
 pytz==2026.5
     # via dateparser
 pyyaml==6.0.3
-    # via uvicorn
+    # via
+    #   -r requirements.in
+    #   uvicorn
 redis==8.1.0
     # via -r requirements.in
 regex==2026.9.29

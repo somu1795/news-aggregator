@@ -33,11 +33,10 @@ services:
       - LOG_LEVEL=INFO
       # Lets /metrics aggregate all Uvicorn workers (see app/entrypoint.sh)
       - PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus-metrics
-    # The code is already baked into the image via the Dockerfile's COPY command.
-    # For production and fast startup, we use the internal copy.
-    # For development, you can uncomment the lines below to live-mount your local code.
-    # volumes:
-    #   - ./app:/app:ro
+    # The code is baked into the image; the site's config folder is mounted (see refresher).
+    # For development, add `- ./app:/app:ro` to live-mount your local code.
+    volumes:
+      - ${CONFIG_DIR:-./config}:/config:ro
     deploy:
       resources:
         # These are resource limits per container. To handle very high traffic (10k+ users),
@@ -79,8 +78,10 @@ services:
       - REFRESH_INTERVAL_SECONDS
       - TOPIC_FEEDS_INTERVAL_SECONDS
     volumes:
-      # Edit sources.json and `docker compose restart refresher` — no rebuild needed.
-      - ./app/sources.json:/app/sources.json:ro
+      # The site's config folder (regions, topics, sources, name, prompts): edit it and
+      # `docker compose restart app refresher summarizer`, no rebuild. CONFIG_DIR in .env
+      # points at your own folder elsewhere.
+      - ${CONFIG_DIR:-./config}:/config:ro
       - archive_data:/archive  # Every published headline, kept (SQLite, see app/services/archive.py)
     deploy:
       resources:
@@ -111,7 +112,7 @@ services:
       - SUMMARIZER_BROWSER_FILTERED_PROXY=http://browser-egress-filtered:4750
       - SUMMARIZER_BROWSER2_URL=http://browser2:8191
     volumes:
-      - ./app/sources.json:/app/sources.json:ro
+      - ${CONFIG_DIR:-./config}:/config:ro
     networks: [default, browser]
     deploy:
       resources:

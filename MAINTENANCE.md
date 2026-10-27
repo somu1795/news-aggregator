@@ -9,7 +9,7 @@ What in this project is written by hand and ages, how often to look at it, and a
 
 1. Read `logs/updates.txt`. For each `>>` line older than two weeks, bump the pin (the file is named in brackets), test (`docker compose -p na-test …`, see README "Running Tests"), deploy, commit. Python packages: update `app/requirements.in` / regenerate `app/requirements.txt` with `pip-compile`, or `tagger/requirements.txt` from the tagger image.
 2. Check the backup ran: `cat /mnt/media/app_bkp/news_aggregator/last-success` (today's date), and no `FAILED` in `backup.log`.
-3. Look for failing feeds: `docker compose logs --since 168h refresher | grep 'exhausted all retries'`. Fix or remove them in `app/sources.json` (quarterly review below).
+3. Look for failing feeds: `docker compose logs --since 168h refresher | grep 'exhausted all retries'`. Fix or remove them in `config/sources.yaml` (quarterly review below).
 4. Glance at the site's tabs for anything odd (empty tabs, the same story many times, a region showing another region's news).
 
 ## What's hand-written, and how often to review it
@@ -24,17 +24,17 @@ What in this project is written by hand and ages, how often to look at it, and a
 ### Quarterly: things on the internet change
 | What | Where | Sign it needs attention |
 | --- | --- | --- |
-| The news and topic feeds | `app/sources.json` | Failing fetches (checklist step 3), a feed whose content changed (e.g. an outlet turned into an events guide), new outlets worth adding (TODO.md) |
+| The news and topic feeds | `config/sources.yaml` | Failing fetches (checklist step 3), a feed whose content changed (e.g. an outlet turned into an events guide), new outlets worth adding (TODO.md) |
 | Browser identity sent with requests | `app/config.py` `BROWSER_USER_AGENT` | The update check reports it when it's more than two Chrome versions behind |
-| Paywalled sites | `app/config.py` `PAYWALLED_HOSTS` | Summaries failing for a site that added a paywall |
+| Paywalled sites | `config/site.yaml` `paywalled_hosts` | Summaries failing for a site that added a paywall |
 | The browsers' ad and tracker block list | `smokescreen/filter/acl.yaml`: run `scripts/update-blocklist.py`, then `docker compose restart browser-egress-filtered` | Ad networks change domains; sites that break without a blocked domain are retried with it on their own (`docker compose logs summarizer \| grep 'whole page'`) |
 | Bot-check signals | `app/summarizer.py` `BLOCKING_STATUSES`, `BOT_CHECK_HEADERS` | Many unreadable articles from one site with a new status or header |
 
 ### Once or twice a year
 | What | Where |
 | --- | --- |
-| Place list (which places belong to which region) | `app/services/places.py`: add a place when a story about it isn't routed to its region; add an ambiguous name to the left-out list when one misroutes |
-| Country → starting region | `app/services/geo.py` |
+| Place list (which places belong to which region) | `config/regions.yaml` `places`: add a place when a story about it isn't routed to its region; add an ambiguous name to the left-out list when one misroutes |
+| Country → starting region | `config/regions.yaml` `countries` |
 | Tagger evaluation (598 hand-labelled headlines) and seed labels | `tagger/data/eval.json`, `tagger/data/seed.json`: add recent hand-labelled headlines so the retrain gate judges current news |
 | Story-grouping labelled pairs | `tagger/data/story_pairs.json`: only to re-check the 0.92 threshold if grouping looks off |
 | NPU driver, Ubuntu base, models (topic, story grouping, summarizer) | `tagger/Dockerfile`, `.env` `SUMMARIZER_MODEL` |
@@ -52,4 +52,4 @@ What in this project is written by hand and ages, how often to look at it, and a
 | Security policy, trusted proxies | `app/routes/frontend.py`, `caddy/Caddyfile` | When the setup in front of Caddy changes |
 | Hostnames, backup paths and schedule | `.env` `ALLOWED_HOSTS`, crontab | When domains or disks change |
 
-Tuning values (refresh interval, items per tab, story age, retry and backoff times, summary length, per-source caps) live in `app/config.py` and `app/sources.json`. They don't age; change them only to change behaviour.
+Tuning values (refresh interval, items per tab, story age, retry and backoff times, summary length, per-source caps) live in `app/config.py` and `config/sources.yaml`. They don't age; change them only to change behaviour.

@@ -29,7 +29,7 @@ An article's text is read, each step only if the previous ones failed:
    past some checks the first doesn't, but is slower;
 3. from the text the feed itself carried (stored by the refresher);
 4. from the latest archive.ph snapshot.
-Paywalled sites (config.PAYWALLED_HOSTS) go direct, archive, then feed text: a
+Paywalled sites (site.yaml paywalled_hosts) go direct, archive, then feed text: a
 browser doesn't get past a paywall. Articles none of these can read are marked
 and retried after SUMMARY_RETRY_SECONDS.
 
@@ -53,8 +53,10 @@ import structlog
 import trafilatura
 from prometheus_client import Counter, start_http_server
 
-from config import (CATALOG, browser_host_key, feed_text_key, full_page_host_key, is_paywalled, settings, snapshot_key,
-                    summary_key)
+from catalog import get_catalog
+from config import settings
+from keys import browser_host_key, feed_text_key, full_page_host_key, snapshot_key, summary_key
+from site_config import get_site
 from logging_config import configure_logging
 from services.redis_client import create_redis_client
 from services.safe_fetch import UnsafeURL, check_public, stream_public
@@ -78,18 +80,7 @@ ARTICLE_READS = Counter(
     ["method"],
 )
 
-PROMPT = (
-    "You summarize news articles for a headlines site. Write 2-3 plain sentences "
-    "(at most 70 words) in English saying what the article reports. Use only facts "
-    "stated in the article. No preamble, no opinions, no markdown."
-)
 
-
-STORY_PROMPT = (
-    "Do these two news headlines cover the same news: the same event, announcement, study, match, release or "
-    "incident, even if worded differently or from a different angle (a result and its reaction, a study and an "
-    "explainer of it)? Answer with one word: yes or no."
-)
 
 STORY_JUDGEMENTS = Counter(
     "summarizer_story_judgements_total",
@@ -111,10 +102,11 @@ class ArticleUnusable(Exception):
 
 async def top_items(redis_client: aioredis.Redis) -> List[dict]:
     """The first SUMMARY_TOP_N items of every published view, main views first, by position; unique links."""
-    views = CATALOG.view_ids + CATALOG.topic_view_ids
+    catalog = get_catalog()
+    views = catalog.view_ids + catalog.topic_view_ids
     snapshots = await redis_client.mget([snapshot_key(view) for view in views])
     tops = [json.loads(raw)["data"][:settings.SUMMARY_TOP_N] if raw else [] for raw in snapshots]
-    main, topics = tops[:len(CATALOG.view_ids)], tops[len(CATALOG.view_ids):]
+    main, topics = tops[:len(catalog.view_ids)], tops[len(catalog.view_ids):]
     items = {}
     for group in (main, topics):
         for rank in range(settings.SUMMARY_TOP_N):
@@ -169,7 +161,7 @@ async def fetch_text(client: httpx.AsyncClient, redis_client: aioredis.Redis, li
         # archive.ph restructures pages; the default (not precision) extraction keeps the whole article
         return await fetch_page_text(client, ARCHIVE + link, favor_precision=False)
 
-    if is_paywalled(host):
+    if get_site().is_paywalled(host):
         steps = [("archive", from_archive), ("feed", from_feed)]
     else:
         if not browser:
@@ -263,7 +255,7 @@ async def summarize(client: httpx.AsyncClient, title: str, text: str) -> str:
             json={
                 "model": settings.SUMMARIZER_MODEL,
                 "messages": [
-                    {"role": "system", "content": PROMPT},
+                    {"role": "system", "content": get_site().prompts.summary},
                     {"role": "user", "content": f"Headline: {title}\n\nArticle:\n{text}"},
                 ],
                 "stream": False,
@@ -290,7 +282,7 @@ async def same_story(client: httpx.AsyncClient, a: str, b: str) -> bool:
             json={
                 "model": settings.SUMMARIZER_MODEL,
                 "messages": [
-                    {"role": "system", "content": STORY_PROMPT},
+                    {"role": "system", "content": get_site().prompts.same_story},
                     {"role": "user", "content": f"Headline 1: {a}\nHeadline 2: {b}"},
                 ],
                 "stream": False,
@@ -381,6 +373,7 @@ async def run() -> None:
     if not settings.SUMMARIZER_LLM_URL:
         logger.info("SUMMARIZER_LLM_URL is not set, summaries are disabled")
         await asyncio.Event().wait()  # Stay up (restart: unless-stopped) without doing anything
+    get_catalog(), get_site()  # A broken config folder stops the summarizer at once, with its error
     start_http_server(settings.METRICS_PORT)
     redis_client = create_redis_client(socket_timeout=10, retries=3)
     available: Optional[bool] = None

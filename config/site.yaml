@@ -1,0 +1,22 @@
+# The site itself.
+#
+#   name             in the header, the browser tab, the installed app and structured data
+#   description      for search engines and the installed app
+#   paywalled_hosts  sites behind a paywall (and their subdomains): the page can open them via an
+#                    archive ("bypass"), and summaries are read from an archive copy
+name: news.txt
+description: >-
+  Headlines from Asia, Europe, the Americas, Africa and Oceania, plus science and Hacker News.
+  Updated every few minutes.
+paywalled_hosts:
+- nytimes.com
+- wsj.com
+- bloomberg.com
+- economist.com
+- washingtonpost.com
+- ft.com
+- businessinsider.com
+- theathletic.com
+- reuters.com
+- thetimes.co.uk
+- theatlantic.com

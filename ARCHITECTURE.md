@@ -87,7 +87,10 @@ So request volume costs almost nothing upstream or in Redis, and users keep gett
 - **Framework**: FastAPI on Uvicorn (`uvloop`, `httptools`), one worker per CPU (`UVICORN_WORKERS` = `APP_CPUS` = 4).
 - **Code layout**:
   - **`main.py`**: app wiring — middleware, exception handling, lifespan, routes.
-  - **`config.py`**: Pydantic settings (environment / `.env`); loads and validates the source catalog from **`sources.json`**; `snapshot_key(view)`.
+  - **`config.py`**: Pydantic settings (environment / `.env`), the only place their defaults are written.
+  - **`catalog.py`**: the site's regions, topics and sources, loaded and validated from the config folder (§10).
+  - **`site_config.py`**: the site's name, description, paywalled sites and LLM prompts (config folder).
+  - **`keys.py`**: the Redis keys the services share (`snapshot_key(view)`, `summary_key(link)`, …).
   - **`deps.py`**: admin API key check, rate limiter and client-IP key function.
   - **`models.py`**: the API's response schemas (`/api/headlines`, shared with the refresher, and `/api/search-index`).
   - **`routes/`**: `headlines.py`, `frontend.py`, `admin.py`, `health.py`.
@@ -125,7 +128,7 @@ So request volume costs almost nothing upstream or in Redis, and users keep gett
   3. **feed**: the text the feed itself carried for the article. The refresher keeps it for every published item with at least 600 characters (`feed-text:<hash of link>`, 2 days);
   4. **archive**: the latest archive.ph snapshot.
 
-  Paywalled sites (`PAYWALLED_HOSTS` in `config.py`, the same list the page's bypass uses) go direct, archive, then feed: a browser doesn't get past a paywall. Articles none of these can read (or with less than 600 characters of text) are marked and retried after 3 hours; links to non-public addresses are marked for a day and never reach the browser.
+  Paywalled sites (`paywalled_hosts` in `config/site.yaml`, the same list the page's bypass uses) go direct, archive, then feed: a browser doesn't get past a paywall. Articles none of these can read (or with less than 600 characters of text) are marked and retried after 3 hours; links to non-public addresses are marked for a day and never reach the browser.
 - Measured on the 153 top stories that the direct fetch alone couldn't read: 121 became readable (browser 100, direct after the looser extraction 8, archive 7, feed 2…), and the second browser read 4 of the remaining 32 (phys.org, ESPN). On pages the first browser reads, the second reads 28 of 30, at ~23 s a page instead of ~8 s, so it only runs after the first fails. Still unreadable: sites whose bot checks also stop a real browser (phys.org's own check, Forbes' DataDome, Akamai on Sky and News Corp sites) and paywalled articles without a snapshot. A browser page takes ~10 s (up to ~50 s).
 - Counts per method are logged every pass and exported as `summarizer_article_reads_total{method}` on the summarizer's metrics port (9100, inside the Docker network).
 - When the LLM server is unreachable (the desktop is off), nothing is fetched, summarized or marked: each pass first checks the server. It retries every minute, logging only when availability changes.
@@ -168,7 +171,7 @@ The refresher runs this cycle forever:
 ```
 
 ### Step 1 — Fetch feeds
-The catalog (`app/sources.json`) has 84 news feeds (plus 55 topic feeds, Step 5). **Every view has the same overall mix: 50% news, 30% science, 20% Hacker News** (25 / 15 / 10 headlines). "News" is that region's news, or all regions equally on "all". Each region's weights sum to 1.0 and decide the make-up of its news share:
+The catalog (`config/sources.yaml`) has 84 news feeds (plus 55 topic feeds, Step 5). **Every view has the same overall mix: 50% news, 30% science, 20% Hacker News** (25 / 15 / 10 headlines). "News" is that region's news, or all regions equally on "all". Each region's weights sum to 1.0 and decide the make-up of its news share:
 
 | Region | News sources (share of the region's news) |
 | --- | --- |
@@ -219,7 +222,7 @@ Fetching:
 4. **Skip duplicates and over-represented publishers:**
    - an item is a duplicate if its link, or its title (case and punctuation ignored, Google's " - Publisher" suffix removed), was already taken; the first occurrence wins;
    - at most `MAX_PER_PUBLISHER` (**3**) items per publisher. The publisher is the publisher name for Google items and the link's domain for direct links. **A feed whose items all come from one publisher** (e.g. ABC Australia's own feed) is exempt, because its weight already bounds its share.
-5. **Redistribute unused slots.** A source that runs out, or reaches its `max_items` (an optional per-source cap in `sources.json`, for a feed whose quality varies), drops out of the rotation, and the others fill the list in proportion to their weights. Views are built `STORY_GROUP_HEADROOM` (**40**) longer than `MAX_HEADLINES` (**80**); Step 4 cuts them to 80 once each story is shown once.
+5. **Redistribute unused slots.** A source that runs out, or reaches its `max_items` (an optional per-source cap in `sources.yaml`, for a feed whose quality varies), drops out of the rotation, and the others fill the list in proportion to their weights. Views are built `STORY_GROUP_HEADROOM` (**40**) longer than `MAX_HEADLINES` (**80**); Step 4 cuts them to 80 once each story is shown once.
 
 The result is **deterministic**: the same feeds give the same order, so lists only change when the news changes. Each view logs a `Mixed headlines` line with counts per source and items dropped as stale, duplicate or over the cap.
 
@@ -255,7 +258,7 @@ After the main views are published, the refresher builds the topic views (`get_t
 
 1. **Topic feeds.** 55 feeds about one topic each: the Technology, Science, Sports and Entertainment sections of 10 Google News local editions (India and Singapore for Asia; UK; US and Canada; Nigeria, South Africa and Kenya; Australia and New Zealand), plus three Guardian environment feeds and Mongabay (nature) and ten good-news outlets (uplifting: Good News Network, Positive News, Reasons to be Cheerful, Optimist Daily, Upworthy, Good Good Good, DailyGood, Sunny Skyz, Not All News Is Bad, Squirrel News), which belong to no region, and The Better India (uplifting, Asia's). They change slowly and are many, so they're fetched every `TOPIC_FEEDS_INTERVAL_SECONDS` (**30 min**) and reused in between. They appear only in topic views.
 2. **Tagging.** Every fetched headline (news, extras and topic feeds, about 3,500) goes to the tagger with its feed's **label**: the topic of a topic feed (or of Google News Science: `science`), `other` for the Google News national sections, or none. The tagger returns its tags (§6). A headline's tags are the tagger's plus its feed's topic, so a Sports section's items are always `sport`.
-3. **Views.** For each topic, one view per region (and "all") from the items tagged with it: the region's news and topic feeds, plus the extras and topic extras. They're mixed with `mix_headlines()` (same rules as above), except the weights: the news/extras mix doesn't apply to one topic (Hacker News has little sport). **Feeds about the topic come first**, mixed equally: in a region's view, the region's own topic feeds, then the shared ones (extras, topic extras), which are the same in every region. Items the model tagged from other sources only fill the view (up to `MAX_HEADLINES`, 100) when those run short. **Shared feeds are routed by place:** the shared topic feeds (Mongabay, the Guardian's environment feeds, the good-news outlets) cover the whole world, so in a region's view they show only their stories that name one of that region's places (`services/places.py`: a list of ~580 countries, their adjectives, US states, Canadian provinces, major cities and regions; checked in the headline, then in the first 300 characters of the feed's description), then their stories that name no place. A shared story about another region is left out. Names that are often something else are not in the list (Georgia, Jordan, Chad, Turkey, Victoria, Amazon). Measured on live feeds: nature views shared 83% of their stories between regions before, 42% after (uplifting 92% → 85%: good-news headlines rarely name a place); views got shorter (nature 20–36 stories per region). Regional nature feeds are few (most outlets' environment feeds are missing or blocked): Mongabay India (Asia) and Inside Climate News (Americas). **Global stories stay out of region views:** a story found in two or more regions' own feeds (e.g. the same TechCrunch story in several Google News Technology editions) is shown only in "all", so region tabs don't repeat each other; what still repeats across regions is the shared feeds' items, after the region's own. **Uplifting is feed-only**: model tags never add to it, since even its most confident ones were about half wrong on live news. Good-news outlets publish a few stories a day each, so uplifting views keep stories for 7 days (`max_age_hours` of the topic in `sources.json`) instead of 48 hours: 80 stories from 10–11 outlets per region instead of about 12 from 2–3. "All" draws from every region's sources.
+3. **Views.** For each topic, one view per region (and "all") from the items tagged with it: the region's news and topic feeds, plus the extras and topic extras. They're mixed with `mix_headlines()` (same rules as above), except the weights: the news/extras mix doesn't apply to one topic (Hacker News has little sport). **Feeds about the topic come first**, mixed equally: in a region's view, the region's own topic feeds, then the shared ones (extras, topic extras), which are the same in every region. Items the model tagged from other sources only fill the view (up to `MAX_HEADLINES`, 100) when those run short. **Shared feeds are routed by place:** the shared topic feeds (Mongabay, the Guardian's environment feeds, the good-news outlets) cover the whole world, so in a region's view they show only their stories that name one of that region's places (`config/regions.yaml` `places`, matched by `services/places.py`: a list of ~580 countries, their adjectives, US states, Canadian provinces, major cities and regions; checked in the headline, then in the first 300 characters of the feed's description), then their stories that name no place. A shared story about another region is left out. Names that are often something else are not in the list (Georgia, Jordan, Chad, Turkey, Victoria, Amazon). Measured on live feeds: nature views shared 83% of their stories between regions before, 42% after (uplifting 92% → 85%: good-news headlines rarely name a place); views got shorter (nature 20–36 stories per region). Regional nature feeds are few (most outlets' environment feeds are missing or blocked): Mongabay India (Asia) and Inside Climate News (Americas). **Global stories stay out of region views:** a story found in two or more regions' own feeds (e.g. the same TechCrunch story in several Google News Technology editions) is shown only in "all", so region tabs don't repeat each other; what still repeats across regions is the shared feeds' items, after the region's own. **Uplifting is feed-only**: model tags never add to it, since even its most confident ones were about half wrong on live news. Good-news outlets publish a few stories a day each, so uplifting views keep stories for 7 days (`max_age_hours` of the topic in `sources.json`) instead of 48 hours: 80 stories from 10–11 outlets per region instead of about 12 from 2–3. "All" draws from every region's sources.
 4. **Links** are resolved as in Step 3, and all 36 views are published, **including empty ones** (a region can have no uplifting news right now; the page says so).
 
 ### Step 6 — Wait
@@ -464,7 +467,7 @@ A visitor makes 2 requests per page load plus 1 per region viewed, so 100/minute
 | `ENABLE_API_DOCS` | `false` | Serve `/docs`. |
 | `RENDER_GID` | `991` | Numeric id of the host group owning `/dev/accel/accel0` (`getent group render`), for the tagger. |
 
-**Tunables in `app/config.py`** (override with an environment variable of the same name):
+**Tunables in `app/config.py`** (their only defaults; override with an environment variable of the same name, which reaches a container only if `docker-compose.yml` passes it):
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -481,7 +484,7 @@ A visitor makes 2 requests per page load plus 1 per region viewed, so 100/minute
 | `FEED_TEXT_TTL_SECONDS` | 2 days | How long the feed's own text of a published item is kept. |
 | `ICON_SOURCE_URL` / `ICON_FALLBACK_URL` | DuckDuckGo / Google (`sz=64`) | The icon service, and where a website's icon is looked for when neither the service nor the website has one (redrawn as pixel art; empty disables it). |
 | `ARCHIVE_PATH` / `ARCHIVE_SNAPSHOT_SECONDS` | empty (`/archive/archive.db` in `docker-compose.yml`) / 3600 | The headline archive's SQLite file (empty disables it), and how often each view's order is recorded in it. |
-| `MAX_HEADLINES` | 80 | Headlines per view (each region, and "all"). |
+| `MAX_HEADLINES` | 100 | Headlines per view (each region, and "all"). |
 | `STORY_GROUP_HEADROOM` / `MAX_RELATED` / `STORY_GROUP_TIMEOUT` | 40 / 8 / 60 s | Views are built this much longer before each story is shown once; other outlets' headlines kept under a story; the tagger's grouping call timeout. |
 | `MAX_HEADLINE_AGE_HOURS` | 48 | Items older than this are dropped before mixing. |
 | `MAX_PER_PUBLISHER` | 3 | Maximum items from one publisher in a view (single-publisher feeds are bounded by their weight instead). |
@@ -491,37 +494,32 @@ A visitor makes 2 requests per page load plus 1 per region viewed, so 100/minute
 | `LOCAL_CACHE_SECONDS` | 5.0 | How long a worker reuses its in-memory copy of a view before re-reading Redis. |
 | `STALE_AFTER_SECONDS` | 900 | Age at which `/health` reports the "all" snapshot as stale. |
 | `HEADLINES_KEY` | `headlines` | Redis key prefix; snapshots live at `headlines:<view>`. |
-| `SOURCES_FILE` | `sources.json` | The source catalog (below). Mounted into the refresher; apply edits with `docker compose restart refresher`. The page's tabs come from the same file, so after adding or renaming a region or topic also restart `app`. |
+| `CONFIG_DIR` | `config/` next to `app/` (`/config` in the containers) | The site's config folder (below). |
 
 **Tagger environment** (`tagger` service): `TAGGER_DEVICE` (`NPU`; `CPU` to skip the NPU), `RETRAIN_INTERVAL_HOURS` (`24`), `STORY_THRESHOLD` (`0.92`), `DATA_DIR` (`/data`).
 
-**`sources.json` format:**
+**The config folder** (`config/`): what the site is about, separate from the code, so another site can run the same code with its own folder. `docker-compose.yml` mounts it read-only into `app`, `refresher` and `summarizer` at `/config`; set `CONFIG_DIR` in `.env` to use a folder elsewhere. Edit it, then `docker compose restart app refresher summarizer` (no rebuild). Each file's header describes its fields.
 
-```json
-{
-  "topics": [{"id": "uplifting", "label": "Uplifting", "max_age_hours": 168}, …],
-  "regions": [
-    {"id": "asia", "label": "Asia",
-     "sources": [{"name": "…", "url": "…", "weight": 0.2, "label": "other"}, …],
-     "topic_sources": [{"name": "Google News India Sports", "url": "…", "label": "sport"},
-                       {"name": "The Better India", "url": "…", "label": "uplifting", "max_items": 15}, …]},
-    …
-  ],
-  "extras": [{"name": "Hacker News", "url": "…", "weight": 0.2}, …],
-  "topic_extras": [{"name": "Good News Network", "url": "…", "label": "uplifting"}, …]
-}
-```
+| File | What it holds |
+| --- | --- |
+| `site.yaml` | The site's name (header, browser tab, installed app, structured data), description, and paywalled sites (the page's bypass, and summaries read from an archive) |
+| `regions.yaml` | The region tabs, in order: id, label, the `countries` whose visitors start on it (Cloudflare's `CF-IPCountry`), and the `places` and `abbreviations` that put a worldwide feed's story in its topic tabs |
+| `topics.yaml` | The topic tabs, in order: id (one of the tagger's `TOPICS`), label, optional `max_age_hours`, and `feed_only` (only stories from feeds about the topic, never model tags: `uplifting`) |
+| `sources.yaml` | The feeds: `regions.<id>.sources` (that region's news, weights summing to 1.0) and `.topic_sources`, `extras` (mixed into every tab at their weight), `topic_extras` (topic feeds of no region) |
+| `prompts.yaml` | The summarizer's prompts: an article's summary, and "same story?" for two headlines |
 
 `max_items` (optional, any source): at most this many of the feed's items per view, so a feed whose quality varies can't fill a view (e.g. The Better India is Asia's only regional good-news feed; uncapped it took 50 of Asia's 80 uplifting slots). `max_age_hours` (optional, a topic): its views keep stories this long instead of `MAX_HEADLINE_AGE_HOURS`.
 
 `label` (optional on `sources` and `extras`): what the feed's items are, for the tagger: a topic (its items are always tagged with it) or `other` (general news, a training label only). Topic ids must be ones the tagger knows (`TOPICS` in `tagger/tagger.py`).
 
-The file is validated at startup:
+The folder is validated when each service starts (a broken file stops it with its error):
+- `sources.yaml` lists sources for exactly the regions of `regions.yaml`;
 - region ids are lowercase letters, unique, and not `all`;
 - source names are unique;
 - each region's weights sum to 1.0;
 - `extras` weights sum to less than 1.0. They are mixed into every view, and the view's news gets the rest;
-- every `label` is a topic id or `other`.
+- every `label` is a topic id or `other`;
+- a country, and a place name, belong to one region only.
 
 ## 11. Component Versions
 

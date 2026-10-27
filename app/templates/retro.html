@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Headlines from Asia, Europe, the Americas, Africa and Oceania, plus science and Hacker News. Updated every few minutes.">
-    <title>news.txt</title>
+    <meta name="description" content="{{ site.description }}">
+    <title>{{ site.name }}</title>
     <link rel="icon" href="/favicon.ico" sizes="32x32">
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <link rel="apple-touch-icon" href="/apple-touch-icon.png">
     <link rel="manifest" href="/manifest.webmanifest">
-    <script type="application/ld+json">{{ {"@context": "https://schema.org", "@type": "WebSite", "name": "news.txt", "url": site_url,
-        "description": "Headlines from Asia, Europe, the Americas, Africa and Oceania, plus science and Hacker News. Updated every few minutes."} | tojson }}</script>
+    <script type="application/ld+json">{{ {"@context": "https://schema.org", "@type": "WebSite", "name": site.name, "url": site_url,
+        "description": site.description} | tojson }}</script>
     <meta name="theme-color" content="{{ '#120f0a' if default_theme == 'dark' else '#f3efe4' }}">
     <link rel="stylesheet" href="{{ assets['retro.css'] }}" nonce="{{ csp_nonce }}">
     <script src="{{ assets['retro.js'] }}" nonce="{{ csp_nonce }}" defer></script>
@@ -18,7 +18,7 @@
 <body>
     <header>
         <div class="masthead">
-            <h1>NEWS.TXT<span class="cursor blink">_</span></h1>
+            <h1>{{ site.name | upper }}<span class="cursor blink">_</span></h1>
             <nav aria-label="Controls">
                 <button id="refresh" title="Refresh (r)">[<span class="key">r</span>]efresh</button>
                 <button id="theme" title="Toggle dark mode (d)">[<span class="key">d</span>]ark</button>
@@ -29,7 +29,7 @@
         </div>
         <nav class="advanced" id="advanced" aria-label="Advanced" hidden>
             <button id="reset" title="Forget every setting on this device: region, topic, sort, theme, bypass, site icons, auto refresh, back action, open summaries and sources">reset</button>
-            <button id="install" title="Install news.txt as an app">install</button>
+            <button id="install" title="Install {{ site.name }} as an app">install</button>
             <button id="site-icons" aria-pressed="true" title="Show each website's icon before its headlines">site icons: on</button>
             <button id="auto-refresh" title="Refresh the open tab by itself: off, 5m, 15m, 30m, 1h">auto refresh: off</button>
             <button id="back-action" title="What the Back button does: exit the site, or return to the last tab">back action: exit</button>
@@ -59,7 +59,7 @@
 
     <script id="views-data" type="application/json">{{ views | tojson }}</script>
     <script id="topics-data" type="application/json">{{ topics | tojson }}</script>
-    <script id="paywalled-data" type="application/json">{{ paywalled | tojson }}</script>
+    <script id="paywalled-data" type="application/json">{{ site.paywalled_hosts | tojson }}</script>
     <script id="home-data" type="application/json">{{ home_region | tojson }}</script>
 </body>
 </html>

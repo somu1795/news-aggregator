@@ -16,7 +16,8 @@ from typing import Dict, Iterable, List, Optional
 import redis.asyncio as aioredis
 import structlog
 
-from config import settings, snapshot_key
+from config import settings
+from keys import snapshot_key
 from metrics import REDIS_ERRORS
 
 logger = structlog.get_logger(__name__)

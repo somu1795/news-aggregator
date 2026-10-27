@@ -26,7 +26,9 @@ import redis.asyncio as aioredis
 import structlog
 from prometheus_client import Counter, Gauge, Histogram, start_http_server
 
-from config import CATALOG, feed_text_key, settings, snapshot_key, summary_key
+from catalog import get_catalog
+from config import settings
+from keys import feed_text_key, snapshot_key, summary_key
 from logging_config import configure_logging
 from metrics import REFRESHES
 from models import APIResponse
@@ -155,7 +157,8 @@ async def refresh_topics(
 async def refresh_site_icons(http_client: httpx.AsyncClient, redis_client: aioredis.Redis) -> None:
     """Caches the icons of every published item's website that hasn't got one yet; failures only cost the icons."""
     try:
-        views = CATALOG.view_ids + CATALOG.topic_view_ids
+        catalog = get_catalog()
+        views = catalog.view_ids + catalog.topic_view_ids
         snapshots = await redis_client.mget([snapshot_key(view) for view in views])
         links = [item["link"] for raw in snapshots if raw for item in json.loads(raw)["data"]]
         await asyncio.wait_for(cache_icons(http_client, redis_client, links), settings.ICON_REFRESH_TIMEOUT_SECONDS)
@@ -176,6 +179,7 @@ async def wait_for_next_cycle(redis_client: aioredis.Redis) -> None:
 
 async def run() -> None:
     configure_logging(settings.LOG_LEVEL)
+    get_catalog()  # A broken config folder stops the refresher at once, with its error
     start_http_server(settings.METRICS_PORT)
 
     # Socket timeout must outlast the BLPOP wait in wait_for_next_cycle()

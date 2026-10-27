@@ -9,8 +9,11 @@ import httpx
 import pytest
 import respx
 
+import catalog as catalog_module
 import summarizer
-from config import Catalog, browser_host_key, feed_text_key, full_page_host_key, settings, snapshot_key, summary_key
+from catalog import Catalog
+from config import settings
+from keys import browser_host_key, feed_text_key, full_page_host_key, snapshot_key, summary_key
 from refresher import publish
 from summarizer import LLMUnavailable, summarize_new, top_items
 
@@ -51,7 +54,7 @@ def fake_dns(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def summarizer_settings(monkeypatch):
-    monkeypatch.setattr(summarizer, "CATALOG", CATALOG)
+    monkeypatch.setattr(catalog_module, "_catalog", CATALOG)
     monkeypatch.setattr(settings, "SUMMARIZER_LLM_URL", LLM)
     monkeypatch.setattr(settings, "SUMMARY_TOP_N", 2)
 

@@ -5,7 +5,8 @@ de-duplication, per-publisher cap, and redistribution of unused slots.
 
 import pytest
 
-from config import NewsSource, settings
+from catalog import NewsSource
+from config import settings
 from services.feed_service import mix_headlines
 
 NOW = 1_800_000_000.0

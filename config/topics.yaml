@@ -1,0 +1,23 @@
+# Topics: each region (and "All") gets one tab per topic, in this order.
+#
+#   id             lowercase letters; must be one of the tagger's topics (tagger/tagger.py TOPICS)
+#   label          the tab's name
+#   max_age_hours  its tabs keep stories this long instead of MAX_HEADLINE_AGE_HOURS
+#   feed_only      true: only stories from feeds about this topic (sources labelled with it), never
+#                  ones the tagger's model picked from other feeds (for a topic it can't tell reliably,
+#                  like "uplifting", a tone)
+topics:
+- id: uplifting
+  label: Uplifting
+  max_age_hours: 168
+  feed_only: true
+- id: tech
+  label: Tech
+- id: science
+  label: Science
+- id: nature
+  label: Nature
+- id: culture
+  label: Culture
+- id: sport
+  label: Sport

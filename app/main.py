@@ -22,7 +22,9 @@ from prometheus_fastapi_instrumentator import Instrumentator
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-from config import CATALOG, settings
+from catalog import get_catalog
+from config import settings
+from site_config import get_site
 from deps import limiter
 from logging_config import configure_logging
 from middleware.exception import SmartExceptionMiddleware
@@ -46,11 +48,13 @@ logger = structlog.get_logger(__name__)
 async def lifespan(app: FastAPI):
     """Manages application startup and shutdown resources."""
     # --- Startup ---
+    catalog = get_catalog()  # A broken config folder stops startup with its error
+    get_site()
     logger.info("Initializing Redis connection pool")
     try:
         app.state.redis = create_redis_client(socket_timeout=2, retries=0)  # Fail fast; the in-memory snapshot covers outages
         await app.state.redis.ping()
-        app.state.headlines_cache = HeadlinesCache(app.state.redis, CATALOG.view_ids + CATALOG.topic_view_ids)
+        app.state.headlines_cache = HeadlinesCache(app.state.redis, catalog.view_ids + catalog.topic_view_ids)
         # Load the snapshots now, so every worker can keep serving if Redis later goes down
         await app.state.headlines_cache.warm()
         logger.info("Redis connection pool initialized successfully")

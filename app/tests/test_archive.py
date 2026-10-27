@@ -8,7 +8,8 @@ import sqlite3
 
 import pytest
 
-from config import settings, summary_key
+from config import settings
+from keys import summary_key
 from refresher import publish
 from services import archive as archive_module
 

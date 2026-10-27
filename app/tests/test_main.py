@@ -10,7 +10,9 @@ from starlette.requests import Request
 
 from deps import get_real_ip, limiter
 from main import app
-from config import ALL_VIEW, CATALOG, settings, snapshot_key, topic_view
+from catalog import ALL_VIEW, get_catalog, topic_view
+from config import settings
+from keys import snapshot_key
 
 # Using a fixed time for reproducible tests
 FIXED_TIME_UNIX = 1672531200 # 2023-01-01 00:00:00
@@ -93,10 +95,10 @@ def test_root_endpoint_html(client):
     assert "text/html" in response.headers['content-type']
     assert "NEWS.TXT" in response.text
     views = json.loads(response.text.split('<script id="views-data" type="application/json">')[1].split("</script>")[0])
-    assert [v["id"] for v in views] == CATALOG.view_ids
+    assert [v["id"] for v in views] == get_catalog().view_ids
     assert views[0] == {"id": "all", "label": "All"}
     topics = json.loads(response.text.split('<script id="topics-data" type="application/json">')[1].split("</script>")[0])
-    assert [t["id"] for t in topics] == ["everything"] + [t.id for t in CATALOG.topics]
+    assert [t["id"] for t in topics] == ["everything"] + [t.id for t in get_catalog().topics]
 
 @pytest.mark.parametrize("path", ["/retro", "/archive"])
 def test_old_urls_redirect_home(client, path):
@@ -167,7 +169,7 @@ async def test_get_headlines_serves_snapshot(client, mock_redis):
 
 async def test_get_headlines_by_region(client, mock_redis):
     """Each region is its own snapshot; "all" is the default."""
-    region = CATALOG.regions[0].id
+    region = get_catalog().regions[0].id
     await publish_snapshot(mock_redis, title="Everywhere")
     await publish_snapshot(mock_redis, title="Regional", view=region)
 
@@ -177,7 +179,7 @@ async def test_get_headlines_by_region(client, mock_redis):
 
 async def test_get_headlines_by_topic(client, mock_redis):
     """Each region's topic is its own snapshot; no topic means the region's main view."""
-    region, topic = CATALOG.regions[0].id, CATALOG.topics[0].id
+    region, topic = get_catalog().regions[0].id, get_catalog().topics[0].id
     await publish_snapshot(mock_redis, title="Regional", view=region)
     await publish_snapshot(mock_redis, title="Regional topic", view=topic_view(region, topic))
     await publish_snapshot(mock_redis, title="Everywhere topic", view=topic_view(ALL_VIEW, topic))
@@ -188,7 +190,7 @@ async def test_get_headlines_by_topic(client, mock_redis):
 
 async def test_search_index_has_each_link_once_with_its_views(client, mock_redis):
     """Every view's headlines in one response, for the page's search: each link once, with the views it's in."""
-    region, topic = CATALOG.regions[0].id, CATALOG.topics[0].id
+    region, topic = get_catalog().regions[0].id, get_catalog().topics[0].id
     now = time.time()
     await publish_view(mock_redis, topic_view(region, topic), "https://a.example/shared", fetched_at=now - 30)
     await publish_view(mock_redis, region, "https://a.example/regional", "https://a.example/shared", fetched_at=now - 60)
@@ -216,7 +218,7 @@ def test_search_index_before_first_refresh(client):
 async def test_search_index_is_rebuilt_only_when_a_view_changes(mock_redis, monkeypatch):
     from services.headlines_cache import HeadlinesCache
 
-    views = [ALL_VIEW, CATALOG.regions[0].id]
+    views = [ALL_VIEW, get_catalog().regions[0].id]
     await publish_view(mock_redis, ALL_VIEW, "https://a.example/1")
     cache = HeadlinesCache(mock_redis, views)
     first = await cache.search_index(views)
@@ -458,3 +460,15 @@ def test_sitemap_lists_the_page(client):
     response = client.get("/sitemap.xml")
     assert response.headers["content-type"].startswith("application/xml")
     assert "<loc>https://testserver/</loc>" in response.text
+
+
+def test_the_site_is_named_by_its_config(client, monkeypatch):
+    import site_config
+    from site_config import Prompts, Site
+    monkeypatch.setattr(site_config, "_site", Site(name="local.txt", description="News of our town.",
+                                                   prompts=Prompts(summary="s", same_story="t")))
+    page = client.get("/", headers={"Accept": "text/html"}).text
+    assert "<title>local.txt</title>" in page and "LOCAL.TXT" in page and "News of our town." in page
+    manifest = client.get("/manifest.webmanifest")
+    assert manifest.headers["content-type"] == "application/manifest+json"
+    assert manifest.json()["name"] == "local.txt" and manifest.json()["description"] == "News of our town."

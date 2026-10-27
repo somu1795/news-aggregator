@@ -23,10 +23,11 @@ import lxml.html
 import redis.asyncio as aioredis
 import structlog
 
-from config import ALL_VIEW, CATALOG, OTHER_LABEL, Catalog, NewsSource, Topic, TopicSource, settings, topic_view
+from catalog import ALL_VIEW, OTHER_LABEL, Catalog, NewsSource, Topic, TopicSource, get_catalog, topic_view
+from config import settings
 from metrics import FEED_FETCH_FAILURES, FEED_FETCHES
 from services.link_resolver import resolve_link
-from services.places import item_regions
+from services.places import matcher_for
 
 logger = structlog.get_logger(__name__)
 
@@ -419,7 +420,7 @@ async def get_fresh_views(
     "all" list (see build_views), and resolves links.
     Returns ({view_id: headlines}, {source name: fetched headlines}).
     """
-    catalog = CATALOG
+    catalog = get_catalog()
     sources = [s for region in catalog.regions for s in region.sources] + catalog.extras
     results_by_source = await _fetch_all(client, sources)
 
@@ -476,11 +477,6 @@ async def _tag(client: httpx.AsyncClient, catalog: Catalog, results_by_source: D
     }
 
 
-# Topics whose model tags are too unreliable to show: "uplifting" is a tone, and
-# even its most confident tags were about half wrong on live news.
-FEED_ONLY_TOPICS = {"uplifting"}
-
-
 def build_topic_views(
     catalog: Catalog, results_by_source: Dict[str, List[Dict]], tags_by_title: Dict[str, Set[str]], now: float,
 ) -> Dict[str, List[Dict]]:
@@ -493,17 +489,18 @@ def build_topic_views(
        they're precise), mixed equally. In a region's view: first the stories
        only that region's own feeds have; then the shared feeds' (extras, topic
        extras: worldwide outlets like Mongabay) stories about that region,
-       i.e. naming one of its places (services/places.py); then their stories
+       i.e. naming one of its places (regions.yaml, services/places.py); then their stories
        that name no place; then global stories: those in two or more regions'
        own feeds (e.g. a TechCrunch story in several Google News Technology
        editions). A shared feed's story about another region is left out, so
        region views don't all show the same worldwide outlets.
     2. Items the model tagged from other feeds, in the same order, only to
-       fill the view, and never for FEED_ONLY_TOPICS.
+       fill the view, and never for a feed_only topic (topics.yaml).
 
     Empty views are kept: a region can have no uplifting news right now.
     """
     shared = catalog.extras + catalog.topic_extras
+    item_regions = matcher_for(catalog).item_regions
     own = {region.id: region.topic_sources + region.sources for region in catalog.regions}
     everything = [s for sources in own.values() for s in sources] + shared
 
@@ -516,7 +513,7 @@ def build_topic_views(
             return mix_headlines(equal(sources), items, now, view=view, max_age_hours=topic.max_age_hours,
                                  limit=build_limit())
         lists = [mixed([s for s in sources if s.label == topic.id], items) for sources, items in groups]
-        if topic.id not in FEED_ONLY_TOPICS:
+        if not topic.feed_only:
             lists += [mixed([s for s in sources if s.label != topic.id], items) for sources, items in groups]
         seen, combined = set(), []
         for items in lists:
@@ -562,7 +559,7 @@ async def get_topic_views(
     get_fresh_views) and the topic feeds, and resolves their links.
     Raises if the tagger is unavailable.
     """
-    catalog = CATALOG
+    catalog = get_catalog()
     if not catalog.topics:
         return {}
     results = results_by_source | await _fetch_topic_feeds(client, catalog)

@@ -2,6 +2,7 @@
 Frontend routes.
 
 GET /         — the main page (minimalist retro design), or JSON for clients that ask only for JSON.
+GET /manifest.webmanifest — the installed app's name and icons (site.yaml).
 GET /robots.txt, /sitemap.xml — search engines and AI search may crawl, AI training is asked not to; the page is "/".
 GET /archive, /retro — old URLs (the removed classic page, an evaluation URL); redirect to /.
 GET /static/<file> — the page's stylesheet and script (StaticAssets, mounted in main.py).
@@ -16,17 +17,16 @@ from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse,
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from config import ALL_VIEW, CATALOG, PAYWALLED_HOSTS, settings
+from catalog import ALL_VIEW, get_catalog
+from config import settings
 from deps import limiter
 from services.geo import region_for_country
+from site_config import get_site
 
 router = APIRouter()
 
 templates = Jinja2Templates(directory="templates")
 
-# Region and topic tabs for the main page, in display order
-_VIEWS = [{"id": ALL_VIEW, "label": "All"}] + [{"id": r.id, "label": r.label} for r in CATALOG.regions]
-_TOPICS = [{"id": "everything", "label": "Everything"}] + [{"id": t.id, "label": t.label} for t in CATALOG.topics]
 
 # The page links to its stylesheet and script by a hash of their content, so browsers and the CDN
 # can keep them for a year: a changed file gets a new URL
@@ -60,8 +60,12 @@ async def root(request: Request):
     # The page, unless JSON is all the client asks for (crawlers and tools often send */* or nothing)
     if "text/html" in accept_header or "application/json" not in accept_header or request.method == "HEAD":
         nonce = secrets.token_urlsafe(16)
+        catalog = get_catalog()
+        # Region and topic tabs, in display order
+        views = [{"id": ALL_VIEW, "label": "All"}] + [{"id": r.id, "label": r.label} for r in catalog.regions]
+        topics = [{"id": "everything", "label": "Everything"}] + [{"id": t.id, "label": t.label} for t in catalog.topics]
         response = templates.TemplateResponse(
-            request, "retro.html", {"views": _VIEWS, "topics": _TOPICS, "paywalled": PAYWALLED_HOSTS, "csp_nonce": nonce,
+            request, "retro.html", {"views": views, "topics": topics, "site": get_site(), "csp_nonce": nonce,
              "assets": _ASSETS, "site_url": _site_url(request), "default_theme": settings.DEFAULT_THEME,
              # Starting tab for visitors who haven't chosen one (country from Cloudflare)
              "home_region": region_for_country(request.headers.get("cf-ipcountry"))},
@@ -113,6 +117,26 @@ async def sitemap(request: Request):
         f'  <url><loc>{_site_url(request)}</loc></url>\n'
         '</urlset>\n',
         media_type="application/xml", headers={"Cache-Control": "public, max-age=86400"})
+
+
+@router.get("/manifest.webmanifest", include_in_schema=False)
+async def manifest():
+    """What a browser shows for the installed app; the icons are files Caddy serves (caddy/static)."""
+    site = get_site()
+    return JSONResponse({
+        "name": site.name,
+        "short_name": site.name,
+        "description": site.description,
+        "start_url": "/",
+        "scope": "/",
+        "display": "standalone",
+        "background_color": "#120f0a",
+        "theme_color": "#120f0a",
+        "icons": [
+            {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png"},
+            {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png"},
+        ],
+    }, media_type="application/manifest+json", headers={"Cache-Control": "public, max-age=86400"})
 
 
 @router.get("/archive", include_in_schema=False)

@@ -12,8 +12,11 @@ import pytest
 import respx
 from prometheus_client import REGISTRY
 
+import catalog as catalog_module
 import services.feed_service as feed_service
-from config import ALL_VIEW, Catalog, settings, snapshot_key
+from catalog import ALL_VIEW, Catalog
+from config import settings
+from keys import snapshot_key
 from refresher import refresh_once
 
 pytestmark = pytest.mark.asyncio
@@ -64,7 +67,7 @@ def sample(name, labels=None):
 
 @pytest.fixture(autouse=True)
 def catalog(monkeypatch):
-    monkeypatch.setattr(feed_service, "CATALOG", CATALOG)
+    monkeypatch.setattr(catalog_module, "_catalog", CATALOG)
     monkeypatch.setattr(settings, "MAX_HEADLINES", 20)
 
 
@@ -172,24 +175,26 @@ async def test_refresh_keeps_previous_snapshots_when_everything_fails(mock_redis
 
 
 def test_shipped_catalog_is_valid():
-    """sources.json loads, every region and the "all" view have sources, and every region has topic feeds."""
-    from config import CATALOG as shipped
+    """The config folder loads, every region and the "all" view have sources, and every region has topic feeds."""
+    from pathlib import Path
+    from catalog import load_catalog
+    shipped = load_catalog(Path(settings.CONFIG_DIR))
     assert shipped.view_ids[0] == ALL_VIEW and len(shipped.view_ids) == len(shipped.regions) + 1
     assert all(region.sources and region.topic_sources for region in shipped.regions)
     assert len(shipped.topic_view_ids) == len(shipped.view_ids) * len(shipped.topics)
 
 
 def test_source_labels_must_be_topics(tmp_path):
-    from config import load_catalog
-    path = tmp_path / "sources.json"
-    path.write_text(json.dumps({
-        "topics": [{"id": "sport", "label": "Sport"}],
-        "regions": [{"id": "asia", "label": "Asia", "sources": [{"name": "A", "url": "https://a", "weight": 1.0}],
-                     "topic_sources": [{"name": "B", "url": "https://b", "label": "gossip"}]}],
+    from catalog import load_catalog
+    (tmp_path / "topics.yaml").write_text(json.dumps({"topics": [{"id": "sport", "label": "Sport"}]}))
+    (tmp_path / "regions.yaml").write_text(json.dumps({"regions": [{"id": "asia", "label": "Asia"}]}))
+    (tmp_path / "sources.yaml").write_text(json.dumps({  # JSON is YAML too
+        "regions": {"asia": {"sources": [{"name": "A", "url": "https://a", "weight": 1.0}],
+                             "topic_sources": [{"name": "B", "url": "https://b", "label": "gossip"}]}},
         "extras": [],
     }))
     with pytest.raises(ValueError, match="gossip"):
-        load_catalog(path)
+        load_catalog(tmp_path)
 
 
 @respx.mock
@@ -206,7 +211,7 @@ async def test_moved_feed_is_followed(mock_redis):
 # --- Topic views ---
 
 TOPIC_CATALOG = Catalog(
-    topics=[{"id": "sport", "label": "Sport"}, {"id": "uplifting", "label": "Uplifting"}],
+    topics=[{"id": "sport", "label": "Sport"}, {"id": "uplifting", "label": "Uplifting", "feed_only": True}],
     regions=[
         {"id": "asia", "label": "Asia", "sources": [
             {"name": "GN India", "url": "https://news.google.com/rss?ceid=IN:en", "weight": 1.0, "label": "other"},
@@ -234,7 +239,7 @@ def fake_tagger(request):
 
 @pytest.fixture
 def topic_catalog(monkeypatch):
-    monkeypatch.setattr(feed_service, "CATALOG", TOPIC_CATALOG)
+    monkeypatch.setattr(catalog_module, "_catalog", TOPIC_CATALOG)
     monkeypatch.setattr(feed_service, "_topic_feeds", {"at": float("-inf"), "results": {}})
     mock_feeds()
     respx.get("https://sports.example/rss").mock(return_value=httpx.Response(200, content=outlet_feed("sports.example", 5)))
@@ -342,7 +347,7 @@ def test_a_topic_can_keep_older_stories():
     catalog = Catalog(
         regions=[{"id": "asia", "label": "Asia", "sources": [{"name": "news", "url": "https://n.example/rss", "weight": 1.0}]}],
         extras=[],
-        topics=[{"id": "uplifting", "label": "Uplifting", "max_age_hours": 168}, {"id": "tech", "label": "Tech"}],
+        topics=[{"id": "uplifting", "label": "Uplifting", "max_age_hours": 168, "feed_only": True}, {"id": "tech", "label": "Tech"}],
         topic_extras=[{"name": "Good news", "url": "https://g.example/rss", "label": "uplifting"},
                       {"name": "Tech news", "url": "https://t.example/rss", "label": "tech"}],
     )
@@ -361,7 +366,7 @@ def test_a_topic_can_keep_older_stories():
 
 
 def test_a_source_can_be_capped():
-    from config import NewsSource
+    from catalog import NewsSource
     from services.feed_service import mix_headlines
     now = time.time()
     sources = [NewsSource(name="Busy", url="https://b.example/rss", weight=0.9, max_items=2),

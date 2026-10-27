@@ -20,7 +20,8 @@ import structlog
 from fastapi import APIRouter, Request, Response
 from prometheus_client import CONTENT_TYPE_LATEST, REGISTRY, CollectorRegistry, generate_latest, multiprocess
 
-from config import ALL_VIEW, settings
+from catalog import ALL_VIEW
+from config import settings
 
 logger = structlog.get_logger(__name__)
 
