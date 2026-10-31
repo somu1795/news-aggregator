@@ -8,6 +8,8 @@ GET /api/search-index — every view's headlines in one response, each link
 once with the views it's in: what the page's search looks through.
 These paths never fetch from upstream; they read a per-process in-memory copy
 that is re-synced from Redis every few seconds.
+GET /api/search?q=<words>[&sort=best] — older headlines from the archive
+(services/archive_search.py), read-only; the page shows them below its own results.
 
 Browsers cache a response until the next refresh is due (Cache-Control). The
 CDN (CDN-Cache-Control, which Cloudflare honours and browsers ignore) keeps it
@@ -16,20 +18,24 @@ reach the origin; it may then serve a stale copy while it re-fetches, or for a
 day if the origin is unreachable.
 """
 
+import asyncio
+import json
 import time
-from typing import Optional
+from typing import Literal, Optional
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 
 from catalog import ALL_VIEW, get_catalog, topic_view
 from config import settings
 from deps import limiter
-from models import APIResponse, SearchIndex
+from models import APIResponse, ArchiveSearch, SearchIndex
+from services import archive_search
 from services.headlines_cache import Snapshot
 
 router = APIRouter()
 
 EDGE_MIN_SECONDS = 60  # Edge copies may be up to this much older than the newest snapshot
+ARCHIVE_SEARCH_SECONDS = 300  # Older headlines change slowly: a search is cached this long
 
 
 _NOT_YET = "Headlines are not available yet, please try again shortly"
@@ -62,6 +68,22 @@ async def get_search_index(request: Request):
     if snapshot is None:
         raise HTTPException(status_code=503, detail=_NOT_YET, headers={"Retry-After": "10"})
     return _cached(snapshot)
+
+
+@router.api_route("/api/search", response_model=ArchiveSearch, methods=["GET", "HEAD"])
+@limiter.limit(settings.API_RATE_LIMIT)
+async def search_archive(request: Request, q: str = Query(min_length=1, max_length=200),
+                         sort: Literal["newest", "best"] = "newest"):
+    try:
+        result = await asyncio.to_thread(archive_search.search, q, sort)
+    except archive_search.ArchiveUnavailable:
+        raise HTTPException(status_code=503, detail="Older headlines can't be searched right now")
+    return Response(
+        content=json.dumps(result, separators=(",", ":")),
+        media_type="application/json",
+        headers={"Cache-Control": f"public, max-age={ARCHIVE_SEARCH_SECONDS}",
+                 "CDN-Cache-Control": f"public, max-age={ARCHIVE_SEARCH_SECONDS}"},
+    )
 
 
 def _cached(snapshot: Snapshot) -> Response:

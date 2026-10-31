@@ -2,7 +2,7 @@
 The headline archive: every published headline, its link and summary, kept
 forever in a SQLite file of its own (ARCHIVE_PATH), plus each view's order
 once an hour, so a past front page can be shown again later. Only the
-refresher writes it; nothing reads it yet.
+refresher writes it; the app searches it, read-only (services/archive_search.py).
 """
 
 import json
@@ -41,6 +41,24 @@ CREATE TABLE IF NOT EXISTS snapshots (
     items TEXT NOT NULL,
     PRIMARY KEY (view, taken)
 );
+-- Full-text index of items' title, source and summary, for the search of older headlines
+-- (services/archive_search.py): words of any case and accents, by their first 1-4 letters;
+-- which column a word is in, but not where (no phrase searches, less than half the size)
+CREATE VIRTUAL TABLE IF NOT EXISTS items_search USING fts5(
+    title, source, summary, content=items, content_rowid=id,
+    tokenize="unicode61 remove_diacritics 2", prefix="1 2 3 4", detail=column
+);
+-- Its words and how many items have each, for correcting typos
+CREATE VIRTUAL TABLE IF NOT EXISTS items_search_vocab USING fts5vocab(items_search, 'row');
+CREATE TRIGGER IF NOT EXISTS items_search_insert AFTER INSERT ON items BEGIN
+    INSERT INTO items_search (rowid, title, source, summary) VALUES (new.id, new.title, new.source, new.summary);
+END;
+-- Every refresh rewrites each item (UPSERT), mostly unchanged: only real changes touch the index
+CREATE TRIGGER IF NOT EXISTS items_search_update AFTER UPDATE OF title, source, summary ON items
+WHEN old.title IS NOT new.title OR old.source IS NOT new.source OR old.summary IS NOT new.summary BEGIN
+    INSERT INTO items_search (items_search, rowid, title, source, summary) VALUES ('delete', old.id, old.title, old.source, old.summary);
+    INSERT INTO items_search (rowid, title, source, summary) VALUES (new.id, new.title, new.source, new.summary);
+END;
 """
 
 UPSERT = """
@@ -60,7 +78,11 @@ def connect(path: str) -> sqlite3.Connection:
     db = sqlite3.connect(path)
     db.execute("PRAGMA journal_mode=WAL")  # Readers (a future timeline) never block the refresher
     db.execute("PRAGMA synchronous=NORMAL")
+    indexed = db.execute("SELECT 1 FROM sqlite_master WHERE name = 'items_search'").fetchone()
     db.executescript(SCHEMA)
+    if not indexed:  # An archive from before search: index what it already holds
+        with db:
+            db.execute("INSERT INTO items_search (items_search) VALUES ('rebuild')")
     return db
 
 

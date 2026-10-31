@@ -12,6 +12,18 @@ import sys
 
 import structlog
 
+SEARCH_PATH = "/api/search?"
+
+
+class RedactSearches(logging.Filter):
+    """Drops the query of /api/search from Uvicorn's access log: what visitors search isn't recorded."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if isinstance(args, tuple) and len(args) >= 3 and str(args[2]).startswith(SEARCH_PATH):
+            record.args = args[:2] + (SEARCH_PATH[:-1],) + args[3:]
+        return True
+
 
 def configure_logging(log_level: str = "INFO") -> None:
     """
@@ -61,6 +73,8 @@ def configure_logging(log_level: str = "INFO") -> None:
     root.handlers.clear()
     root.addHandler(handler)
     root.setLevel(level)
+
+    logging.getLogger("uvicorn.access").addFilter(RedactSearches())
 
     # Reduce noise from third-party loggers
     logging.getLogger("httpx").setLevel(logging.WARNING)

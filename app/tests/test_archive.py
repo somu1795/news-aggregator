@@ -101,3 +101,40 @@ async def test_google_news_publisher_suffix_is_not_a_new_title(mock_redis, archi
     db = archive_db()
     assert db.execute("SELECT title FROM items").fetchall() == [("Story 1",)]
     assert db.execute("SELECT title FROM titles").fetchall() == [("Story 1",)]
+
+
+def searchable(db, query):
+    return [link for (link,) in db.execute(
+        "SELECT i.link FROM items_search s JOIN items i ON i.id = s.rowid WHERE items_search MATCH ? ORDER BY i.id", (query,))]
+
+
+async def test_headlines_and_summaries_are_searchable_as_they_are_archived(mock_redis, archive_db):
+    await mock_redis.set(summary_key("https://pub.example/1"), json.dumps({"text": "The council approved a bridge.", "model": "m"}))
+    await publish(mock_redis, {"all": [item(1), {**item(2), "title": "Café owners protest"}]}, 1000.0)
+
+    db = archive_db()
+    assert searchable(db, '"bridge"') == ["https://pub.example/1"]  # Its summary
+    assert searchable(db, '"cafe"*') == ["https://pub.example/2"]  # Accents ignored
+    assert searchable(db, '"pu"*') == ["https://pub.example/1", "https://pub.example/2"]  # Its source
+
+
+async def test_the_search_index_follows_changes_and_skips_unchanged_headlines(mock_redis, archive_db):
+    await publish(mock_redis, {"all": [item(1)]}, 1000.0)
+    db = archive_db()
+    segments = db.execute("SELECT count(*) FROM items_search_data").fetchone()[0]
+    await publish(mock_redis, {"all": [item(1)]}, 2000.0)  # Every refresh rewrites the row
+    assert db.execute("SELECT count(*) FROM items_search_data").fetchone()[0] == segments  # The index wasn't touched
+
+    await publish(mock_redis, {"all": [{**item(1), "title": "Bridge opens"}]}, 3000.0)
+    assert searchable(db, '"bridge"') == ["https://pub.example/1"]
+    assert searchable(db, '"story"') == []  # The old title is gone from the index
+
+
+async def test_an_archive_from_before_search_is_indexed_on_first_use(archive_db):
+    db = archive_db()
+    db.executescript(archive_module.SCHEMA.split("CREATE VIRTUAL TABLE")[0])  # The tables as they were
+    db.execute("INSERT INTO items (link, title, source, first_seen, last_seen) VALUES ('https://pub.example/1', 'Old story', 'Pub', 1, 1)")
+    db.commit()
+
+    archive_module.connect(settings.ARCHIVE_PATH).close()
+    assert searchable(archive_db(), '"old"') == ["https://pub.example/1"]

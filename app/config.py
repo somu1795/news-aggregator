@@ -118,8 +118,9 @@ class Settings(BaseSettings):
     FEED_TEXT_TTL_SECONDS: int = 2 * 86400  # The feed's own text of published items, for the summarizer
 
     # --- Archive (every published headline, kept; see services/archive.py) ---
-    ARCHIVE_PATH: str = ""  # A SQLite file, written by the refresher; empty disables the archive
+    ARCHIVE_PATH: str = ""  # A SQLite file, written by the refresher, searched by the app; empty disables the archive
     ARCHIVE_SNAPSHOT_SECONDS: int = 3600  # How often each view's order is recorded
+    SEARCH_TYPO_FALLBACK: bool = True  # Searching older headlines: a word nothing starts with is searched as the closest known word
 
     # --- The site's own files: regions, topics, sources, name, prompts (see catalog.py, site_config.py) ---
     # In the containers, docker-compose.yml mounts the repo's config folder (or CONFIG_DIR) here

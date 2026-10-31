@@ -215,6 +215,44 @@ def test_search_index_before_first_refresh(client):
     response = client.get("/api/search-index")
     assert response.status_code == 503 and response.headers["retry-after"] == "10"
 
+def test_older_headlines_are_searched_in_the_archive(client, tmp_path, monkeypatch):
+    from services import archive
+    monkeypatch.setattr(settings, "ARCHIVE_PATH", str(tmp_path / "archive.db"))
+    archive.archive({"all": [{"title": "Ukraine talks resume", "link": "https://a.example/1", "source": "BBC",
+                              "published": FIXED_TIME_UNIX}]}, FIXED_TIME_UNIX + 60)
+
+    response = client.get("/api/search?q=ukrane+talks")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "items": [{"title": "Ukraine talks resume", "link": "https://a.example/1", "source": "BBC",
+                   "published": FIXED_TIME_UNIX, "summary": None, "comments": None}],
+        "words": ["ukraine", "talks"], "corrected": [{"from": "ukrane", "to": "ukraine"}]}
+    assert response.headers["cache-control"] == "public, max-age=300"
+    assert response.headers["cdn-cache-control"] == "public, max-age=300"
+    assert client.get("/api/search?q=talks&sort=best").json()["items"][0]["link"] == "https://a.example/1"
+
+def test_archive_search_rejects_bad_parameters(client):
+    assert client.get("/api/search?q=talks&sort=random").status_code == 422
+    assert client.get("/api/search?q=" + "a" * 201).status_code == 422
+    assert client.get("/api/search").status_code == 422
+
+def test_archive_search_without_an_archive(client, monkeypatch):
+    monkeypatch.setattr(settings, "ARCHIVE_PATH", "")
+    response = client.get("/api/search?q=talks")
+    assert response.status_code == 503 and "retry-after" not in response.headers
+
+def test_searches_are_not_written_to_the_access_log():
+    import logging
+    from logging_config import RedactSearches
+    record = logging.LogRecord("uvicorn.access", logging.INFO, "", 0, '%s - "%s %s HTTP/%s" %d', (
+        "1.2.3.4:0", "GET", "/api/search?q=private+words&sort=best", "1.1", 200), None)
+    other = logging.LogRecord("uvicorn.access", logging.INFO, "", 0, '%s - "%s %s HTTP/%s" %d', (
+        "1.2.3.4:0", "GET", "/api/headlines?region=asia", "1.1", 200), None)
+    assert RedactSearches().filter(record) and RedactSearches().filter(other)
+    assert record.getMessage() == '1.2.3.4:0 - "GET /api/search HTTP/1.1" 200'
+    assert other.getMessage() == '1.2.3.4:0 - "GET /api/headlines?region=asia HTTP/1.1" 200'
+
 async def test_search_index_is_rebuilt_only_when_a_view_changes(mock_redis, monkeypatch):
     from services.headlines_cache import HeadlinesCache
 

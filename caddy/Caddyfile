@@ -16,10 +16,18 @@
 
 # Define a server that listens only on HTTP port 7001.
 :7001 {
-	# Log to standard output in a structured JSON format.
+	# Log to standard output in a structured JSON format, without what visitors search
+	# (the q of /api/search; the app's own access log drops it too)
 	log {
 		output stdout
-		format json
+		format filter {
+			wrap json
+			fields {
+				request>uri query {
+					delete q
+				}
+			}
+		}
 	}
 	encode zstd gzip
 

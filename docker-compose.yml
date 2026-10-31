@@ -33,10 +33,16 @@ services:
       - LOG_LEVEL=INFO
       # Lets /metrics aggregate all Uvicorn workers (see app/entrypoint.sh)
       - PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus-metrics
+      # The refresher's headline archive, which the search of older headlines reads
+      - ARCHIVE_PATH=/archive/archive.db
+      - SEARCH_TYPO_FALLBACK
     # The code is baked into the image; the site's config folder is mounted (see refresher).
     # For development, add `- ./app:/app:ro` to live-mount your local code.
     volumes:
       - ${CONFIG_DIR:-./config}:/config:ro
+      # Opened read-only (services/archive_search.py), but SQLite needs to write its
+      # shared-memory file next to it while the refresher writes, so not mounted :ro
+      - archive_data:/archive
     deploy:
       resources:
         # These are resource limits per container. To handle very high traffic (10k+ users),

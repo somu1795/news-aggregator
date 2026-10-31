@@ -5,7 +5,7 @@ headlines routes (which serve them).
 
 from typing import List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class RelatedItem(BaseModel):
@@ -44,3 +44,26 @@ class SearchIndex(BaseModel):
     items: List[SearchItem]
     fetched_at: float  # The newest view's
     expires_at: float  # The soonest any view is due to be refreshed
+
+
+class ArchivedItem(BaseModel):
+    """An older headline from the archive."""
+    title: str
+    link: str
+    source: str
+    published: float  # When first seen, for a headline only ever seen folded under another
+    summary: Optional[str] = None
+    comments: Optional[str] = None
+
+
+class Correction(BaseModel):
+    """A typed word nothing starts with, searched as the closest known word."""
+    from_: str = Field(alias="from")
+    to: str
+
+
+class ArchiveSearch(BaseModel):
+    """Older headlines matching a search (GET /api/search, services/archive_search.py)."""
+    items: List[ArchivedItem]
+    words: List[str]  # The words searched (corrected ones replaced), for highlighting
+    corrected: List[Correction]

@@ -37,7 +37,7 @@
             <span class="note" id="advanced-note" aria-live="polite"></span>
         </nav>
         <div class="search" id="search" role="search" hidden>
-            <input id="search-input" type="search" placeholder="search every tab: headlines and summaries" aria-label="Search every tab"
+            <input id="search-input" type="search" placeholder="search headlines and summaries, older ones too" aria-label="Search headlines"
                 autocomplete="off" spellcheck="false">
             <span class="note" id="search-note" aria-live="polite"></span>
         </div>
@@ -50,6 +50,10 @@
     <main>
         <ol id="list"></ol>
         <p class="notice" id="notice" hidden></p>
+        <section class="older" id="older" aria-label="Older headlines" hidden>
+            <p class="older-head" id="older-head" aria-live="polite"></p>
+            <ol id="older-list"></ol>
+        </section>
     </main>
 
     <footer>

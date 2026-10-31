@@ -41,6 +41,9 @@
     var searchEl = document.getElementById("search");
     var searchInput = document.getElementById("search-input");
     var searchNote = document.getElementById("search-note");
+    var olderEl = document.getElementById("older");
+    var olderHead = document.getElementById("older-head");
+    var olderList = document.getElementById("older-list");
     var advancedNote = document.getElementById("advanced-note");
     var bypassEl = document.getElementById("bypass");
 
@@ -456,10 +459,125 @@
         searchEl.hidden = true;
         searchBtn.classList.remove("on");
         searchBtn.setAttribute("aria-expanded", "false");
+        stopOlder();
         if (redraw !== false) {
             render();
             updateStatus();
         }
+    }
+
+    // --- Older headlines: the server's archive, below the search results ---
+    // Asked for once typing pauses (OLDER_DELAY_MS); a newer keystroke cancels the request in flight, and
+    // recent answers are kept, so going back to a query shows its results at once. Headlines already in
+    // the results above are left out.
+    var OLDER_DELAY_MS = 150;
+    var OLDER_KEPT = 30;
+    var older = { sort: "newest", key: "", result: null, loading: false, error: null, timer: 0, controller: null, kept: new Map() };
+
+    function olderKey() { return older.sort + "\n" + normalize(search.query).trim().replace(/\s+/g, " "); }
+    function scheduleOlder() {
+        clearTimeout(older.timer);
+        if (older.controller) older.controller.abort();
+        older.controller = null;
+        older.key = olderKey();
+        older.error = null;
+        older.result = searching() ? older.kept.get(older.key) || null : null;
+        older.loading = searching() && !older.result;
+        if (older.loading) older.timer = setTimeout(fetchOlder, OLDER_DELAY_MS);
+    }
+    function fetchOlder() {
+        var key = older.key, controller = older.controller = new AbortController();
+        getJson("/api/search?q=" + encodeURIComponent(search.query.trim()) +
+            (older.sort === "best" ? "&sort=best" : ""), controller.signal)
+            .then(function (body) {
+                older.kept.delete(key);
+                older.kept.set(key, body);
+                if (older.kept.size > OLDER_KEPT) older.kept.delete(older.kept.keys().next().value);  // The oldest
+                if (key === older.key) older.result = body;
+            })
+            .catch(function (error) {
+                if (key === older.key && error.name !== "AbortError") older.error = error.message;
+            })
+            .then(function () {
+                if (key !== older.key) return;  // A newer query took over
+                older.loading = false;
+                older.controller = null;
+                renderOlder();
+            });
+    }
+    function stopOlder() {
+        clearTimeout(older.timer);
+        if (older.controller) older.controller.abort();
+        older.controller = null;
+        older.key = "";
+        older.result = null;
+        older.loading = false;
+        renderOlder();
+    }
+    function titleKey(item) { return normalize(cleanTitle(item.title, item.source)).replace(/[^a-z0-9]+/g, " ").trim(); }
+    // The older results to list: none of the headlines the search above already has, each headline once
+    function olderItems() {
+        var shown = new Set();
+        (search.index || []).forEach(function (entry) {
+            shown.add(entry.item.link);
+            shown.add(titleKey(entry.item));
+            (entry.item.related || []).forEach(function (other) { shown.add(other.link); });
+        });
+        var words = older.result.words.map(function (w) { return new RegExp("(^|[^a-z0-9])" + escapeRegExp(normalize(w))); });
+        return older.result.items.filter(function (item) {
+            var key = titleKey(item);
+            if (shown.has(item.link) || shown.has(key)) return false;
+            shown.add(key);
+            return true;
+        }).map(function (item) {
+            var title = normalize(cleanTitle(item.title, item.source));
+            return Object.assign({}, item, { inSummaryOnly: !words.every(function (w) { return w.test(title); }) });
+        });
+    }
+    function renderOlder() {
+        olderList.textContent = "";
+        olderHead.textContent = "";
+        olderEl.hidden = !searching();
+        if (olderEl.hidden) return;
+        olderHead.appendChild(document.createTextNode("older headlines"));
+        if (older.loading) { olderHead.appendChild(document.createTextNode(" · searching...")); return; }
+        if (older.error) { olderHead.appendChild(document.createTextNode(" · couldn't search them (" + older.error + ")")); return; }
+        if (!older.result) return;
+        var items = olderItems();
+        if (!items.length && !list.children.length) {
+            olderHead.textContent = "nothing matches “" + search.query.trim() + "”";
+            return;
+        }
+        olderHead.appendChild(document.createTextNode(" · " + (items.length || "none")));
+        older.result.corrected.forEach(function (c) {
+            olderHead.appendChild(document.createTextNode(" · showing “" + c.to + "” for “" + c.from + "”"));
+        });
+        if (items.length) {
+            olderHead.appendChild(document.createTextNode(" · "));
+            [["newest", "newest"], ["best", "best match"]].forEach(function (sort, n) {
+                if (n) olderHead.appendChild(document.createTextNode(" "));
+                var button = document.createElement("button");
+                button.type = "button";
+                button.textContent = sort[1];
+                button.setAttribute("aria-pressed", String(older.sort === sort[0]));
+                button.addEventListener("click", function () {
+                    if (older.sort === sort[0]) return;
+                    older.sort = sort[0];
+                    scheduleOlder();
+                    renderOlder();
+                });
+                olderHead.appendChild(button);
+            });
+        }
+        var service = BYPASS_SERVICES.filter(function (s) { return s.id === bypass; })[0];
+        var words = older.result.words.map(normalize).filter(function (w) { return w.length >= 2; });
+        var offset = list.querySelectorAll(":scope > li > .num").length;  // Numbered on from the results above, with ids of their own
+        var mark = older.sort === "newest";  // Best match has no such groups
+        items.forEach(function (item, i) {
+            if (mark && item.inSummaryOnly) { olderList.appendChild(groupMark()); mark = false; }
+            var li = renderItem(item, offset + i, service, words);
+            if (li) olderList.appendChild(li);
+        });
     }
 
     function autoRefreshIfDue() {
@@ -542,14 +660,16 @@
     function render() {
         list.textContent = "";
         notice.hidden = true;
-        var items = itemsToShow();
-        if (!items) return;
+        var items = itemsToShow() || [];
         var service = BYPASS_SERVICES.filter(function (s) { return s.id === bypass; })[0];
         var words = highlightWords();
+        var mark = true;
         items.forEach(function (item, i) {
+            if (mark && item.inSummaryOnly) { list.appendChild(groupMark()); mark = false; }
             var li = renderItem(item, i, service, words);
             if (li) list.appendChild(li);
         });
+        renderOlder();
     }
 
     // The open view's items in the chosen order, or the search results in theirs (whatever the sort);
@@ -557,10 +677,7 @@
     function itemsToShow() {
         if (searching()) {
             if (!search.index) return null;  // Still loading, or failed; the status line says so
-            var results = searchResults();
-            if (results.length) return results;
-            showNotice("nothing matches “" + search.query.trim() + "” in any tab.", false);
-            return null;
+            return searchResults();  // None: the older headlines below say if nothing matches at all
         }
         var state = stateOf(current, currentTopic);
         if (state.data === null) {
@@ -570,6 +687,14 @@
         if (state.data.length) return sorted(state.data);
         showNotice("no headlines for " + viewName(current, currentTopic) + " right now.", false);
         return null;
+    }
+
+    // Search results come headline matches first: this line starts the rest, found in a summary or source
+    function groupMark() {
+        var li = document.createElement("li");
+        li.className = "group-mark";
+        li.textContent = "\u00b7 in summaries \u00b7";
+        return li;
     }
 
     // One item: its headline, a line of details and buttons, and what the buttons open
@@ -738,8 +863,8 @@
 
     // --- Data ---
     // An API response's body, or an error with the API's message
-    function getJson(url) {
-        return fetch(url, { headers: { "Accept": "application/json" } }).then(function (response) {
+    function getJson(url, signal) {
+        return fetch(url, { headers: { "Accept": "application/json" }, signal: signal }).then(function (response) {
             return response.json().catch(function () { return {}; }).then(function (body) {
                 if (!response.ok) throw new Error(body.detail || body.error || "HTTP " + response.status);
                 return body;
@@ -830,6 +955,7 @@
     searchBtn.addEventListener("click", function () { if (search.active) closeSearch(); else openSearch(); });
     searchInput.addEventListener("input", function () {
         search.query = searchInput.value;
+        scheduleOlder();
         render();
         updateStatus();
     });
