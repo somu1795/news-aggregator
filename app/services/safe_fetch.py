@@ -52,7 +52,7 @@ async def stream_public(client: httpx.AsyncClient, url: str, headers: Dict[str, 
     for _ in range(MAX_REDIRECTS + 1):
         await check_public(target)
         async with client.stream("GET", target, headers=headers, follow_redirects=False) as response:
-            if response.is_redirect:
+            if response.has_redirect_location:  # A 3xx without one is returned as it is
                 target = response.url.join(response.headers["location"])
                 continue
             yield response

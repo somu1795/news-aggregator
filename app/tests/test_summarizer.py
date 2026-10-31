@@ -162,6 +162,21 @@ async def test_links_to_private_addresses_are_never_fetched(mock_redis, monkeypa
 
 
 @respx.mock
+async def test_a_redirect_without_a_location_fails_only_its_article(mock_redis):
+    await put_view(mock_redis, "all", [1, 2])
+    respx.get("https://pub.example/1").mock(return_value=httpx.Response(302))
+    respx.get(reading.ARCHIVE + "https://pub.example/1").mock(return_value=httpx.Response(404))
+    respx.get("https://pub.example/2").mock(return_value=httpx.Response(200, html=ARTICLE))
+    llm_up()
+
+    async with httpx.AsyncClient() as client:
+        assert await summarize_new(client, mock_redis) == 1
+
+    assert json.loads(await mock_redis.get(summary_key("https://pub.example/1"))) == {"failed": "HTTP 302; feed: none; archive: HTTP 404"}
+    assert json.loads(await mock_redis.get(summary_key("https://pub.example/2")))["via"] == "direct"
+
+
+@respx.mock
 async def test_summaries_with_links_are_rejected(mock_redis):
     await put_view(mock_redis, "all", [1])
     respx.get("https://pub.example/1").mock(return_value=httpx.Response(200, html=ARTICLE))
