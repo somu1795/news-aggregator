@@ -128,18 +128,24 @@ For what needs reviewing and when (pinned versions, feeds, lists), see [MAINTENA
 
 - the **project folder** as it is: code, `.git` (including commits not pushed yet), `.env` (secrets: keep the backup disks private), and untracked notes;
 - **Redis's** snapshot (`dump.rdb`: published views, summaries, resolved links, site icons, which sites need the browser);
-- the **tagger's** database (every stored headline, its labels and embeddings; copied with SQLite's online backup) and classifier;
-- the **headline archive** (every published headline, link and summary, and each view's order hourly; the same way). It grows by a few MB a day, and so does each archive.
+- the **headline archive** (every published headline, link, summary and story, and each view's order hourly; copied with SQLite's online backup, before the tagger's: the archive records how far it has followed the tagger's story changes). It grows by a few MB a day, and so does each archive;
+- the **tagger's** database (every stored headline, its labels, embeddings and story; the same way) and classifier.
 
-It also saves each **Docker image** the stack runs on, once per version (`images/`), so a restore needs no downloads. It keeps the newest 14 archives and the images they use, and refuses to run if a destination folder is missing (an unmounted disk). Not backed up, as they rebuild themselves: the NPU compile cache, Byparr's GeoIP database, Caddy's volumes. A run takes a few seconds (about a minute when images changed); an archive is about 30 MB, the images about 2.2 GB.
+Each database copy is checked with SQLite's `quick_check` before it's kept: a damaged tagger database fails the run (the older archives stay), a damaged headline archive is left out with a warning. The search index (`search-index.bin`) isn't backed up: the refresher writes it again within a minute.
 
-**Restore** on this machine or a new one (Docker installed; for the tagger, the NPU driver and the `render` group, or set `TAGGER_DEVICE=CPU`; Tailscale for the summarizer's LLM):
+It also saves each **Docker image** the stack runs on, once per version (`images/`), so a restore needs no downloads. It keeps the newest **8** archives and the images they use, and refuses to run if a destination folder is missing (an unmounted disk). Not backed up, as they rebuild themselves: the NPU compile cache, Byparr's GeoIP database, Caddy's volumes. Nothing is stopped: Redis saves in the background and the databases are copied while in use. A run takes about 20 seconds (about a minute and a half when images changed, compressing on every CPU); an archive is about 290 MB (Oct 31, 2026: the tagger's database is 400 MB of it), the images about 2.5 GB.
+
+**Restore** on this machine or a new one (Docker installed; for the tagger's NPU, its driver and the `render` group: without `/dev/accel` the tagger runs on the CPU; Tailscale for the summarizer's LLM). Check the backup first: it changes nothing, and only then remove anything.
 
 ```bash
-/mnt/media/app_bkp/news_aggregator/restore.sh   # The latest archive into ~/news-aggregator
+B=/mnt/media/app_bkp/news_aggregator
+$B/restore.sh --check            # Checksums, both databases intact, every image there (~15 s)
+docker compose down -v           # Only now, and only to replace this machine's install
+$B/restore.sh                    # The latest archive into ~/news-aggregator
+cd ~/news-aggregator && docker compose up -d   # Online: starts the Cloudflare Tunnel
 ```
 
-It verifies the checksums, unpacks the project, loads the images, puts the data into fresh volumes and starts the stack. The Cloudflare Tunnel reconnects with the token from `.env`, so the site is back at the same address. Give `restore.sh` an archive and a folder to restore an older one elsewhere. The project folder and its volumes must not exist yet (`docker compose down -v` removes the volumes of a broken install). Tested: a restore from the backup took 21 seconds, served the backed-up views and summaries at once, and the tagger kept its history and classifier. Backups made before the headline archive existed restore without one.
+It verifies the checksums and both databases, unpacks the project, loads the images, puts the data into fresh volumes and starts the stack **without the Cloudflare Tunnel**, so a restore never takes visitors before it's checked (and a second copy, a test or a new machine while the old one runs, never joins the live tunnel); its last lines say how to put it online (`ONLINE=1 restore.sh` starts the tunnel at once). Without an Intel NPU it writes a `docker-compose.override.yml` that starts the tagger on the CPU. If it fails, it removes what it created (folder, volumes, containers), so it can simply be run again. Give `restore.sh` an archive and a folder to restore an older one elsewhere; the folder and the project's volumes must not exist yet. For a copy beside the live site, also give it its own project and port: `PROJECT=na-restore CADDY_HTTP_PORT=17002 restore.sh <archive> <folder>`. Tested: a restore from the backup took 21 seconds, served the backed-up views and summaries at once, and the tagger kept its history and classifier. Backups made before the headline archive existed restore without one.
 
 ## Running Tests
 

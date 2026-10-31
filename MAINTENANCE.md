@@ -8,7 +8,7 @@ What in this project is written by hand and ages, how often to look at it, and a
 ## Monthly checklist (about 15 minutes)
 
 1. Read `logs/updates.txt`. For each `>>` line older than two weeks, bump the pin (the file is named in brackets), test (`docker compose -p na-test …`, see README "Running Tests"), deploy, commit. Python packages: update `app/requirements.in` / regenerate `app/requirements.txt` with `pip-compile`, or `tagger/requirements.txt` from the tagger image.
-2. Check the backup ran: `cat /mnt/media/app_bkp/news_aggregator/last-success` (today's date), and no `FAILED` in `backup.log`.
+2. Check the backup ran: `cat /mnt/media/app_bkp/news_aggregator/last-success` (today's date), no `FAILED` or `Warning` in `backup.log`, and the latest one restores: `/mnt/media/app_bkp/news_aggregator/restore.sh --check` (changes nothing, ~15 s).
 3. Look for failing feeds: `docker compose logs --since 168h refresher | grep 'exhausted all retries'`. Fix or remove them in `config/sources.yaml` (quarterly review below).
 4. Glance at the site's tabs for anything odd (empty tabs, the same story many times, a region showing another region's news).
 

@@ -13,13 +13,13 @@
 #   archives/news-aggregator-<UTC time>.images    the images that archive runs on
 #   images/<image>@<id>.tar.zst                   each image version, saved once
 #   restore.sh, latest.tar.zst (link), last-success, backup.log
-# Keeps the newest KEEP archives per destination and the images they use.
+# Keeps the newest KEEP (8) archives per destination and the images they use.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 DESTS=("$@")
 [ ${#DESTS[@]} -gt 0 ] || DESTS=(/mnt/media/app_bkp/news_aggregator /mnt/mediatoshiba/app_bkp/news_aggregator)
-KEEP="${KEEP:-14}"
+KEEP="${KEEP:-8}"
 STAGING_ROOT="${STAGING_ROOT:-${DESTS[0]}/.staging}"  # On the backup disk: /tmp can be RAM
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 NAME="news-aggregator-$STAMP"
@@ -55,20 +55,15 @@ done
 [ "$(compose exec -T redis redis-cli LASTSAVE)" != "$before" ] || { log "Redis didn't finish its snapshot"; exit 1; }
 docker cp "$(compose ps -q redis)":/data/dump.rdb "$STAGE/data/dump.rdb"
 
-# 2. Tagger: SQLite's online backup (consistent while in use), and the classifier
-tagger="$(compose ps -q tagger)"
-compose exec -T tagger python -c "
-import sqlite3
-src, dst = sqlite3.connect('/data/tagger.db'), sqlite3.connect('/data/backup-tagger.db')
-src.backup(dst)
-dst.close()
-"
-docker cp "$tagger":/data/backup-tagger.db "$STAGE/data/tagger.db"
-docker cp "$tagger":/data/classifier.pkl "$STAGE/data/classifier.pkl"
-compose exec -T tagger rm -f /data/backup-tagger.db
+# A database copy is only worth keeping if SQLite finds it intact (a damaged source copies as damaged)
+intact() {
+    python3 -c "import sqlite3, sys; sys.exit(sqlite3.connect('file:' + sys.argv[1] + '?mode=ro', uri=True).execute('PRAGMA quick_check').fetchone()[0] != 'ok')" "$1"
+}
 
-# 2b. The headline archive, the same way (a new install has none until its first refresh).
-# Optional: if it fails, the rest is still backed up, and the log says so
+# 2. The headline archive: SQLite's online backup (consistent while in use; a new install has
+# none until its first refresh). Before the tagger's: the archive records how far it has followed
+# the tagger's story changes, so the tagger's copy must be the later one, or a restore would skip
+# the changes made in between. Optional: if it fails, the rest is still backed up, and the log says so
 backup_archive() {
     local refresher
     refresher="$(compose ps -q refresher)" && [ -n "$refresher" ] || return 1
@@ -83,13 +78,27 @@ dst.close()
     compose exec -T refresher rm -f /archive/backup-archive.db || true
     return $result
 }
-backup_archive || { log "Warning: the headline archive wasn't backed up"; rm -f "$STAGE/data/archive.db"; }
+backup_archive && { [ ! -e "$STAGE/data/archive.db" ] || intact "$STAGE/data/archive.db"; } \
+    || { log "Warning: the headline archive wasn't backed up"; rm -f "$STAGE/data/archive.db"; }
 
-# 3. The project folder as it is now (code, .git, .env, untracked notes), without caches
+# 3. Tagger: the same way, and the classifier
+tagger="$(compose ps -q tagger)"
+compose exec -T tagger python -c "
+import sqlite3
+src, dst = sqlite3.connect('/data/tagger.db'), sqlite3.connect('/data/backup-tagger.db')
+src.backup(dst)
+dst.close()
+"
+docker cp "$tagger":/data/backup-tagger.db "$STAGE/data/tagger.db"
+docker cp "$tagger":/data/classifier.pkl "$STAGE/data/classifier.pkl"
+compose exec -T tagger rm -f /data/backup-tagger.db
+intact "$STAGE/data/tagger.db" || { log "The tagger's database copy is damaged; not backing it up"; exit 1; }
+
+# 4. The project folder as it is now (code, .git, .env, untracked notes), without caches
 tar -C "$(dirname "$REPO")" --exclude='__pycache__' --exclude='.pytest_cache' \
     -cf "$STAGE/project.tar" "$(basename "$REPO")"
 
-# 4. Image list (name and id) for this archive; each image is saved once below
+# 5. Image list (name and id) for this archive; each image is saved once below
 images=()
 while read -r image; do
     id="$(docker image inspect "$image" -f '{{.Id}}')"
@@ -104,7 +113,7 @@ printf '%s\n' "${images[@]}" > "$STAGE/images.txt"
     echo "project: $(basename "$REPO") (compose project $(compose config --format json | python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])'))"
 } > "$STAGE/MANIFEST"
 
-# 5. Archive, written to the first destination, verified, then copied to the others
+# 6. Archive, written to the first destination, verified, then copied to the others
 first="${DESTS[0]}"
 mkdir -p "$first/archives" "$first/images"
 tar -C "$STAGE" -cf - . | zstd -q -T0 -10 -o "$first/archives/$NAME.tar.zst.part"
