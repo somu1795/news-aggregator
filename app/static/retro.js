@@ -485,7 +485,7 @@
     // --- Older headlines: the server's archive, listed with the tabs' search results ---
     // Asked for once typing pauses (OLDER_DELAY_MS); a newer keystroke cancels the request in flight, and
     // recent answers are kept, so going back to a query shows its results at once. Headlines the tabs'
-    // search already found are left out. 50 at a time: "more older headlines" adds the next 50.
+    // search already found are left out. 50 at a time: "more headlines" adds the next 50.
     var OLDER_DELAY_MS = 60;
     var OLDER_KEPT = 30;
     var older = { key: "", result: null, loading: false, error: null, timer: 0, controller: null, kept: new Map() };
@@ -526,7 +526,7 @@
         if (older.loading) return;
         older.loading = true;
         older.error = null;
-        this.textContent = "loading older headlines...";
+        this.textContent = "loading more headlines...";
         fetchOlder(older.result.next);
         updateStatus();
     }
@@ -706,7 +706,7 @@
         li.className = "group-mark";
         button.type = "button";
         button.className = "more";
-        button.textContent = older.loading ? "loading older headlines..." : "more older headlines";
+        button.textContent = older.loading ? "loading more headlines..." : "more headlines";
         button.addEventListener("click", moreOlder);
         li.appendChild(button);
         return li;
@@ -722,7 +722,8 @@
         var li = document.createElement("li");
         var num = document.createElement("span");
         num.className = "num";
-        num.textContent = (i + 1) + ".";
+        // A tab's rank; search results have none: each page of older headlines adds results among them
+        num.textContent = searching() ? "" : (i + 1) + ".";
         li.appendChild(num);
         li.appendChild(headline(item, shown, host, words));
 
