@@ -80,6 +80,8 @@ markupsafe==3.0.4
     # via jinja2
 opentelemetry-api==1.45.1
     # via fastapi
+orjson==3.13.0
+    # via -r requirements.in
 packaging==26.3
     # via limits
 pillow==12.3.0
@@ -96,6 +98,8 @@ pydantic==2.14.1
 pydantic-core==2.50.1
     # via pydantic
 pydantic-settings==2.16.2
+    # via -r requirements.in
+pyroaring==1.2.0
     # via -r requirements.in
 python-dateutil==3.0.0
     # via

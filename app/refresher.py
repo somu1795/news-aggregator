@@ -8,7 +8,9 @@ phase, it has the tagger tag every headline and publishes one snapshot per
 region (and "all") per topic. The API only ever reads those snapshots, so
 user traffic never triggers upstream fetches. Items carry their article
 summary when the summarizer (summarizer.py) has made one. Every published
-item is also kept in the archive (services/archive.py), when ARCHIVE_PATH is set.
+item is also kept in the archive (services/archive.py), when ARCHIVE_PATH is set,
+with its story, which the refresher keeps up to date there (sync_stories), and the
+archive's search index is written for the app after each cycle (write_search_index).
 
 If a refresh fails, or a view comes back empty, that view's previous snapshot
 is left in place: users keep getting slightly older headlines instead of errors.
@@ -32,7 +34,8 @@ from keys import feed_text_key, snapshot_key, summary_key
 from logging_config import configure_logging
 from metrics import REFRESHES
 from models import APIResponse
-from services.archive import archive
+from services import archive_index
+from services.archive import apply_story_moves, archive, last_story_move, set_stories, without_story
 from services.feeds.poller import FeedPoller
 from services.views.main_views import get_fresh_views
 from services.views.topic_views import get_topic_views
@@ -133,6 +136,8 @@ async def refresh_once(http_client: httpx.AsyncClient, redis_client: aioredis.Re
     LAST_REFRESH_SUCCESS.set(fetched_at)
     logger.info("Published headline snapshots", counts={view: len(items) for view, items in published.items()})
     await refresh_topics(http_client, redis_client, poller, results_by_source)
+    await sync_stories(http_client)
+    await write_search_index()
     await refresh_site_icons(http_client, redis_client)
     return len(published)
 
@@ -154,6 +159,57 @@ async def refresh_topics(
     TOPIC_REFRESHES.labels(result="success").inc()
     logger.info("Published topic snapshots", counts={view: len(items) for view, items in views.items()})
     return len(views)
+
+
+STORY_SYNC_BATCH = 2000  # Headlines per request to the tagger
+
+
+async def write_search_index() -> None:
+    """Writes the archive's search index for the app's workers (services/archive_index.py); a failure keeps the previous one."""
+    if not settings.ARCHIVE_PATH:
+        return
+    try:
+        logger.info("Wrote the archive's search index", **await asyncio.to_thread(archive_index.write))
+    except Exception as e:
+        logger.warning("Archive search index not written", error=str(e) or type(e).__name__)
+
+
+async def sync_stories(http_client: httpx.AsyncClient) -> None:
+    """
+    Brings the archive's stories up to date with the tagger's: applies the story changes its
+    judge made since the last ones applied, then gives a story to headlines archived without
+    one (from before stories, or while the tagger was down), first archived first. Failures
+    only leave it for the next cycle.
+    """
+    if not settings.ARCHIVE_PATH:
+        return
+
+    async def sync():
+        after = await asyncio.to_thread(last_story_move)
+        while True:
+            response = await http_client.get(f"{settings.TAGGER_URL}/story-moves", params={"after": after},
+                                             timeout=settings.TAGGER_TIMEOUT)
+            response.raise_for_status()
+            moves = response.json()["moves"]
+            if not moves:
+                break
+            await asyncio.to_thread(apply_story_moves, moves)
+            after = moves[-1]["id"]
+        while missing := await asyncio.to_thread(without_story, STORY_SYNC_BATCH):
+            response = await http_client.post(
+                f"{settings.TAGGER_URL}/stories",
+                json={"items": [{"title": title, "source": source} for _, title, source in missing]},
+                timeout=settings.TAGGER_TIMEOUT)
+            response.raise_for_status()
+            given = [(i, story) for (i, _, _), story in zip(missing, response.json()["stories"]) if story is not None]
+            if not given:
+                break
+            await asyncio.to_thread(set_stories, given)
+
+    try:
+        await asyncio.wait_for(sync(), settings.STORY_SYNC_TIMEOUT_SECONDS)
+    except Exception as e:
+        logger.warning("Archive stories not synced", error=str(e) or type(e).__name__)
 
 
 async def refresh_site_icons(http_client: httpx.AsyncClient, redis_client: aioredis.Redis) -> None:

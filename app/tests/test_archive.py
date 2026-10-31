@@ -138,3 +138,48 @@ async def test_an_archive_from_before_search_is_indexed_on_first_use(archive_db)
 
     archive_module.connect(settings.ARCHIVE_PATH).close()
     assert searchable(archive_db(), '"old"') == ["https://pub.example/1"]
+
+
+def stories(db):
+    return dict(db.execute("SELECT link, story FROM items"))
+
+
+async def test_each_headline_is_archived_with_its_story(mock_redis, archive_db):
+    related = {"title": "Other take", "link": "https://other.example/1", "source": "Other"}
+    await publish(mock_redis, {"all": [item(1, story=7, related=[related]), item(2)]}, 1000.0)
+    assert stories(archive_db()) == {"https://pub.example/1": 7, "https://other.example/1": 7, "https://pub.example/2": None}
+    await publish(mock_redis, {"all": [item(1), item(2, story=9)]}, 2000.0)  # Ungrouped this time (the tagger was down)
+    assert stories(archive_db()) == {"https://pub.example/1": 7, "https://other.example/1": 7, "https://pub.example/2": 9}
+
+
+async def test_headlines_without_a_story_are_listed_first_archived_first_and_given_one(mock_redis, archive_db):
+    await publish(mock_redis, {"all": [item(2), item(1, story=5)]}, 1000.0)
+    await publish(mock_redis, {"all": [item(3)]}, 2000.0)
+    missing = archive_module.without_story(10)
+    assert [title for _, title, _ in missing] == ["Story 2", "Story 3"]
+    archive_module.set_stories([(missing[0][0], 8)])
+    assert [title for _, title, _ in archive_module.without_story(10)] == ["Story 3"]
+    assert stories(archive_db())["https://pub.example/2"] == 8
+
+
+async def test_the_taggers_story_changes_are_followed(mock_redis, archive_db):
+    await publish(mock_redis, {"all": [item(1, story=1), item(2, story=2), item(3, story=2),
+                                       {**item(4, story=2), "title": "Story  4 - Pub"}]}, 1000.0)
+    assert archive_module.last_story_move() == 0
+    archive_module.apply_story_moves([{"id": 3, "old": 2, "new": 1, "title": None},     # Story 2 merged into 1
+                                      {"id": 4, "old": 1, "new": 4, "title": "Story 4"}])  # Then one headline moved out
+    assert stories(archive_db()) == {"https://pub.example/1": 1, "https://pub.example/2": 1,
+                                     "https://pub.example/3": 1, "https://pub.example/4": 4}
+    assert archive_module.last_story_move() == 4
+
+
+async def test_an_archive_from_before_stories_gets_them(archive_db):
+    db = archive_db()
+    db.execute("""CREATE TABLE items (id INTEGER PRIMARY KEY, link TEXT NOT NULL UNIQUE, title TEXT NOT NULL,
+                  source TEXT NOT NULL, published REAL, comments TEXT, summary TEXT, first_seen REAL NOT NULL,
+                  last_seen REAL NOT NULL)""")  # As it was
+    db.execute("INSERT INTO items (link, title, source, first_seen, last_seen) VALUES ('https://pub.example/1', 'Old story', 'Pub', 1, 1)")
+    db.commit()
+
+    assert [title for _, title, _ in archive_module.without_story(10)] == ["Old story"]
+    assert searchable(archive_db(), '"old"') == ["https://pub.example/1"]  # And it was indexed for search

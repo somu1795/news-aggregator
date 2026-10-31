@@ -12,6 +12,13 @@ What in this project is written by hand and ages, how often to look at it, and a
 3. Look for failing feeds: `docker compose logs --since 168h refresher | grep 'exhausted all retries'`. Fix or remove them in `config/sources.yaml` (quarterly review below).
 4. Glance at the site's tabs for anything odd (empty tabs, the same story many times, a region showing another region's news).
 
+## Deploying a change
+
+1. Test it on an isolated copy first: `docker compose -p na-test -f docker-compose.yml -f <override giving na-test-* image names>`, on its own port (`CADDY_HTTP_PORT=17001`), never the live project. Leave out `cloudflared`, which would connect to the live tunnel.
+2. Tag the running image before building: `docker tag news-aggregator-app:latest news-aggregator-app:rollback-<name>` (likewise for the tagger or Caddy when they change). Keep the newest **4** rollback tags per image; when a deploy makes a fifth, delete the oldest (`docker rmi news-aggregator-app:rollback-<oldest>`).
+3. `docker compose build app && docker compose up -d --no-build app refresher summarizer` (the three share the app image), then check `/health`, a search and the logs.
+4. To roll back: `docker tag news-aggregator-app:rollback-<name> news-aggregator-app:latest && docker compose up -d --no-build app refresher summarizer`.
+
 ## What's hand-written, and how often to review it
 
 ### Monthly: security updates (`scripts/check-updates.py` reports them)

@@ -144,12 +144,8 @@ li {
 
 .notice { color: var(--muted); padding: 1rem 0; }
 .notice.error { color: var(--accent); }
-.older-head { color: var(--muted); font-size: .85em; margin: .5rem 0 0; padding-top: .75rem; border-top: 1px dashed var(--rule); }
 .group-mark { display: block; color: var(--muted); font-size: .85em; padding: .5rem 0 0 4.5ch; }
-#list:empty ~ .older .older-head { border-top: 0; padding-top: 0; }  /* Nothing above to set them apart from */
-.older-head button { color: var(--muted); text-decoration: underline; }
-.older-head button[aria-pressed="true"] { color: var(--ink); text-decoration: none; }
-.older-head button:hover { color: var(--accent); }
+.group-mark .more { text-decoration: underline; }
 .blink { animation: blink 1s steps(1) infinite; }
 @keyframes blink { 50% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .blink { animation: none; } }

@@ -25,6 +25,7 @@ class HeadlineItem(BaseModel):
     comments: Optional[str] = None  # Discussion page, when the feed provides one (e.g. Hacker News)
     summary: Optional[str] = None  # Machine-written summary of the article (top items only, see summarizer.py)
     related: List[RelatedItem] = []  # Other headlines about the same story in this view (services/story_groups.py)
+    story: Optional[int] = None  # Its story's id, the same in every view and the archive; None if not grouped
 
 
 class APIResponse(BaseModel):
@@ -47,13 +48,15 @@ class SearchIndex(BaseModel):
 
 
 class ArchivedItem(BaseModel):
-    """An older headline from the archive."""
+    """An older story from the archive: its newest matching headline, with its others under it."""
     title: str
     link: str
     source: str
     published: float  # When first seen, for a headline only ever seen folded under another
     summary: Optional[str] = None
     comments: Optional[str] = None
+    story: Optional[int] = None  # As in HeadlineItem; None for a headline not given a story yet
+    related: List[RelatedItem] = []  # The story's other archived headlines, newest first
 
 
 class Correction(BaseModel):
@@ -67,3 +70,4 @@ class ArchiveSearch(BaseModel):
     items: List[ArchivedItem]
     words: List[str]  # The words searched (corrected ones replaced), for highlighting
     corrected: List[Correction]
+    next: Optional[str] = None  # Pass as `after` for the ones after these; None: no more

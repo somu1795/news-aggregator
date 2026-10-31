@@ -37,6 +37,8 @@ async def test_each_story_is_shown_once_with_the_others_under_it():
     assert [(r["source"], r["title"]) for r in grouped["all"][0]["related"]] == [("CNET", apple2["title"]), ("BBC", apple3["title"])]
     # Within a view only: Asia has one Apple headline, so nothing is folded under it
     assert [i["title"] for i in grouped["asia"]] == [apple2["title"], other["title"]] and grouped["asia"][0]["related"] == []
+    # Each item carries its story, the same in every view
+    assert [i["story"] for i in grouped["all"]] == [0, 1] and [i["story"] for i in grouped["asia"]] == [0, 1]
     assert "related" not in apple2  # Views share item dicts: the originals are untouched
     # Each headline is sent once, top positions of every view first
     import json
@@ -63,6 +65,7 @@ async def test_ungrouped_when_the_tagger_fails(monkeypatch):
     async with httpx.AsyncClient() as client:
         grouped = await group_stories(client, {"all": items})
     assert [i["title"] for i in grouped["all"]] == ["A", "B"] and grouped["all"][0]["related"] == []
+    assert "story" not in grouped["all"][0]
 
 
 @respx.mock

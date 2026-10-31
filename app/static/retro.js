@@ -41,9 +41,6 @@
     var searchEl = document.getElementById("search");
     var searchInput = document.getElementById("search-input");
     var searchNote = document.getElementById("search-note");
-    var olderEl = document.getElementById("older");
-    var olderHead = document.getElementById("older-head");
-    var olderList = document.getElementById("older-list");
     var advancedNote = document.getElementById("advanced-note");
     var bypassEl = document.getElementById("bypass");
 
@@ -301,7 +298,7 @@
     // or summary (case and accents ignored); headline matches first, newest first.
     var SEARCH_LIMIT = 100;
     var SEARCH_STALE_MS = 5 * 60 * 1000;
-    var search = { active: false, query: "", index: null, loadedAt: 0, loading: false, error: null, count: 0 };
+    var search = { active: false, query: "", index: null, loadedAt: 0, loading: false, error: null, matches: [], count: 0, olderCount: 0 };
 
     function searching() { return search.active && search.query.trim() !== ""; }
     function normalize(text) {
@@ -328,20 +325,23 @@
             });
     }
     // One entry per story: the server lists each link once, with the views it's in ("asia:tech");
-    // the same headline from another outlet joins the first one's entry
+    // the tabs' headlines of one story (the same "story", which a story's headline has in every tab,
+    // or the same headline from another outlet) are one entry's members
     function indexOf(items) {
-        var seen = Object.create(null), index = [];  // No inherited keys: a headline "constructor" is just a headline
+        var seen = Object.create(null), stories = new Map(), index = [];  // No inherited keys: a headline "constructor" is just a headline
         items.forEach(function (item) {
             var title = normalize(cleanTitle(item.title, item.source));
             var key = title.replace(/[^a-z0-9]+/g, " ").trim();
-            var entry = seen[key];
+            var entry = (item.story != null && stories.get(item.story)) || seen[key];
             if (!entry) {
-                entry = seen[key] = {
-                    item: item, views: [], title: title,
-                    text: normalize(cleanTitle(item.title, item.source) + " " + item.source + " " + (item.summary || "")),
-                };
+                entry = { members: [], titles: [], views: [], text: "" };
                 index.push(entry);
             }
+            seen[key] = entry;
+            if (item.story != null) stories.set(item.story, entry);
+            entry.members.push(item);
+            entry.titles.push(title);
+            entry.text += " " + normalize(cleanTitle(item.title, item.source) + " " + item.source + " " + (item.summary || ""));
             (item.views || []).forEach(function (view) {
                 var parts = view.split(":");
                 entry.views.push([parts[0], parts[1] || DEFAULT_TOPIC]);
@@ -374,16 +374,30 @@
         function all(text) { return words.every(function (w) { return w.test(text); }); }
         var inTitle = [], inSummary = [];
         search.index.forEach(function (entry) {
-            if (all(entry.title)) inTitle.push(entry);
+            var lead = entry.titles.findIndex(all);  // A story is shown by a headline that matches, if one does
+            entry.lead = entry.members[Math.max(lead, 0)];
+            if (lead >= 0) inTitle.push(entry);
             else if (all(entry.text)) inSummary.push(entry);
         });
-        function newest(a, b) { return b.item.published - a.item.published; }
+        function newest(a, b) { return b.lead.published - a.lead.published; }
         inSummary.forEach(function (entry) { entry.inSummaryOnly = true; });
         inTitle.forEach(function (entry) { entry.inSummaryOnly = false; });
         var matches = inTitle.sort(newest).concat(inSummary.sort(newest));
+        search.matches = matches;
         search.count = matches.length;
         return matches.slice(0, SEARCH_LIMIT).map(function (entry) {
-            return Object.assign({}, entry.item, { where: whereLabel(entry.views), inSummaryOnly: entry.inSummaryOnly });
+            var item = Object.assign({}, entry.lead, { related: [], where: whereLabel(entry.views), inSummaryOnly: entry.inSummaryOnly });
+            entry.members.forEach(function (member) { addRelated(item, [member].concat(member.related || [])); });
+            return item;
+        });
+    }
+    // Other headlines of an item's story, under it: each link once, not the item's own
+    function addRelated(item, others) {
+        var listed = new Set([item.link].concat(item.related.map(function (other) { return other.link; })));
+        others.forEach(function (other) {
+            if (listed.has(other.link)) return;
+            listed.add(other.link);
+            item.related.push({ title: other.title, link: other.link, source: other.source, comments: other.comments });
         });
     }
     function escapeRegExp(text) { return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
@@ -391,7 +405,9 @@
     // Highlighting: the searched words (two letters or more) wherever they start a word,
     // found on the normalized text and mapped back to the original's letters ("cafe" marks "Café")
     function highlightWords() {
-        return searching() ? normalize(search.query).split(/\s+/).filter(function (w) { return w.length >= 2; }) : [];
+        if (!searching()) return [];
+        var corrected = older.result ? older.result.corrected.map(function (c) { return normalize(c.to); }) : [];
+        return normalize(search.query).split(/\s+/).concat(corrected).filter(function (w) { return w.length >= 2; });
     }
     function matchRanges(text, words) {
         if (!words.length || !text) return [];
@@ -466,15 +482,15 @@
         }
     }
 
-    // --- Older headlines: the server's archive, below the search results ---
+    // --- Older headlines: the server's archive, listed with the tabs' search results ---
     // Asked for once typing pauses (OLDER_DELAY_MS); a newer keystroke cancels the request in flight, and
-    // recent answers are kept, so going back to a query shows its results at once. Headlines already in
-    // the results above are left out.
-    var OLDER_DELAY_MS = 150;
+    // recent answers are kept, so going back to a query shows its results at once. Headlines the tabs'
+    // search already found are left out. 50 at a time: "more older headlines" adds the next 50.
+    var OLDER_DELAY_MS = 60;
     var OLDER_KEPT = 30;
-    var older = { sort: "newest", key: "", result: null, loading: false, error: null, timer: 0, controller: null, kept: new Map() };
+    var older = { key: "", result: null, loading: false, error: null, timer: 0, controller: null, kept: new Map() };
 
-    function olderKey() { return older.sort + "\n" + normalize(search.query).trim().replace(/\s+/g, " "); }
+    function olderKey() { return normalize(search.query).trim().replace(/\s+/g, " "); }
     function scheduleOlder() {
         clearTimeout(older.timer);
         if (older.controller) older.controller.abort();
@@ -485,11 +501,11 @@
         older.loading = searching() && !older.result;
         if (older.loading) older.timer = setTimeout(fetchOlder, OLDER_DELAY_MS);
     }
-    function fetchOlder() {
-        var key = older.key, controller = older.controller = new AbortController();
-        getJson("/api/search?q=" + encodeURIComponent(search.query.trim()) +
-            (older.sort === "best" ? "&sort=best" : ""), controller.signal)
+    function fetchOlder(after) {
+        var key = older.key, before = older.result, controller = older.controller = new AbortController();
+        getJson("/api/search?q=" + encodeURIComponent(search.query.trim()) + (after ? "&after=" + after : ""), controller.signal)
             .then(function (body) {
+                if (after) body = Object.assign({}, body, { items: before.items.concat(body.items) });  // Added to those listed
                 older.kept.delete(key);
                 older.kept.set(key, body);
                 if (older.kept.size > OLDER_KEPT) older.kept.delete(older.kept.keys().next().value);  // The oldest
@@ -502,8 +518,17 @@
                 if (key !== older.key) return;  // A newer query took over
                 older.loading = false;
                 older.controller = null;
-                renderOlder();
+                render();
+                updateStatus();
             });
+    }
+    function moreOlder() {
+        if (older.loading) return;
+        older.loading = true;
+        older.error = null;
+        this.textContent = "loading older headlines...";
+        fetchOlder(older.result.next);
+        updateStatus();
     }
     function stopOlder() {
         clearTimeout(older.timer);
@@ -512,74 +537,37 @@
         older.key = "";
         older.result = null;
         older.loading = false;
-        renderOlder();
     }
     function titleKey(item) { return normalize(cleanTitle(item.title, item.source)).replace(/[^a-z0-9]+/g, " ").trim(); }
-    // The older results to list: none of the headlines the search above already has, each headline once
-    function olderItems() {
-        var shown = new Set();
-        (search.index || []).forEach(function (entry) {
-            shown.add(entry.item.link);
-            shown.add(titleKey(entry.item));
-            (entry.item.related || []).forEach(function (other) { shown.add(other.link); });
+    // The older stories to list: one the tabs' search found (searchResults(), `found`), or one listed
+    // already (from an earlier page), gets the archive's headlines of it under it instead; else none
+    // of the headlines the tabs' search found, each headline once
+    function olderItems(found) {
+        var shown = new Set(), byStory = new Map();
+        found.forEach(function (item) { if (item.story != null) byStory.set(item.story, item); });
+        search.matches.forEach(function (entry) {
+            entry.members.forEach(function (member) {
+                shown.add(member.link);
+                shown.add(titleKey(member));
+                (member.related || []).forEach(function (other) { shown.add(other.link); });
+            });
         });
         var words = older.result.words.map(function (w) { return new RegExp("(^|[^a-z0-9])" + escapeRegExp(normalize(w))); });
-        return older.result.items.filter(function (item) {
+        var list = [];
+        older.result.items.forEach(function (item) {
+            var into = item.story != null && byStory.get(item.story);
+            if (into) return addRelated(into, [item].concat(item.related || []));
             var key = titleKey(item);
-            if (shown.has(item.link) || shown.has(key)) return false;
+            if (shown.has(item.link) || shown.has(key)) return;
             shown.add(key);
-            return true;
-        }).map(function (item) {
             var title = normalize(cleanTitle(item.title, item.source));
-            return Object.assign({}, item, { inSummaryOnly: !words.every(function (w) { return w.test(title); }) });
+            var copy = Object.assign({}, item, { related: [], inSummaryOnly: !words.every(function (w) { return w.test(title); }) });
+            addRelated(copy, item.related || []);
+            if (item.story != null) byStory.set(item.story, copy);
+            list.push(copy);
         });
+        return list;
     }
-    function renderOlder() {
-        olderList.textContent = "";
-        olderHead.textContent = "";
-        olderEl.hidden = !searching();
-        if (olderEl.hidden) return;
-        olderHead.appendChild(document.createTextNode("older headlines"));
-        if (older.loading) { olderHead.appendChild(document.createTextNode(" · searching...")); return; }
-        if (older.error) { olderHead.appendChild(document.createTextNode(" · couldn't search them (" + older.error + ")")); return; }
-        if (!older.result) return;
-        var items = olderItems();
-        if (!items.length && !list.children.length) {
-            olderHead.textContent = "nothing matches “" + search.query.trim() + "”";
-            return;
-        }
-        olderHead.appendChild(document.createTextNode(" · " + (items.length || "none")));
-        older.result.corrected.forEach(function (c) {
-            olderHead.appendChild(document.createTextNode(" · showing “" + c.to + "” for “" + c.from + "”"));
-        });
-        if (items.length) {
-            olderHead.appendChild(document.createTextNode(" · "));
-            [["newest", "newest"], ["best", "best match"]].forEach(function (sort, n) {
-                if (n) olderHead.appendChild(document.createTextNode(" "));
-                var button = document.createElement("button");
-                button.type = "button";
-                button.textContent = sort[1];
-                button.setAttribute("aria-pressed", String(older.sort === sort[0]));
-                button.addEventListener("click", function () {
-                    if (older.sort === sort[0]) return;
-                    older.sort = sort[0];
-                    scheduleOlder();
-                    renderOlder();
-                });
-                olderHead.appendChild(button);
-            });
-        }
-        var service = BYPASS_SERVICES.filter(function (s) { return s.id === bypass; })[0];
-        var words = older.result.words.map(normalize).filter(function (w) { return w.length >= 2; });
-        var offset = list.querySelectorAll(":scope > li > .num").length;  // Numbered on from the results above, with ids of their own
-        var mark = older.sort === "newest";  // Best match has no such groups
-        items.forEach(function (item, i) {
-            if (mark && item.inSummaryOnly) { olderList.appendChild(groupMark()); mark = false; }
-            var li = renderItem(item, offset + i, service, words);
-            if (li) olderList.appendChild(li);
-        });
-    }
-
     function autoRefreshIfDue() {
         if (!autoRefresh.ms || document.hidden) return;
         if (Date.now() - stateOf(current, currentTopic).loadedAt >= autoRefresh.ms) load(current, currentTopic);
@@ -658,18 +646,26 @@
     }
 
     function render() {
+        var refocus = document.activeElement && document.activeElement.classList.contains("more");
         list.textContent = "";
         notice.hidden = true;
         var items = itemsToShow() || [];
         var service = BYPASS_SERVICES.filter(function (s) { return s.id === bypass; })[0];
         var words = highlightWords();
         var mark = true;
+        var more = items.length && searching() && older.result && older.result.next ? moreMark() : null;
+        var moreFirst = more && older.result.next.charAt(0) === "t";  // Headline matches to come: before the summary matches
         items.forEach(function (item, i) {
-            if (mark && item.inSummaryOnly) { list.appendChild(groupMark()); mark = false; }
+            if (mark && item.inSummaryOnly) {
+                if (moreFirst) list.appendChild(more);
+                list.appendChild(groupMark());
+                mark = false;
+            }
             var li = renderItem(item, i, service, words);
             if (li) list.appendChild(li);
         });
-        renderOlder();
+        if (more && !more.parentNode) list.appendChild(more);
+        if (refocus && more) more.firstChild.focus({ preventScroll: true });
     }
 
     // The open view's items in the chosen order, or the search results in theirs (whatever the sort);
@@ -677,7 +673,14 @@
     function itemsToShow() {
         if (searching()) {
             if (!search.index) return null;  // Still loading, or failed; the status line says so
-            return searchResults();  // None: the older headlines below say if nothing matches at all
+            var found = searchResults(), archived = older.result ? olderItems(found) : [];
+            search.olderCount = archived.length;
+            // The tabs' and the archive's together: headline matches first, then the rest, each newest first
+            var items = found.concat(archived).sort(function (a, b) {
+                return a.inSummaryOnly - b.inSummaryOnly || b.published - a.published;
+            });
+            if (!items.length && older.result) showNotice("nothing matches \u201c" + search.query.trim() + "\u201d", false);
+            return items;
         }
         var state = stateOf(current, currentTopic);
         if (state.data === null) {
@@ -694,6 +697,18 @@
         var li = document.createElement("li");
         li.className = "group-mark";
         li.textContent = "\u00b7 in summaries \u00b7";
+        return li;
+    }
+
+    // The archive has more: where its next ones will be listed
+    function moreMark() {
+        var li = document.createElement("li"), button = document.createElement("button");
+        li.className = "group-mark";
+        button.type = "button";
+        button.className = "more";
+        button.textContent = older.loading ? "loading older headlines..." : "more older headlines";
+        button.addEventListener("click", moreOlder);
+        li.appendChild(button);
         return li;
     }
 
@@ -835,9 +850,16 @@
         if (search.active) {
             if (!search.index) setStatus(search.error ? "search \u00b7 could not load the headlines" : "search \u00b7 loading every tab...");
             else if (!searching()) setStatus("search \u00b7 type to search " + search.index.length + " headlines in every tab");
-            else setStatus("search \u00b7 " + search.count + (search.count === 1 ? " result" : " results") +
-                (search.count > SEARCH_LIMIT ? " (showing " + SEARCH_LIMIT + ")" : "") +
-                " in " + search.index.length + " headlines");
+            else {
+                var total = search.count + search.olderCount, shown = Math.min(search.count, SEARCH_LIMIT) + search.olderCount;
+                setStatus("search \u00b7 " + total + (total === 1 ? " result" : " results") +
+                    (total > shown ? " (showing " + shown + ")" : "") +
+                    (older.result ? older.result.corrected.map(function (c) {
+                        return " \u00b7 showing \u201c" + c.to + "\u201d for \u201c" + c.from + "\u201d";
+                    }).join("") : ""), "",
+                    older.loading ? " \u00b7 searching older headlines..." :
+                        older.error ? " \u00b7 couldn't search older headlines (" + older.error + ")" : "");
+            }
             return;
         }
         var state = stateOf(current, currentTopic);

@@ -83,6 +83,7 @@ class Settings(BaseSettings):
     # --- Tagger (topic views) ---
     TAGGER_URL: str = "http://tagger:8000"
     TAGGER_TIMEOUT: float = 90.0  # The first refresh embeds every headline (~5000)
+    STORY_SYNC_TIMEOUT_SECONDS: int = 60  # Cap on the archive's story step of a refresh cycle (refresher.sync_stories)
 
     # --- Site icons (publisher favicons on the page) ---
     ICON_SOURCE_URL: str = "https://icons.duckduckgo.com/ip3/{host}.ico"

@@ -4,9 +4,10 @@ One item per story in each view.
 Many outlets cover the same story ("Apple unveils HomePod mini 2", "Apple
 launches HomePod mini 2 with Siri AI for $149") under different titles. The
 tagger groups headlines by story (POST /group: a multilingual sentence
-embedding, see tagger/stories.py). In each view the first-ranked headline of a
-story stays, and its other headlines in that view are folded under it as
-"related", so the view's later stories move up. Views are built longer than
+embedding, see tagger/stories.py), each story with an id that lasts across
+views, refreshes and days. In each view the first-ranked headline of a story
+stays, with its story's id, and its other headlines in that view are folded
+under it as "related", so the view's later stories move up. Views are built longer than
 MAX_HEADLINES (views/mixing.py build_limit()) and cut to it here.
 
 Grouping is optional: if the tagger fails, views are published ungrouped.
@@ -45,6 +46,7 @@ def collapse(items: List[Dict], group_of: Dict[str, int]) -> List[Dict]:
         if leader is None:
             leader = {**item, "related": []}
             if group is not None:
+                leader["story"] = group
                 leaders[group] = leader
             kept.append(leader)
         elif len(leader["related"]) < settings.MAX_RELATED:

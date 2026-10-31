@@ -5,6 +5,7 @@ comes back empty.
 """
 
 import json
+import sqlite3
 import time
 
 import httpx
@@ -374,3 +375,55 @@ def test_a_source_can_be_capped():
     titles = [h["title"] for h in mix_headlines(sources, results, now)]
     assert sum(t.startswith("Busy") for t in titles) == 2  # Its weight would have given it most of the list
     assert sum(t.startswith("Quiet") for t in titles) == 5  # The others fill its share
+
+
+@respx.mock
+async def test_the_archives_stories_follow_the_tagger(mock_redis, tmp_path, monkeypatch):
+    from refresher import STORY_SYNC_BATCH, sync_stories
+    from services import archive
+    monkeypatch.setattr(settings, "ARCHIVE_PATH", str(tmp_path / "archive.db"))
+    monkeypatch.setattr("refresher.STORY_SYNC_BATCH", 2)
+    items = [{"title": f"Story {n}", "link": f"https://pub.example/{n}", "source": "Pub", "published": 1.0} for n in range(3)]
+    archive.archive({"all": items[:1] + [{**items[1], "story": 5}] + items[2:]}, 1000.0)
+    moves = respx.get(f"{settings.TAGGER_URL}/story-moves").mock(side_effect=[
+        httpx.Response(200, json={"moves": [{"id": 1, "old": 5, "new": 4, "title": None}]}),
+        httpx.Response(200, json={"moves": []})])
+    asked = []
+
+    def stories(request):
+        titles = [i["title"] for i in json.loads(request.content)["items"]]
+        asked.append(titles)
+        return httpx.Response(200, json={"stories": [int(t.split()[1]) + 10 for t in titles]})
+    respx.post(f"{settings.TAGGER_URL}/stories").mock(side_effect=stories)
+
+    async with httpx.AsyncClient() as client:
+        await sync_stories(client)
+
+    assert [call.request.url.params["after"] for call in moves.calls] == ["0", "1"]
+    assert asked == [["Story 0", "Story 2"]]  # Only those without a story, in batches
+    db = sqlite3.connect(settings.ARCHIVE_PATH)
+    assert dict(db.execute("SELECT title, story FROM items")) == {"Story 0": 10, "Story 1": 4, "Story 2": 12}
+    assert STORY_SYNC_BATCH == 2000
+
+
+@respx.mock
+async def test_a_tagger_failure_leaves_the_archives_stories_for_the_next_cycle(tmp_path, monkeypatch):
+    from refresher import sync_stories
+    from services import archive
+    monkeypatch.setattr(settings, "ARCHIVE_PATH", str(tmp_path / "archive.db"))
+    archive.archive({"all": [{"title": "Story", "link": "https://pub.example/1", "source": "Pub", "published": 1.0}]}, 1000.0)
+    respx.get(f"{settings.TAGGER_URL}/story-moves").mock(return_value=httpx.Response(503))
+    async with httpx.AsyncClient() as client:
+        await sync_stories(client)  # Doesn't raise
+    assert len(archive.without_story(10)) == 1
+
+
+async def test_the_refresher_writes_the_search_index_for_the_app(tmp_path, monkeypatch):
+    from refresher import write_search_index
+    from services import archive, archive_index
+    monkeypatch.setattr(settings, "ARCHIVE_PATH", str(tmp_path / "archive.db"))
+    archive.archive({"all": [{"title": "Bridge plan approved", "link": "https://pub.example/1", "source": "Pub", "published": 1.0}]}, 1000.0)
+    await write_search_index()
+    assert archive_index.Index(archive_index.index_path()).prefix("bri")[1] == archive_index.BitMap([1])
+    monkeypatch.setattr(settings, "ARCHIVE_PATH", str(tmp_path / "missing" / "archive.db"))
+    await write_search_index()  # A failure is logged, not raised

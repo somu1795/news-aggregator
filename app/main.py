@@ -28,6 +28,7 @@ from site_config import get_site
 from deps import limiter
 from logging_config import configure_logging
 from middleware.exception import SmartExceptionMiddleware
+from services import archive_index
 from services.headlines_cache import HeadlinesCache
 from services.redis_client import create_redis_client
 
@@ -61,6 +62,8 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.critical("Failed to connect to Redis during startup", error=str(e), exc_info=True)
         raise
+
+    archive_index.start()  # Searches of older headlines use SQLite until it's built (in the background)
 
     yield
 

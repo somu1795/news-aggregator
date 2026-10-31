@@ -226,16 +226,17 @@ def test_older_headlines_are_searched_in_the_archive(client, tmp_path, monkeypat
     assert response.status_code == 200
     assert response.json() == {
         "items": [{"title": "Ukraine talks resume", "link": "https://a.example/1", "source": "BBC",
-                   "published": FIXED_TIME_UNIX, "summary": None, "comments": None}],
-        "words": ["ukraine", "talks"], "corrected": [{"from": "ukrane", "to": "ukraine"}]}
+                   "published": FIXED_TIME_UNIX, "summary": None, "comments": None, "story": None, "related": []}],
+        "words": ["ukraine", "talks"], "corrected": [{"from": "ukrane", "to": "ukraine"}], "next": None}
+    assert client.get("/api/search?q=talks&after=r").json()["items"] == []  # Nothing found only in a summary
     assert response.headers["cache-control"] == "public, max-age=300"
     assert response.headers["cdn-cache-control"] == "public, max-age=300"
-    assert client.get("/api/search?q=talks&sort=best").json()["items"][0]["link"] == "https://a.example/1"
 
 def test_archive_search_rejects_bad_parameters(client):
-    assert client.get("/api/search?q=talks&sort=random").status_code == 422
     assert client.get("/api/search?q=" + "a" * 201).status_code == 422
     assert client.get("/api/search").status_code == 422
+    for after in ["x1", "t", "t1;", "1", "r" + "9" * 19]:
+        assert client.get(f"/api/search?q=talks&after={after}").status_code == 422, after
 
 def test_archive_search_without_an_archive(client, monkeypatch):
     monkeypatch.setattr(settings, "ARCHIVE_PATH", "")
@@ -246,7 +247,7 @@ def test_searches_are_not_written_to_the_access_log():
     import logging
     from logging_config import RedactSearches
     record = logging.LogRecord("uvicorn.access", logging.INFO, "", 0, '%s - "%s %s HTTP/%s" %d', (
-        "1.2.3.4:0", "GET", "/api/search?q=private+words&sort=best", "1.1", 200), None)
+        "1.2.3.4:0", "GET", "/api/search?q=private+words", "1.1", 200), None)
     other = logging.LogRecord("uvicorn.access", logging.INFO, "", 0, '%s - "%s %s HTTP/%s" %d', (
         "1.2.3.4:0", "GET", "/api/headlines?region=asia", "1.1", 200), None)
     assert RedactSearches().filter(record) and RedactSearches().filter(other)
