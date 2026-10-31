@@ -6,8 +6,12 @@ CPU if no NPU is available) and tags them with a classifier trained on our own
 stored headlines.
 
 POST /tag     {"items": [{"title", "source", "link", "label"}]} -> {"tags": [[topic, ...], ...], "model": version}
-POST /group   {"items": [{"title", "source"}]} -> {"groups": [group number, ...]}: the same number for
-              headlines about the same story (see Tagger.group)
+POST /group   {"items": [{"title", "source"}]} -> {"groups": [story id, ...]}: the same id for headlines
+              about the same story, from call to call (see stories.py); stores the unsure pairs
+POST /stories {"items": [{"title", "source"}]} -> {"stories": [story id, ...]}: the same, without
+              storing unsure pairs, for headlines of any age (the archive's)
+GET  /story-moves?after=ID -> {"moves": [{"id", "old", "new", "title"}]}: story changes since ID,
+              made by verdicts: a story merged into another (title null), or one headline moved out
 GET  /story-candidates?limit=N -> {"pairs": [{"a", "b", "similarity"}]}: pairs grouping was unsure of,
               most important first, for a judge (the summarizer's LLM) to decide
 POST /story-verdicts {"verdicts": [{"a", "b", "same", "model"}]}: its decisions, used by every later grouping
@@ -89,9 +93,16 @@ class Tagger(StoryGrouping):
         self.classifier: Optional[Classifier] = None
 
     def start(self) -> None:
-        """Stores the seed headlines (embedding any not stored yet) and loads or trains the classifier."""
+        """
+        Stores the seed headlines (embedding any not stored yet), gives grouped headlines without a
+        story one (a database from before stories) and loads or trains the classifier.
+        """
         seed = json.loads((BUNDLED / "seed.json").read_text())
         self._store([(row["title"], None, None, row["label"]) for row in seed])
+        started = time.monotonic()
+        assigned = self.assign_all()
+        if assigned:
+            logger.info("Gave %d headlines their stories in %.0fs", assigned, time.monotonic() - started)
         try:
             self.classifier = pickle.loads(self.model_path.read_bytes())
             logger.info("Loaded classifier %s", self.classifier.version)
@@ -284,6 +295,16 @@ async def tag(request: TagRequest):
 @app.post("/group")
 async def group(request: TagRequest):
     return {"groups": await on_worker(app.state.tagger.group, request.items)}
+
+
+@app.post("/stories")
+async def stories(request: TagRequest):
+    return {"stories": await on_worker(app.state.tagger.stories, request.items)}
+
+
+@app.get("/story-moves")
+async def story_moves(after: int = 0, limit: int = 1000):
+    return {"moves": await on_worker(app.state.tagger.story_moves, after, max(1, min(limit, 5000)))}
 
 
 @app.get("/story-candidates")

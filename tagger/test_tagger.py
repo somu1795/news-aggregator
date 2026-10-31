@@ -7,6 +7,7 @@ Run in the tagger image, or with requirements.txt + pytest installed:
 """
 
 import json
+import time
 import zlib
 
 import numpy as np
@@ -175,6 +176,29 @@ def test_unsure_pairs_are_kept_for_the_judge(tagger, monkeypatch):
     assert (pair["a"], pair["b"]) == tuple(sorted((a, b))) and 0.6 <= pair["similarity"] < 0.9
 
 
+def test_a_headline_is_paired_for_the_judge_with_recent_stories_no_longer_in_the_views(tagger, monkeypatch):
+    monkeypatch.setattr(stories_module, "STORY_THRESHOLD", 0.7)
+    monkeypatch.setattr(stories_module, "STORY_LEADER_THRESHOLD", 0.9)
+    monkeypatch.setattr(stories_module, "STORY_CANDIDATE_THRESHOLD", 0.6)
+    a, a2 = "big dogs age faster study finds", "big dogs age faster study finds today"  # One story (0.94)
+    b = "big dogs age faster scientists say"  # 0.72 to a, 0.68 to a2, too far from a to join: another story
+
+    def candidates_when_grouping(*titles):
+        tagger.db.execute("DELETE FROM story_candidates")
+        tagger.group([Item(title=t) for t in titles])
+        return [{p["a"], p["b"]} for p in tagger.story_candidates(10)]
+
+    tagger.group([Item(title=a), Item(title=a2)])
+    # a and a2 have left the views: paired with the closest of their story, as close as STORY_THRESHOLD
+    assert candidates_when_grouping("minister resigns over budget vote", b) == [{a, b}]
+    monkeypatch.setattr(stories_module, "STORY_THRESHOLD", 0.75)
+    assert candidates_when_grouping(b) == []  # 0.72: enough within a grouping only
+    assert candidates_when_grouping(a, b) == [{a, b}]
+    monkeypatch.setattr(stories_module, "STORY_THRESHOLD", 0.7)
+    seen_days_ago(tagger, [a, a2], 3.5)  # Beyond the window
+    assert candidates_when_grouping(b) == []
+
+
 def test_a_verdict_overrides_similarity_and_retires_the_candidate(tagger, monkeypatch):
     monkeypatch.setattr(stories_module, "STORY_THRESHOLD", 0.9)
     monkeypatch.setattr(stories_module, "STORY_LEADER_THRESHOLD", 0.9)
@@ -195,6 +219,75 @@ def test_a_no_verdict_keeps_similar_headlines_apart(tagger, monkeypatch):
     assert len(set(tagger.group([Item(title=a), Item(title=b)]))) == 1
     tagger.store_verdicts([tagger_module.Verdict(a=a, b=b, same=False, model="m")])
     assert len(set(tagger.group([Item(title=a), Item(title=b)]))) == 2
+
+
+def seen_days_ago(tagger, titles, days):
+    tagger.db.executemany("UPDATE headlines SET first_seen = ? WHERE title = ?",
+                          [(time.time() - days * 86400, t) for t in titles])
+
+
+def test_a_story_lasts_from_call_to_call(tagger, monkeypatch):
+    monkeypatch.setattr(stories_module, "STORY_THRESHOLD", 0.8)
+    a, b = "apple unveils homepod mini two with siri", "apple unveils homepod mini two with siri today"
+    [story] = tagger.group([Item(title=a)])
+    assert tagger.group([Item(title="minister resigns over budget vote"), Item(title=b)])[1] == story
+    assert tagger.stories([Item(title=b, source="X"), Item(title=a)]) == [story, story]
+
+
+def test_a_headline_joins_only_recent_headlines_of_a_story_not_too_old(tagger, monkeypatch):
+    monkeypatch.setattr(stories_module, "STORY_THRESHOLD", 0.8)
+    a, b = "apple unveils homepod mini two with siri", "apple unveils homepod mini two with siri today"
+    c, d = "apple unveils homepod mini two with siri tonight", "apple unveils homepod mini two with siri again"
+    [story, _] = tagger.group([Item(title=a), Item(title=b)])
+    seen_days_ago(tagger, [a, b], 3.5)  # Both further back than the window
+    [later] = tagger.group([Item(title=c)])
+    assert later != story
+    seen_days_ago(tagger, [c], 4.5)  # The new story's first headline, too old for it to go on
+    assert tagger.group([Item(title=d)])[0] not in (story, later)
+
+
+def test_stories_are_given_in_order_of_arrival_to_a_database_from_before_them(tagger, monkeypatch):
+    monkeypatch.setattr(stories_module, "STORY_THRESHOLD", 0.8)
+    a, b = "apple unveils homepod mini two with siri", "apple unveils homepod mini two with siri today"
+    c = "minister resigns over budget vote"
+    tagger.group([Item(title=b), Item(title=a), Item(title=c)])
+    seen_days_ago(tagger, [a], 1)
+    tagger.db.execute("UPDATE headlines SET story = NULL")
+    assert tagger.assign_all() == 3
+    stories = tagger.stories([Item(title=a), Item(title=b), Item(title=c)])
+    first = tagger.db.execute("SELECT rowid FROM headlines WHERE title = ?", (a,)).fetchone()[0]
+    assert stories[0] == stories[1] == first != stories[2]  # Led by the first seen
+    assert tagger.assign_all() == 0
+
+
+def test_stories_stores_no_pairs_for_the_judge(tagger, monkeypatch):
+    monkeypatch.setattr(stories_module, "STORY_THRESHOLD", 0.9)
+    monkeypatch.setattr(stories_module, "STORY_CANDIDATE_THRESHOLD", 0.6)
+    a, b = "big dogs age faster study finds", "big dogs age faster scientists say"
+    assert len(set(tagger.stories([Item(title=a), Item(title=b)]))) == 2
+    assert tagger.story_candidates(10) == []
+
+
+def test_verdicts_merge_and_split_stories_and_log_it(tagger, monkeypatch):
+    monkeypatch.setattr(stories_module, "STORY_THRESHOLD", 0.9)
+    monkeypatch.setattr(stories_module, "STORY_LEADER_THRESHOLD", 0.9)
+    a, b = "big dogs age faster study finds", "big dogs age faster scientists say"
+    c = "big dogs age faster study finds today"  # Joins a's story
+    story_a, story_b, _ = tagger.group([Item(title=a), Item(title=b), Item(title=c)])
+    assert story_a != story_b
+    tagger.store_verdicts([tagger_module.Verdict(a=b, b=c, same=True)])  # Not the first headlines: still merges
+    assert tagger.stories([Item(title=a), Item(title=b), Item(title=c)]) == [story_a] * 3
+    tagger.store_verdicts([tagger_module.Verdict(a=a, b=b, same=False)])
+    rowid_b = tagger.db.execute("SELECT rowid FROM headlines WHERE title = ?", (b,)).fetchone()[0]
+    assert tagger.stories([Item(title=a), Item(title=b), Item(title=c)]) == [story_a, rowid_b, story_a]
+    moves = tagger.story_moves(0, 10)
+    assert [(m["old"], m["new"], m["title"]) for m in moves] == [(story_b, story_a, None), (story_a, rowid_b, b)]
+    assert tagger.story_moves(moves[0]["id"], 10) == moves[1:]
+
+
+def test_a_verdict_on_headlines_not_grouped_yet_changes_no_story(tagger):
+    tagger.store_verdicts([tagger_module.Verdict(a="one thing", b="another", same=True)])
+    assert tagger.story_moves(0, 10) == []
 
 
 def test_a_restart_does_not_retrain_again_after_a_rejected_attempt(tagger, monkeypatch):

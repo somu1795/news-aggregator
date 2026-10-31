@@ -1,7 +1,7 @@
 """
 The tagger's SQLite database: every headline once (cleaned title, its feed's
-label, tags, embeddings), plus the story pairs grouping was unsure of and the
-judge's verdicts on them.
+label, tags, embeddings, story), plus the story pairs grouping was unsure of,
+the judge's verdicts on them and the story changes they made.
 """
 
 import re
@@ -28,14 +28,15 @@ CREATE TABLE IF NOT EXISTS headlines (
     model      TEXT,
     embedding  BLOB NOT NULL,     -- float16[384]
     first_seen REAL NOT NULL,
-    story_embedding BLOB          -- float16[384], from the story model; made when first grouped
+    story_embedding BLOB,         -- float16[384], from the story model; made when first grouped
+    story      INTEGER            -- Its story: the rowid of the story's first headline; given when first grouped
 );
 -- Pairs of (cleaned) titles that grouping was unsure of, a < b
 CREATE TABLE IF NOT EXISTS story_candidates (
     a          TEXT NOT NULL,
     b          TEXT NOT NULL,
     similarity REAL NOT NULL,
-    rank       INTEGER NOT NULL,  -- The later of the two's positions in the last grouping (lower: more important)
+    rank       INTEGER NOT NULL,  -- Its headline's position in the last grouping (lower: more important)
     seen       REAL NOT NULL,
     PRIMARY KEY (a, b)
 );
@@ -48,6 +49,21 @@ CREATE TABLE IF NOT EXISTS story_verdicts (
     decided REAL NOT NULL,
     PRIMARY KEY (a, b)
 );
+-- Stories changed by verdicts, for copies of them (the archive) to follow: a whole story
+-- merged into another (title NULL), or one headline moved out to a story of its own
+CREATE TABLE IF NOT EXISTS story_moves (
+    id    INTEGER PRIMARY KEY,
+    old   INTEGER NOT NULL,
+    new   INTEGER NOT NULL,
+    title TEXT,
+    moved REAL NOT NULL
+);
+"""
+# After the columns they need, which databases made before them get in connect()
+INDEXES = """
+CREATE INDEX IF NOT EXISTS headlines_first_seen ON headlines (first_seen);
+CREATE INDEX IF NOT EXISTS headlines_story ON headlines (story);
+CREATE INDEX IF NOT EXISTS story_verdicts_b ON story_verdicts (b);
 """
 
 
@@ -56,8 +72,12 @@ def connect(path: Path) -> sqlite3.Connection:
     db.execute("PRAGMA journal_mode=WAL")
     db.execute("PRAGMA synchronous=NORMAL")
     db.executescript(SCHEMA)
-    if "story_embedding" not in {row[1] for row in db.execute("PRAGMA table_info(headlines)")}:
+    columns = {row[1] for row in db.execute("PRAGMA table_info(headlines)")}
+    if "story_embedding" not in columns:
         db.execute("ALTER TABLE headlines ADD COLUMN story_embedding BLOB")  # Databases made before grouping
+    if "story" not in columns:
+        db.execute("ALTER TABLE headlines ADD COLUMN story INTEGER")  # ...or before lasting stories
+    db.executescript(INDEXES)
     return db
 
 
