@@ -68,7 +68,7 @@ regions:
       url: https://www.scmp.com/rss/3/feed
       weight: 0.05
     - name: Hong Kong Free Press
-      url: https://hongkongfp.com/feed/
+      url: https://feeds.feedburner.com/HongKongFp  # Its own /feed/ answers 403 to every request
       weight: 0.02
     - name: Focus Taiwan
       url: https://feeds.feedburner.com/rsscna/engnews/
@@ -243,12 +243,15 @@ regions:
     - name: Colombia One
       url: https://colombiaone.com/feed/
       weight: 0.06
-    - name: Jamaica Gleaner
-      url: https://jamaica-gleaner.com/feed/rss.xml
-      weight: 0.06
+    # Off since 2026-10-29: its certificate chain is broken (a DigiCert certificate sent with
+    # Sectigo's intermediates), so no client can verify it. Restore when it is fixed
+    # (and the Jamaica Observer's weight to 0.05).
+    # - name: Jamaica Gleaner
+    #   url: https://jamaica-gleaner.com/feed/rss.xml
+    #   weight: 0.06
     - name: Jamaica Observer
       url: https://www.jamaicaobserver.com/feed/
-      weight: 0.05
+      weight: 0.11  # 0.05, plus the Jamaica Gleaner's 0.06 while it is off
     - name: Agência Brasil
       url: https://agenciabrasil.ebc.com.br/en/rss/ultimasnoticias/feed.xml
       weight: 0.03
