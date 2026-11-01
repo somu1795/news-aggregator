@@ -6,6 +6,7 @@
     var BLUE = [74, 144, 194], ORANGE = [232, 116, 44], RED = "#d9281e";
     var REFRESH_MS = 60000;  // The worker adds a red dot within a minute of a story's arrival
     var STALE_SECONDS = 1800;
+    var PULSE_MS = 1800;
     var FADE = 0.3;  // Opacity of a country with next to no evidence
 
     var canvas = document.getElementById("map");
@@ -14,7 +15,6 @@
     var statusEl = document.getElementById("status");
     var dotsEl = document.getElementById("dots");
     var countryEl = document.getElementById("country");
-    var listEl = document.getElementById("countries");
     var calm = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
     var grid = null, data = null, chosen = null, cellOwner = {};
@@ -97,26 +97,28 @@
         context.clearRect(0, 0, canvas.width, canvas.height);
         context.drawImage(cells, 0, 0);
         context.setTransform(scale, 0, 0, scale, 0, 0);
+        var paper = getComputedStyle(document.documentElement).getPropertyValue("--paper").trim();
         ((data && data.dots) || []).forEach(function (dot) {
             if (typeof dot.lat !== "number" || typeof dot.lon !== "number") return;
             var x = (dot.lon + 180) / 360 * width;
             var y = (grid.north - dot.lat) / (grid.north - grid.south) * (width * grid.height / grid.width);
-            var pulse = calm ? 0.5 : (time / 1600) % 1;
+            var phase = calm ? 0 : (time % PULSE_MS) / PULSE_MS;
             context.strokeStyle = RED;
-            context.lineWidth = 1;
-            context.globalAlpha = 1 - pulse;
+            context.lineWidth = 1.25;
+            context.globalAlpha = calm ? 0.7 : 1 - phase;
             context.beginPath();
-            context.arc(x, y, cell * (0.9 + 1.4 * pulse), 0, 2 * Math.PI);
+            context.arc(x, y, cell * (0.9 + 2 * phase), 0, 2 * Math.PI);
             context.stroke();
             context.globalAlpha = 1;
+            context.fillStyle = paper;  // A gap, so the dot stands clear of the cells around it
             context.beginPath();
-            context.arc(x, y, cell * 0.95, 0, 2 * Math.PI);
-            context.stroke();
+            context.arc(x, y, cell * 0.8, 0, 2 * Math.PI);
+            context.fill();
             context.fillStyle = RED;
             context.shadowColor = RED;
-            context.shadowBlur = cell * scale;
+            context.shadowBlur = cell * 0.6 * scale;
             context.beginPath();
-            context.arc(x, y, cell * 0.5, 0, 2 * Math.PI);
+            context.arc(x, y, cell * (0.5 + 0.1 * Math.sin(phase * 2 * Math.PI)), 0, 2 * Math.PI);
             context.fill();
             context.shadowBlur = 0;
         });
@@ -171,24 +173,6 @@
         dotsEl.appendChild(ul);
     }
 
-    function renderList() {
-        var countries = data.countries || {};
-        var codes = Object.keys(countries).sort(function (a, b) {
-            var x = countries[a].colour, y = countries[b].colour;
-            if ((x === null) !== (y === null)) return x === null ? 1 : -1;
-            return (y - x) || nameOf(a).localeCompare(nameOf(b));
-        });
-        listEl.textContent = "";
-        codes.forEach(function (code) {
-            var li = element("li");
-            var button = element("button", nameOf(code));
-            button.addEventListener("click", function () { showCountry(code); });
-            li.appendChild(button);
-            li.appendChild(element("span", " " + band(countries[code]), "band"));
-            listEl.appendChild(li);
-        });
-    }
-
     function ageWords(seconds) {
         var minutes = Math.max(0, Math.round(seconds / 60));
         if (minutes < 1) return "just now";
@@ -209,7 +193,6 @@
         data = null;
         statusEl.textContent = "stats are offline";
         dotsEl.hidden = true;
-        listEl.textContent = "";
         redraw();
     }
 
@@ -225,7 +208,6 @@
             data = json;
             renderStatus();
             renderDots();
-            renderList();
             if (chosen) showCountry(chosen); else redraw();
             if (wasStill) window.requestAnimationFrame(animate);
         }).catch(offline);
