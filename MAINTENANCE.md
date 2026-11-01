@@ -44,8 +44,9 @@ What in this project is written by hand and ages, how often to look at it, and a
 | Country → starting region | `config/regions.yaml` `countries` |
 | Tagger evaluation (598 hand-labelled headlines) and seed labels | `tagger/data/eval.json`, `tagger/data/seed.json`: add recent hand-labelled headlines so the retrain gate judges current news |
 | Story-grouping labelled pairs | `tagger/data/story_pairs.json`: only to re-check the 0.92 threshold if grouping looks off |
-| Heatmap places and outlets' countries | `stats/data/places.json`, `homes.json`, by `stats/build_places.py` (its docstring lists its inputs): a country wrongly placed goes in `LEFT_OUT` or `ALIASES`; new outlets get a country only when this is rebuilt |
-| Heatmap models and colour scale | `stats/train.py`, by hand, then `BLUE`, `ORANGE` and `DOT_STRESS` in `stats/scoring.py`: add hand-labelled headlines to `stats/data/eval.json`. New LLM labels go through the same Ollama as summaries, one request at a time |
+| Heatmap places and outlets' countries | `stats/data/places.json`, `homes.json`, by `stats/build_places.py` (its docstring lists its inputs, and it needs an export for `homes.json`): a country wrongly placed goes in `LEFT_OUT` or `ALIASES`; new outlets get a country only when this is rebuilt |
+| Heatmap models and colour scale | From the repo's root: `docker compose exec -T tagger python3 - < stats/export_tagger.py > export.jsonl`, then `python stats/label.py export.jsonl <count> <Ollama URL>` for new LLM labels (it shares the summarizer's Ollama, one request at a time), `python stats/train.py export.jsonl`, and set `BLUE`, `ORANGE` and `DOT_STRESS` in `stats/scoring.py`. Add hand-labelled headlines to `stats/data/eval.json` |
+| Heatmap after retraining | Stored stress comes from the old model, so stop `stats`, delete its database and run the backfill below, or colours and the red-dot baseline mix two scales |
 | Heatmap map grid | `caddy/static/stats/map.json`, by `stats/build_map.py`: only if countries change |
 | Stats Python packages | `stats/requirements.txt` |
 | NPU driver, Ubuntu base, models (topic, story grouping, summarizer) | `tagger/Dockerfile`, `.env` `SUMMARIZER_MODEL` |
@@ -54,7 +55,7 @@ What in this project is written by hand and ages, how often to look at it, and a
 
 ### Only when something breaks
 
-- **Heatmap database lost:** `stats_data` isn't backed up. Stop `stats`, export `title`, `source`, `link`, `label`, `first_seen` and base64 `story_embedding` from the tagger's `headlines` table as JSON lines, and run `python backfill.py <file>` in the `stats` image (~25 minutes). Without it the red dots need 7 days to start.
+- **Heatmap database lost:** `stats_data` isn't backed up. From the repo's root: `docker compose stop stats`, `docker compose exec -T tagger python3 - < stats/export_tagger.py > export.jsonl`, `docker compose run --rm --no-deps -T -v "$PWD/export.jsonl:/tmp/export.jsonl:ro" stats python backfill.py /tmp/export.jsonl`, then `docker compose up -d --no-build stats`. Without it the red dots need 7 days to start.
 
 | What | Where | Sign it broke |
 | --- | --- | --- |

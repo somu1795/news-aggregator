@@ -1,16 +1,15 @@
 """
 Fits model/stress.json and model/relevant.json. Run by hand, not in the service:
 
-    python train.py <headlines.jsonl> <embeddings.bin>
+    python train.py <export.jsonl>
 
-headlines.jsonl has one {"id", "title", "tags", "label"} per line, from the tagger's database;
-embeddings.bin is one record per headline: its id (int64), its story_embedding (float16[384]).
-Stress labels are data/silver.json (an LLM's), with the headlines of data/eval.json
+export.jsonl comes from export_tagger.py. Stress labels are data/silver.json (an LLM's), with the headlines of data/eval.json
 (hand-labelled) held out for the score printed here. Relevance is learned from the
 tagger's tags, on the feeds the worker doesn't already drop by label: a headline with
 no topic, or only "uplifting", is news to count.
 """
 
+import base64
 import json
 import sys
 from pathlib import Path
@@ -23,15 +22,14 @@ HERE = Path(__file__).parent
 WORRYING = 1.5  # Stress at or above this is "worrying or worse"
 COUNTED = ('[]', '["uplifting"]')
 UNDROPPED_LABELS = (None, "other", "uplifting")
+SEVERE_WEIGHT = 3  # Severe headlines are few, and the fit would otherwise pull them towards routine
+RELEVANT_THRESHOLD = 1.0  # Log-odds: drops 37% of the topic stories left, for 3% more of the news lost
 
 
-def load(headlines_path, embeddings_path):
-    record = np.dtype([("id", "<i8"), ("vector", "<f2", 384)])
-    stored = np.fromfile(embeddings_path, dtype=record)
-    row_of = {int(i): n for n, i in enumerate(stored["id"])}
-    rows = [r for r in map(json.loads, open(headlines_path, encoding="utf8")) if r["id"] in row_of]
-    vectors = stored["vector"][[row_of[r["id"]] for r in rows]].astype(np.float32)
-    return rows, vectors
+def load(export_path):
+    rows = [json.loads(line) for line in open(export_path, encoding="utf8")]
+    vectors = np.stack([np.frombuffer(base64.b64decode(r.pop("story_embedding")), dtype=np.float16) for r in rows])
+    return rows, vectors.astype(np.float32)
 
 
 def save(path, weights, intercept, threshold):
@@ -39,14 +37,15 @@ def save(path, weights, intercept, threshold):
                                 "intercept": round(float(intercept), 5), "threshold": threshold}))
 
 
-def main(headlines_path, embeddings_path):
-    rows, vectors = load(headlines_path, embeddings_path)
+def main(export_path):
+    rows, vectors = load(export_path)
     silver = {r["title"]: r["stress"] for r in json.load(open(HERE / "data/silver.json", encoding="utf8"))}
     held = {r["title"]: r["stress"] for r in json.load(open(HERE / "data/eval.json", encoding="utf8"))}
     train = [n for n, r in enumerate(rows) if r["title"] in silver and r["title"] not in held]
     test = [n for n, r in enumerate(rows) if r["title"] in held]
 
-    stress = Ridge(alpha=1.0).fit(vectors[train], [silver[rows[n]["title"]] for n in train])
+    targets = np.array([silver[rows[n]["title"]] for n in train], dtype=float)
+    stress = Ridge(alpha=1.0).fit(vectors[train], targets, sample_weight=np.where(targets >= 3, SEVERE_WEIGHT, 1.0))
     predicted, truth = stress.predict(vectors[test]), np.array([held[rows[n]["title"]] for n in test])
     print(f"stress: {len(train)} trained, {len(test)} tested, "
           f"F1 {f1_score(truth >= 2, predicted >= WORRYING):.3f}, "
@@ -59,10 +58,10 @@ def main(headlines_path, embeddings_path):
     cut = len(pool) // 5
     inputs = vectors[pool]
     relevant = LogisticRegression(max_iter=4000).fit(inputs[order[cut:]], labels[order[cut:]])
-    agreement = (relevant.decision_function(inputs[order[:cut]]) >= 0) == labels[order[:cut]]
+    agreement = (relevant.decision_function(inputs[order[:cut]]) >= RELEVANT_THRESHOLD) == labels[order[:cut]]
     print(f"relevance: {len(pool) - cut} trained, {cut} tested, agreement {agreement.mean():.3f}, "
           f"keeping everything would agree {labels[order[:cut]].mean():.3f}")
-    save(HERE / "model/relevant.json", relevant.coef_[0], relevant.intercept_[0], 0.0)
+    save(HERE / "model/relevant.json", relevant.coef_[0], relevant.intercept_[0], RELEVANT_THRESHOLD)
 
 
 if __name__ == "__main__":
