@@ -4,6 +4,7 @@ only, never the feed's text, and never a way to hold up or break a refresh.
 """
 
 import asyncio
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -157,3 +158,9 @@ def test_the_off_switch_reaches_the_refresher():
 
 def test_sent_links_cost_little_memory():
     assert stats_stream.MAX_SENT_LINKS == 50_000
+
+
+async def test_entries_match_the_sample_the_worker_is_tested_with(mock_redis):
+    sample = json.loads((Path(__file__).parents[2] / "stats/data/stream_entry.json").read_text())
+    await publish_new(mock_redis, {"Feed": [item()]})
+    assert STREAM == sample["stream"] and set((await entries(mock_redis))[0]) == set(sample["fields"])

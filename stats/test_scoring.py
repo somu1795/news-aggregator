@@ -3,7 +3,7 @@
 import pytest
 
 import scoring
-from scoring import Story, build_output, country_scores, red_dots, world_mean
+from scoring import Story, build_output, build_stories, country_scores, red_dots, world_mean
 
 DAY = 86400.0
 NOW = 100 * DAY
@@ -103,7 +103,7 @@ def test_two_outlets_are_enough():
 
 
 def test_a_mild_spike_fires():
-    assert "XX" in red_dots(history(2) + spike(5, stress=1.8), {}, NOW)
+    assert "XX" in red_dots(history(2) + spike(5, stress=1.95), {}, NOW)
 
 
 def test_a_hot_story_outside_the_window_does_not_fire():
@@ -144,21 +144,21 @@ def test_dot_clears_after_a_day():
     assert red_dots([], first, NOW + 25 * 3600) == {}
 
 
-def titles(output):
-    return [s["title"] for s in output["countries"]["XX"]["top"]]
+def titles(stories_):
+    return [s["title"] for s in build_stories(stories_, NOW)["XX"]]
 
 
 def test_top_has_the_most_stressful_recent_stories_then_a_calm_one():
     stories = [story(stress=2.0 + i / 10, title=f"worst {i}") for i in range(6)] + [story(stress=0.2, title="calm")]
-    assert titles(build_output(stories, {}, NOW)) == ["worst 5", "worst 4", "worst 3", "worst 2", "worst 1", "calm"]
+    assert titles(stories) == ["worst 5", "worst 4", "worst 3", "worst 2", "worst 1", "calm"]
 
 
 def test_top_needs_no_calm_story():
-    assert titles(build_output([story(stress=2.0, title="only")], {}, NOW)) == ["only"]
+    assert titles([story(stress=2.0, title="only")]) == ["only"]
 
 
 def test_output_carries_no_stress_numbers():
-    assert "stress" not in build_output([story()], {}, NOW)["countries"]["XX"]["top"][0]
+    assert "stress" not in build_stories([story()], NOW)["XX"][0]
 
 
 def test_output_counts_the_last_day():
@@ -178,8 +178,8 @@ def test_empty_input():
 
 def test_constants_are_the_documented_ones():
     assert (scoring.HALF_LIFE_HOURS, scoring.PRIOR, scoring.NO_SIGNAL) == (48, 10, 3)
-    assert (scoring.BLUE, scoring.ORANGE) == (0.87, 1.39)
-    assert (scoring.DOT_WINDOW_HOURS, scoring.DOT_Z, scoring.DOT_MIN_OUTLETS, scoring.DOT_STRESS) == (6, 2, 2, 1.8)
+    assert (scoring.BLUE, scoring.ORANGE) == (0.93, 1.5)
+    assert (scoring.DOT_WINDOW_HOURS, scoring.DOT_Z, scoring.DOT_MIN_OUTLETS, scoring.DOT_STRESS) == (6, 2, 2, 1.95)
 
 
 def test_baseline_covers_all_fourteen_days():
@@ -192,3 +192,7 @@ def test_baseline_stops_at_fourteen_days():
 
 def test_baseline_counts_only_whole_blocks():
     assert scoring.blocks_known(NOW - 7 * DAY, NOW) == 27
+
+
+def test_the_map_file_carries_no_story_lists():
+    assert "top" not in build_output([story()], {}, NOW)["countries"]["XX"]

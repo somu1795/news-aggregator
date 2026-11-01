@@ -64,3 +64,10 @@ def test_an_old_story_does_not_hide_a_recent_one():
     index.insert(1, vector(1.0), 0.0)
     index.insert(2, vector(0.95), 71 * HOUR)
     assert index.match(vector(1.0), 73 * HOUR) == 2
+
+
+def test_an_expired_index_can_grow_again():
+    index = index_with_story()
+    index.expire(73 * HOUR)
+    index.insert(8, vector(1.0), 73 * HOUR)
+    assert index.match(vector(1.0), 73 * HOUR) == 8

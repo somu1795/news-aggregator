@@ -42,10 +42,15 @@ ALIASES = {
     "Gaza": "PS", "Palestinian": "PS", "Palestinians": "PS", "West Bank": "PS", "Hong Kong": "HK", "Taiwan": "TW",
     "Kashmir": "IN", "Holland": "NL", "Dutch": "NL", "N. Korea": "KP", "N. Korean": "KP", "North Korean": "KP",
     "S. Korea": "KR", "South Korean": "KR", "Seoul": "KR", "Pyongyang": "KP", "Aussie": "AU", "Kiwi": "NZ",
-    "Kiwis": "NZ", "Turkey": "TR",
+    "Kiwis": "NZ", "Turkey": "TR", "Niger Republic": "NE",
 }
 ABBREVIATIONS = {"US": "US", "U.S.": "US", "USA": "US", "UK": "GB", "U.K.": "GB", "UAE": "AE", "DRC": "CD", "PNG": "PG", "NZ": "NZ"}
 NOT_NAMES = {"English", "Korean"}
+# They cover the world, so a headline naming no place says nothing about their country
+GLOBAL_OUTLETS = {
+    "AP News", "BBC", "Bloomberg", "Business Insider", "CNBC", "CNN", "Forbes", "Fortune", "MSN", "Newsweek", "Reuters",
+    "The Guardian", "The Independent", "The New York Times", "The Washington Post", "Yahoo", "Yahoo News",
+}
 
 
 def build_terms(countries, cities_path, admin1_path):
@@ -103,6 +108,8 @@ def build_terms(countries, cities_path, admin1_path):
 def build_homes(places, rows):
     per_outlet = collections.defaultdict(collections.Counter)
     for row in rows:
+        if row["source"] in GLOBAL_OUTLETS:
+            continue
         for hit in places.detect(row["title"])[:1]:
             per_outlet[row["source"]][hit.country] += 1
     homes = {}

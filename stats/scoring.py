@@ -17,13 +17,13 @@ from typing import Dict, List, Optional, Set, Tuple
 HALF_LIFE_HOURS = 48
 PRIOR = 10  # Stories' worth of the world's mean in every country's score
 NO_SIGNAL = 3  # Less evidence than this shows no colour
-BLUE, ORANGE = 0.87, 1.39  # Scores at the two ends of the colour scale
+BLUE, ORANGE = 0.93, 1.5  # Scores at the two ends of the colour scale
 WORLD_MEAN_DAYS = 30
 NEUTRAL_STRESS = 1.0
 DOT_WINDOW_HOURS = 6  # Compared with the same length of time before it, so a dot follows a story within hours
 DOT_Z = 2
 DOT_MIN_OUTLETS = 2
-DOT_STRESS = 1.8
+DOT_STRESS = 1.95
 DOT_BASE_DAYS = 14
 DOT_MIN_HISTORY_DAYS = 7
 DOT_HOLD_HOURS = 24
@@ -134,17 +134,20 @@ def _top(own: List[Story], now: float) -> List[dict]:
     return [{"title": s.title, "link": s.link, "source": s.source} for s in top + ([calm] if calm else [])]
 
 
+def build_stories(stories: List[Story], now: float) -> Dict[str, List[dict]]:
+    """stories.json, which the page loads when a country is tapped. Per-headline stress isn't
+    in it: it's an average's input, not a fact to show."""
+    return {country: _top(own, now) for country, own in by_country(stories).items()}
+
+
 def build_output(stories: List[Story], held: Dict[str, dict], now: float) -> dict:
-    """heatmap.json. Per-headline stress isn't in it: it's an average's input, not a fact to show."""
-    scores = country_scores(stories, world_mean(stories, now), now)
-    own = by_country(stories)
+    """heatmap.json: what the map draws."""
     countries = {
         country: {
             "colour": None if s["colour"] is None else round(s["colour"], 3),
-            "brightness": round(s["brightness"], 3), "evidence": round(s["evidence"], 1),
-            "stories_24h": s["stories_24h"], "top": _top(own[country], now),
+            "brightness": round(s["brightness"], 3), "evidence": round(s["evidence"], 1), "stories_24h": s["stories_24h"],
         }
-        for country, s in scores.items()
+        for country, s in country_scores(stories, world_mean(stories, now), now).items()
     }
     dots = [{k: v for k, v in dot.items() if k != "held"} for dot in held.values()]
     return {"generated_at": now, "half_life_hours": HALF_LIFE_HOURS, "countries": countries, "dots": dots}

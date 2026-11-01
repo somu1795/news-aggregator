@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 MAX_COUNTRIES = 2
+# Names that mean a state of the outlet's own country: Nigeria has a Niger State and a Niger River
+OWN_STATES = {"Niger": "NG"}
 
 
 def clean_title(title: str, source: str = "") -> str:
@@ -53,9 +55,15 @@ class Places:
         homes = json.loads((data_dir / "homes.json").read_text())
         return cls(data["terms"], data["abbreviations"], data["capitals"], homes)
 
-    def detect(self, title: str) -> List[Hit]:
+    def _hit(self, name: str, source: str) -> Hit:
+        hit = Hit(*self.terms[name])
+        if name in OWN_STATES and self.homes.get(source) == OWN_STATES[name]:
+            hit.country = OWN_STATES[name]
+        return hit
+
+    def detect(self, title: str, source: str = "") -> List[Hit]:
         """The first countries a title names, in order, each once."""
-        found: List[Tuple[int, Hit]] = [(m.start(), Hit(*self.terms[m.group(1)])) for m in self._names.finditer(title)]
+        found: List[Tuple[int, Hit]] = [(m.start(), self._hit(m.group(1), source)) for m in self._names.finditer(title)]
         found += [(m.start(), Hit(self.abbreviations[m.group(1)], None, None)) for m in self._short.finditer(title)]
         hits: List[Hit] = []
         for _, hit in sorted(found, key=lambda pair: pair[0]):
@@ -67,7 +75,7 @@ class Places:
         return hits[:MAX_COUNTRIES]
 
     def locate(self, title: str, source: str) -> Located:
-        hits = self.detect(title)
+        hits = self.detect(title, source)
         from_title = bool(hits)
         countries = [hit.country for hit in hits]
         if not hits and source in self.homes:

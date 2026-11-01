@@ -1,0 +1,10 @@
+{
+  "stream": "stats:items",
+  "fields": {
+    "title": "Kenya votes - Paper",
+    "link": "https://example.com/1",
+    "source": "Paper",
+    "published": "1800000000.0",
+    "label": "other"
+  }
+}

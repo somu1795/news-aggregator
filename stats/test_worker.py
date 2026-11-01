@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+from pathlib import Path
 
 import fakeredis
 import numpy as np
@@ -256,8 +257,9 @@ def test_redis_outage_keeps_the_last_file(state):
 
 def test_publish_is_atomic(state):
     worker.tick(redis_with(entry()), state, NOW)
-    assert [p.name for p in state.public.parent.glob("heatmap*")] == ["heatmap.json"]
-    assert json.loads(state.public.read_text())["countries"]["KE"]["top"][0]["title"] == "Kenya votes"
+    assert sorted(p.name for p in state.public.parent.glob("*.json")) == ["heatmap.json", "stories.json"]
+    assert not list(state.public.parent.glob("*.tmp"))
+    assert json.loads(state.public.with_name("stories.json").read_text())["KE"][0]["title"] == "Kenya votes"
 
 
 def test_publishing_waits_for_its_interval(state):
@@ -388,7 +390,7 @@ class FailingInsert:
 def test_a_failed_pass_leaves_no_half_saved_dots(state, monkeypatch):
     state.store.save_dots({"KE": {"country": "KE", "held": NOW, "since": NOW}})
     state.store.commit()
-    monkeypatch.setattr(worker, "write_output", lambda *a: (_ for _ in ()).throw(OSError("disk full")))
+    monkeypatch.setattr(worker, "write_json", lambda *a: (_ for _ in ()).throw(OSError("disk full")))
     monkeypatch.setattr(worker, "red_dots", lambda stories, held, now: {})
     with pytest.raises(OSError):
         worker.tick(redis_with(), state, NOW)
@@ -397,7 +399,7 @@ def test_a_failed_pass_leaves_no_half_saved_dots(state, monkeypatch):
 
 def test_old_rows_are_pruned_even_when_writing_fails(state, monkeypatch):
     worker.process([entry()], state)
-    monkeypatch.setattr(worker, "write_output", lambda *a: (_ for _ in ()).throw(OSError("disk full")))
+    monkeypatch.setattr(worker, "write_json", lambda *a: (_ for _ in ()).throw(OSError("disk full")))
     with pytest.raises(OSError):
         worker.tick(redis_with(), state, NOW + 31 * DAY)
     assert state.store.headline_count() == 0
@@ -415,3 +417,20 @@ def test_a_failed_index_reload_keeps_the_old_index(state, monkeypatch):
 def test_undecodable_bytes_do_not_stop_the_stream():
     client = worker.connect("redis://example.invalid:6379")
     assert client.get_encoder().encoding_errors == "replace"
+
+
+def test_the_shared_stream_entry_is_understood():
+    sample = json.loads((Path(__file__).parent / "data/stream_entry.json").read_text())
+    assert sample["stream"] == worker.STREAM
+    item = worker.parse_entry("1800000000000-0", sample["fields"])
+    assert item["title"] == "Kenya votes" and item["label"] == "other" and item["when"] == 1800000000.0
+
+
+def test_a_batch_of_only_unusable_entries_is_an_error(state, caplog):
+    worker.process([("1-0", {"title": "x"}), ("2-0", {"title": "y"})], state)
+    assert any(r.levelname == "ERROR" for r in caplog.records)
+
+
+def test_a_partly_bad_batch_is_only_a_warning(state, caplog):
+    worker.process([("1-0", {"title": "x"}), entry()], state)
+    assert not any(r.levelname == "ERROR" for r in caplog.records)

@@ -80,3 +80,20 @@ def test_spaces_are_tidied():
 def test_a_second_country_gets_its_own_position(places):
     positions = places.locate("Russia strikes Lagos", "x").positions
     assert positions["RU"][0] == pytest.approx(55.75, abs=0.5) and positions["NG"][0] == pytest.approx(6.45, abs=0.5)
+
+
+def test_niger_from_a_nigerian_outlet_is_the_state(places):
+    assert places.locate("Bandits abduct 18 in Niger communities", "Premium Times").countries == ["NG"]
+
+
+def test_niger_from_elsewhere_is_the_country(places):
+    assert places.locate("Niger junta talks resume", "x").countries == ["NE"]
+
+
+def test_niger_republic_is_always_the_country(places):
+    assert places.locate("Troops cross into Niger Republic", "Premium Times").countries == ["NE"]
+
+
+@pytest.mark.parametrize("outlet", ["BBC", "CNN", "AP News", "The New York Times", "Yahoo"])
+def test_global_outlets_have_no_home(places, outlet):
+    assert places.locate("Budget minister vows review", outlet).countries == []

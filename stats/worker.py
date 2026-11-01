@@ -20,7 +20,7 @@ import redis
 from embedder import Embedder
 from models import LinearModel, is_relevant
 from places import Places, clean_title
-from scoring import DAY, build_output, red_dots
+from scoring import DAY, build_output, build_stories, red_dots
 from store import RETENTION_DAYS, Store
 from stories import StoryIndex
 
@@ -109,7 +109,9 @@ def process(entries: List[Tuple[str, Dict[str, str]]], state: State) -> int:
     """Stores a batch of stream entries, and the position after them, as one transaction."""
     parsed = [parse_entry(entry_id, fields) for entry_id, fields in entries]
     usable = [item for item in parsed if item is not None]
-    if len(usable) < len(parsed):
+    if parsed and not usable:  # Likely the refresher's format changed: the map is no longer being fed
+        logger.error("Every entry of a batch was unusable (%d), the first: %s", len(parsed), entries[0][1])
+    elif len(usable) < len(parsed):
         logger.warning("Skipped %d unusable stream entries", len(parsed) - len(usable))
     try:
         items = _new_items(usable, state)
@@ -157,7 +159,7 @@ def read_entries(client: redis.Redis, last_id: str) -> List[Tuple[str, Dict[str,
     return found[0][1] if found else []
 
 
-def write_output(output: dict, path: Path) -> None:
+def write_json(output: dict, path: Path) -> None:
     """Replaces the file whole, so a reader never sees half of it."""
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(output, ensure_ascii=False, separators=(",", ":")))
@@ -181,7 +183,8 @@ def tick(client: redis.Redis, state: State, now: float) -> None:
         try:
             state.store.save_dots(dots)
             if due or set(dots) - set(held):
-                write_output(build_output(stories, dots, now), state.public)
+                write_json(build_stories(stories, now), state.public.with_name("stories.json"))
+                write_json(build_output(stories, dots, now), state.public)
                 state.last_publish = now
             state.store.commit()
         except Exception:
