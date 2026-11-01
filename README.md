@@ -109,6 +109,7 @@ What the site is about is in the `config/` folder: `site.yaml` (name, descriptio
 | `APP_CPUS`         | Max CPU cores for each app container.                                    | `4`          |
 | `APP_MEM_LIMIT`    | Max memory for each app container (e.g., `512m`, `2G`).                  | `2G`         |
 | `RENDER_GID`       | Host group id owning the NPU (`getent group render`), for the tagger.    | `991`        |
+| `STATS_REDIS_PASSWORD` | Password of the stats worker's read-only Redis user. **Required.** Generate it the same way. | |
 | `REDIS_PASSWORD`   | Password for Redis. **Required.** Generate with `openssl rand -hex 24`.  | none         |
 | `SUMMARIZER_LLM_URL` | Ollama server for article summaries, e.g. `http://<host>:11434`; empty disables them. | empty |
 | `SUMMARIZER_MODEL` | Ollama model for summaries and story pairs.                              | `qwen3:8b`   |
