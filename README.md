@@ -15,6 +15,7 @@
 - **Topic Tabs**: Every region can be filtered to uplifting, tech, science, nature, culture or sport news. A small model (`bge-small-en-v1.5`, fine-tuned once on a GPU by `tagger/finetune.py`) runs on the host's Intel NPU in its own `tagger` container (or on the CPU without one). It's trained on labels the feeds themselves imply (a Sports section is sport) and retrains itself daily on every headline it has stored.
 - **Article Summaries**: The top 20 stories of every tab get a short summary, shown in place under the headline. A `summarizer` service extracts each article's text and has an LLM (Ollama, e.g. on a GPU machine on your network) summarize it. Sites whose bot checks refuse plain requests are read with an isolated headless browser (`browser`, behind a public-only proxy); otherwise from the feed's own text or an archive.ph snapshot. Optional: set `SUMMARIZER_LLM_URL` in `.env`.
 - **Search**: `[/]search` (or the `/` key) searches every tab's headlines and summaries as you type, entirely in the browser: opening it loads every tab's headlines in one request, then results update on every keystroke, each labelled with the tabs it's in. Results are stories: the same story from several outlets, tabs or days is one result, its other headlines listed under it. Older headlines from the archive join the same list (headline matches first, then summary matches, each newest first), 50 stories at a time, with a "more headlines" link for the next 50: searched on the server once typing pauses for 60 ms (in an index the refresher writes and the app's workers share in memory: about 0.2 ms a search), with misspelled words searched as the closest known word (`SEARCH_TYPO_FALLBACK`). Searches aren't written to the access logs.
+- **World Heatmap**: The `stats` page shows a dot-matrix world map, blue for calm news and orange for stressful, judged on the tone of a country's stories rather than how many it gets, so thinly covered countries stay dim instead of looking calm. A red dot marks a country whose news jumps against its own past, usually within hours. It's built from every fetched headline by a separate `stats` service: if that stops, the site carries on and the map shows its age. It reflects English-language coverage, not how safe a place is.
 - **One Item per Story**: When several outlets cover the same story under different headlines, a tab shows it once, with "+N sources" opening the others. A second small model on the NPU (`multilingual-e5-small`) recognises the same story, also across languages.
 - **Reading Controls**: Sort each tab by the default mix, newest, oldest or random; an *advanced* row has **reset** (back to the defaults), **install** (installs the site as an app; it has a web app manifest and icons) **site icons** (each website's icon before its headlines, served from the site's own domain) **auto refresh** (off, 5m, 15m, 30m or 1h; refreshes the open tab while it's visible) and **back action** (whether Back leaves the site, the default, or returns to the last tab).
 - **Configurable Sources and Weighting**: Regions, topics, their feeds and each feed's share, the site's name and the summary prompts are in the `config/` folder; the page's tabs follow it, and another site can run the same code with its own folder.
@@ -131,6 +132,8 @@ For what needs reviewing and when (pinned versions, feeds, lists), see [MAINTENA
 - the **headline archive** (every published headline, link, summary and story, and each view's order hourly; copied with SQLite's online backup, before the tagger's: the archive records how far it has followed the tagger's story changes). It grows by a few MB a day, and so does each archive;
 - the **tagger's** database (every stored headline, its labels, embeddings and story; the same way) and classifier.
 
+The heatmap's database isn't backed up: it holds 30 days of derived data and can be rebuilt (MAINTENANCE.md).
+
 Each database copy is checked with SQLite's `quick_check` before it's kept: a damaged tagger database fails the run (the older archives stay), a damaged headline archive is left out with a warning. The search index (`search-index.bin`) isn't backed up: the refresher writes it again within a minute.
 
 It also saves each **Docker image** the stack runs on, once per version (`images/`), so a restore needs no downloads. It keeps the newest **8** archives and the images they use, and refuses to run if a destination folder is missing (an unmounted disk). Not backed up, as they rebuild themselves: the NPU compile cache, Byparr's GeoIP database, Caddy's volumes. Nothing is stopped: Redis saves in the background and the databases are copied while in use. A run takes about 20 seconds (about a minute and a half when images changed, compressing on every CPU); an archive is about 290 MB (Oct 31, 2026: the tagger's database is 400 MB of it), the images about 2.5 GB.
@@ -167,6 +170,14 @@ pip install -r requirements.txt pytest
 python -m pytest
 ```
 
+So has the stats service:
+
+```sh
+cd stats
+pip install -r requirements-dev.txt
+python -m pytest
+```
+
 ## Scaling for High Traffic
 
 Because requests are served from memory and never fetch upstream, a single app container handles thousands of requests per second. Upstream load is constant (one refresh every 5 minutes) regardless of traffic.
@@ -194,3 +205,7 @@ Because requests are served from memory and never fetch upstream, a single app c
 - `GET /health`: Health check. Reports `healthy`, `degraded` (Redis down but still serving), or `unhealthy`, plus the headlines' age.
 - `POST /admin/cache/clear`: Triggers an immediate refresh (requires `X-API-Key`). Current headlines stay available meanwhile.
 - `GET /metrics`: Prometheus metrics endpoint (blocked at Caddy).
+
+## Data Credits
+
+The heatmap uses place names from [GeoNames](https://www.geonames.org/) (CC BY 4.0) and [world-countries](https://github.com/mledoze/countries) (ODbL; `stats/data/places.json` is derived from it and stays under that licence), and land shapes from [Natural Earth](https://www.naturalearthdata.com/) (public domain).

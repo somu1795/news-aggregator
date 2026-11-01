@@ -44,11 +44,17 @@ What in this project is written by hand and ages, how often to look at it, and a
 | Country → starting region | `config/regions.yaml` `countries` |
 | Tagger evaluation (598 hand-labelled headlines) and seed labels | `tagger/data/eval.json`, `tagger/data/seed.json`: add recent hand-labelled headlines so the retrain gate judges current news |
 | Story-grouping labelled pairs | `tagger/data/story_pairs.json`: only to re-check the 0.92 threshold if grouping looks off |
+| Heatmap places and outlets' countries | `stats/data/places.json`, `homes.json`, by `stats/build_places.py` (its docstring lists its inputs): a country wrongly placed goes in `LEFT_OUT` or `ALIASES`; new outlets get a country only when this is rebuilt |
+| Heatmap models and colour scale | `stats/train.py`, by hand, then `BLUE`, `ORANGE` and `DOT_STRESS` in `stats/scoring.py`: add hand-labelled headlines to `stats/data/eval.json`. New LLM labels go through the same Ollama as summaries, one request at a time |
+| Heatmap map grid | `caddy/static/stats/map.json`, by `stats/build_map.py`: only if countries change |
+| Stats Python packages | `stats/requirements.txt` |
 | NPU driver, Ubuntu base, models (topic, story grouping, summarizer) | `tagger/Dockerfile`, `.env` `SUMMARIZER_MODEL` |
 | Smokescreen, Go, Alpine | `smokescreen/Dockerfile` |
 | Tagger Python packages | `tagger/requirements.txt` |
 
 ### Only when something breaks
+
+- **Heatmap database lost:** `stats_data` isn't backed up. Stop `stats`, export `title`, `source`, `link`, `label`, `first_seen` and base64 `story_embedding` from the tagger's `headlines` table as JSON lines, and run `python backfill.py <file>` in the `stats` image (~20 minutes). Without it the red dots need 7 days to start.
 | What | Where | Sign it broke |
 | --- | --- | --- |
 | Google link resolution | `app/services/links/google_news.py` | `redirect_fallbacks_total` rises, or headlines link to `news.google.com` |

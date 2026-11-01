@@ -9,6 +9,7 @@ The application is a containerized system orchestrated by Docker Compose. Its co
 - A single background **refresher** fetches all feeds on a schedule, builds one headline list per **view** (each region, plus "all"), resolves the links and publishes one **snapshot** per view to Redis.
 - The **tagger** tags every headline by topic with a small model on the host's NPU; the refresher then publishes one more snapshot per region and topic (`asia:sport`, …).
 - The **API** workers only read those snapshots, from an in-process copy.
+- The **stats** service builds the heatmap on its own from a stream of every fetched headline; Caddy serves its file, so it can fail without touching the site.
 
 So request volume costs almost nothing upstream or in Redis, and users keep getting headlines through slow feeds, Google failures and even Redis outages.
 
@@ -81,6 +82,7 @@ So request volume costs almost nothing upstream or in Redis, and users keep gett
 ### Caddy (`caddy` service)
 - **Role**: Internal reverse proxy and load balancer. TLS is terminated at Cloudflare; the tunnel connector (`cloudflared`) reaches Caddy over the Docker network. Its port is also open to the LAN (e.g. for `/metrics`).
 - **Client IP trust**: `trusted_proxies` lists the peers allowed to tell Caddy the real client IP: private ranges (the Docker network the connector uses, and the LAN). For those peers Caddy reads `CF-Connecting-IP`, `X-Real-IP` or `X-Forwarded-For`; for anyone else it uses the connection's own IP. It then **overwrites** `X-Real-IP` before proxying, so clients can't spoof the IP used for rate limiting.
+- Serves `/stats/` itself: the page's static files from its image, and `heatmap.json` from the volume the stats service writes, so the page needs neither the app nor the worker to load.
 - Compresses responses (zstd/gzip) and health-checks app containers via `/health`. It serves `/metrics` only to direct requests from private (LAN) addresses: requests through the tunnel (they carry Cloudflare's `CF-Connecting-IP` header) and from public addresses get 403.
 
 ### API (`app` service)
@@ -122,6 +124,20 @@ So request volume costs almost nothing upstream or in Redis, and users keep gett
 ### Tagger (`tagger` service)
 - `tagger/` (`tagger.py`: the API, topic tagging and retraining; `embedder.py`, `classifier.py`, `store.py`, `stories.py`), its own image (Ubuntu 24.04, OpenVINO and Intel's NPU user-space driver). Internal only: `POST /tag`, `POST /group` (story grouping), `GET /health`. See §6.
 - Runs on the Intel NPU (`/dev/accel`); falls back to the CPU if the NPU can't be used.
+
+### Stats (`stats` service)
+- `stats/`, its own image: the heatmap of the `/stats/` page. It reads the stream `stats:items`, keeps its own SQLite file (`/data/stats.db` in `stats_data`, 30 days) and writes `heatmap.json` to `stats_public`, which Caddy serves. No request reaches it and nothing depends on it, so it has no API; it needs Redis only, and neither the GPU nor the internet.
+- **The stream:** after each fetch the refresher adds every link it hasn't sent since it started to `stats:items` (`services/stats_stream.py`): title, link, publisher, date and the feed's label, whether or not any tab shows the headline. It is capped (`STATS_STREAM_MAXLEN`, **30,000** entries), has a 5 s timeout and catches every error, so it can't affect a refresh. A refresher restart sends every link again; the worker drops repeats.
+- **Each minute** the worker takes up to 2,000 new entries and, as one transaction:
+  1. drops feeds labelled `sport`, `culture`, `tech`, `science` or `nature`, and links it has seen;
+  2. embeds the titles with `multilingual-e5-small` on the CPU (the tagger's story model, ~68 titles/s on one core; its CPU vectors match the tagger's at cosine ≥ 0.99999);
+  3. keeps those the `relevant` model passes, a logistic regression on the embedding learned from the tagger's tags (93.5% agreement; keeping everything would agree 91.5%, as labels do most of the filtering);
+  4. scores **stress**, 0–3 (0 good news, 1 routine, 2 worrying, 3 severe), with a ridge regression on the embedding, trained on 3,788 headlines an LLM rated. On 205 hand-labelled headlines it finds "worrying or worse" with F1 0.75. It underrates severe events (they average about 2), so scores are only used in averages and are never shown;
+  5. finds the **countries**: the first two the title names (`stats/data/places.json`: countries, their people, leaders, cities over 300,000 and states), or else the outlet's country (`homes.json`: 383 outlets where one country is at least half of 8 or more located headlines). On 300 hand-labelled headlines: 88% precision, 82% recall. Two thirds of headlines are placed. Names that are often something else are left out, and some stay ambiguous: Niger, for example, is also a Nigerian state;
+  6. joins each to the closest story of the last 72 hours at cosine ≥ 0.92, or starts one. Each story counts once per country. Country scores match those from the tagger's stories (correlation 0.996 over 74 countries).
+- **Colour:** a country's score is the mean stress of its stories, each weighing half as much per 48 hours, with 10 stories' worth of the world's mean added, so few stories stay near the mean. Colour runs from blue at 0.87 to orange at 1.39, fixed ends (the 10th and 90th percentile of country scores, Oct 2026), so a calmer or worse world changes the map. **Brightness** is evidence / (evidence + 10): how far the colour can be trusted, not how much news there is. Under 3 stories' worth of evidence a country shows no colour. Coverage is uneven: 86 of 206 countries get under one headline a day, and outlets cover quiet countries mostly when something goes wrong, which dimming only partly corrects.
+- **Red dots** compare a country with its own past. Stories whose title names it are counted over the last 6 hours and compared with the 6-hour blocks of the previous 14 days. A dot appears at 2 or more above the mean, in units of the square root of (mean, at least 1, + variance), if one of those stories has stress ≥ 1.8 and 2 or more outlets, and at least 7 days of data exist. It stays for 24 hours after the condition last held. It sits on the city the title names, or else the capital. Replayed on Oct 20–Nov 1, 2026: 16 dots in 12 days, most within 1–5 hours of the first headline. A new dot is published at once; the map otherwise every 5 minutes.
+- **Resources:** ~690 MB in use, limit 1 GB, one CPU. `stats_data` isn't in the daily backup, as `backfill.py` rebuilds it.
 
 ### Summarizer (`summarizer` service)
 - Runs `summarizer.py` from the app image (the loop; reading articles is `services/summaries/reading.py`, the LLM calls `services/summaries/llm.py`, the prompts `config/prompts.yaml`). **One replica.** Optional: without `SUMMARIZER_LLM_URL` it idles.
@@ -433,6 +449,10 @@ A visitor makes 2 requests per page load plus 1 per region viewed, so 100/minute
 | Redis down | Every worker keeps serving its in-memory copies; rate limits fall back to memory. `/health` reports `degraded` (HTTP 200), so Caddy keeps routing. Measured: 46,000+ requests at ~2,300 req/s during a 10s outage, 100% OK, p99 ≈ 420ms (same as with Redis up). |
 | Redis down and a worker has no snapshot | That worker returns 503 for that view, and its `/health` fails if it has no "all" snapshot. Only possible if Redis was empty or down when the worker started. |
 | Redis restarted | Snapshots, resolved URLs and counters are reloaded from disk. |
+| Stats worker stopped or failing | The site is unaffected. `/stats/` keeps its last file, shows its age, and says it's out of date after 30 minutes. The worker catches up from the stream when it restarts; entries older than the stream's cap are skipped and logged. |
+| Stats stream can't be written | Logged (`Stats stream not written`); the refresh carries on and sends those links next time. |
+| `heatmap.json` missing or unreadable | `/stats/` says the stats are offline and shows a plain map. |
+| App down | `/stats/` still loads, unstyled, as Caddy serves it. |
 | Fresh install | `/api/headlines` returns 503 (`Retry-After: 10`) for the few seconds until the first refresh completes. Topic views follow one cycle later (5 min): the tagger's first start takes ~1.5 min. |
 
 `/health` returns 503 only when the worker cannot serve headlines at all. Staleness never fails the probe, because older headlines are better than taking the API offline.
@@ -487,6 +507,7 @@ A visitor makes 2 requests per page load plus 1 per region viewed, so 100/minute
 | `TOPIC_REFRESH_TIMEOUT_SECONDS` | 150 | Cap on the topic phase; on timeout the topic views keep their previous snapshots. |
 | `TOPIC_FEEDS_INTERVAL_SECONDS` | 1800 | How often the topic feeds are re-fetched. |
 | `TAGGER_URL` / `TAGGER_TIMEOUT` | `http://tagger:8000` / 90 | The tagger, and the timeout of one tagging request. |
+| `STATS_STREAM_ENABLED` / `STATS_STREAM_MAXLEN` / `STATS_STREAM_TIMEOUT_SECONDS` | true / 30,000 / 5 s | The stream of fetched headlines for the stats service. |
 | `SUMMARIZER_LLM_URL` / `SUMMARIZER_MODEL` | empty / `qwen3:8b` | The Ollama server (empty disables summaries) and its model. Set in `.env`. |
 | `SUMMARY_TOP_N` / `SUMMARY_TTL_SECONDS` / `SUMMARY_FAILED_TTL_SECONDS` | 20 / 7 days / 1 day | Items per view that get a summary; how long a summary, and a failed article, are kept. |
 | `SUMMARY_RETRY_SECONDS` | 3 hours | When an article no step could read is tried again. |
@@ -553,4 +574,6 @@ Pinned in the Dockerfiles, `docker-compose.yml`, `.woodpecker.yml`, `app/require
 | Intel NPU driver (user space) | linux-npu-driver 1.38.0 |
 | OpenVINO / scikit-learn | 2026.4.1 / 1.9.1 |
 | Embedding model | `bge-small-en-v1.5` fine-tuned by `tagger/finetune.py`, release `tagger-model-v1` (checksummed); tokenizer from `Xenova/bge-small-en-v1.5` revision `ea104dac` |
+| Stats base image | `python:3.14.8-slim-trixie` |
+| onnxruntime / tokenizers (stats) | 1.31.1 / 0.23.3 |
 | Story grouping model | `multilingual-e5-small` fp16 ONNX and tokenizer from `Xenova/multilingual-e5-small` revision `761b726d` (checksummed) |
