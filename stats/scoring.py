@@ -6,7 +6,7 @@ ends, so a calmer or worse world changes the map. Few stories pull it towards th
 world's mean and leave it dim: brightness is how much the colour can be trusted,
 not how much news there is. A red dot compares a country with its own past, so a
 quiet country can fire on a small jump and a big one needs a large jump, and it
-needs a stressful story carried by several outlets, so a cup final doesn't fire.
+needs a stressful story carried by more than one outlet, so a cup final doesn't fire.
 """
 
 import math
@@ -17,11 +17,12 @@ from typing import Dict, List, Optional, Set
 HALF_LIFE_HOURS = 48
 PRIOR = 10  # Stories' worth of the world's mean in every country's score
 NO_SIGNAL = 3  # Less evidence than this shows no colour
-BLUE, ORANGE = 0.7, 1.6  # Scores at the two ends of the colour scale
+BLUE, ORANGE = 0.87, 1.39  # Scores at the two ends of the colour scale
 WORLD_MEAN_DAYS = 30
 NEUTRAL_STRESS = 1.0
-DOT_Z = 3
-DOT_MIN_OUTLETS = 3
+DOT_WINDOW_HOURS = 6  # Compared with the same length of time before it, so a dot follows a story within hours
+DOT_Z = 2
+DOT_MIN_OUTLETS = 2
 DOT_STRESS = 1.8
 DOT_BASE_DAYS = 14
 DOT_MIN_HISTORY_DAYS = 7
@@ -78,19 +79,21 @@ def _hot(story: Story) -> bool:
     return len(story.outlets) >= DOT_MIN_OUTLETS and story.stress >= DOT_STRESS
 
 
-def _fires(own: List[Story], days_known: int, now: float) -> Optional[Story]:
+def _fires(own: List[Story], blocks_known: int, now: float) -> Optional[Story]:
     """The story that puts a red dot on a country now, if any."""
-    daily = [0] * (DOT_BASE_DAYS + 1)
+    length = DOT_WINDOW_HOURS * 3600
+    counts = [0] * (blocks_known + 1)
     for story in own:
-        age = int((now - story.first_seen) // DAY)
-        if 0 <= age <= DOT_BASE_DAYS:
-            daily[age] += 1
-    past = daily[1:days_known + 1]
-    base = max(sum(past) / len(past), 1.0)
-    variance = sum((n - sum(past) / len(past)) ** 2 for n in past) / len(past)
-    if (daily[0] - base) / math.sqrt(base + variance) < DOT_Z:
+        block = int((now - story.first_seen) // length)
+        if 0 <= block <= blocks_known:
+            counts[block] += 1
+    past = counts[1:]
+    mean = sum(past) / len(past)
+    variance = sum((n - mean) ** 2 for n in past) / len(past)
+    base = max(mean, 1.0)
+    if (counts[0] - base) / math.sqrt(base + variance) < DOT_Z:
         return None
-    hot = [s for s in own if now - s.first_seen < DAY and _hot(s)]
+    hot = [s for s in own if now - s.first_seen < length and _hot(s)]
     return max(hot, key=lambda s: (len(s.outlets), s.stress), default=None)
 
 
@@ -99,16 +102,17 @@ def red_dots(stories: List[Story], held: Dict[str, dict], now: float) -> Dict[st
     dots = {c: dot for c, dot in held.items() if now - dot["held"] < DOT_HOLD_HOURS * 3600}
     if not stories:
         return dots
-    days_known = min(DOT_BASE_DAYS, int((now - min(s.first_seen for s in stories)) // DAY))
+    days_known = min(DOT_BASE_DAYS, (now - min(s.first_seen for s in stories)) / DAY)
     if days_known < DOT_MIN_HISTORY_DAYS:
         return dots
+    blocks_known = int(days_known * 24 // DOT_WINDOW_HOURS) - 1
     named = defaultdict(list)
     for story in stories:
         for country, from_title in story.countries.items():
             if from_title:
                 named[country].append(story)
     for country, own in named.items():
-        story = _fires(own, days_known, now)
+        story = _fires(own, blocks_known, now)
         if story is not None:
             dots[country] = {
                 "country": country, "lat": story.lat, "lon": story.lon, "title": story.title, "link": story.link,

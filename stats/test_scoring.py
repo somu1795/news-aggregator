@@ -19,9 +19,9 @@ def story(age_days=0.0, stress=1.0, country="XX", from_title=True, outlets=1, id
 story.next_id = 0
 
 
-def history(per_day, days=14, country="XX"):
-    """per_day quiet stories on each of the given days before the last 24 hours."""
-    return [story(age_days=d + 0.5, country=country) for d in range(1, days + 1) for _ in range(per_day)]
+def history(per_block, days=14, country="XX"):
+    """per_block quiet stories in each 6-hour block before the current one."""
+    return [story(age_days=(b + 0.5) / 4, country=country) for b in range(1, days * 4 + 1) for _ in range(per_block)]
 
 
 def spike(count, country="XX", outlets=3, stress=2.5, from_title=True):
@@ -71,50 +71,68 @@ def test_world_mean_of_nothing_is_neutral():
 
 
 def test_dot_fires_on_a_spike():
-    assert "XX" in red_dots(history(6) + spike(18), {}, NOW)
+    assert "XX" in red_dots(history(2) + spike(8), {}, NOW)
 
 
 def test_quiet_country_can_fire():
-    assert "XX" in red_dots(history(1) + spike(6), {}, NOW)
+    assert "XX" in red_dots([story(age_days=13)] + spike(4), {}, NOW)
 
 
 def test_big_country_needs_a_big_jump():
-    assert red_dots(history(190) + spike(200), {}, NOW) == {}
+    assert red_dots(history(50) + spike(55), {}, NOW) == {}
 
 
 def test_a_calm_spike_stays_silent():
-    assert red_dots(history(6) + spike(18, stress=1.0), {}, NOW) == {}
+    assert red_dots(history(2) + spike(8, stress=1.0), {}, NOW) == {}
 
 
-def test_two_outlets_are_not_enough():
-    assert red_dots(history(6) + spike(18, outlets=2), {}, NOW) == {}
+def test_one_outlet_is_not_enough():
+    assert red_dots(history(2) + spike(8, outlets=1), {}, NOW) == {}
 
 
 def test_outlet_fallback_never_fires():
-    assert red_dots(history(6) + spike(18, from_title=False), {}, NOW) == {}
+    assert red_dots(history(2) + spike(8, from_title=False), {}, NOW) == {}
 
 
 def test_short_history_cannot_fire():
-    assert red_dots(history(6, days=5) + spike(18), {}, NOW) == {}
+    assert red_dots(history(2, days=5) + spike(8), {}, NOW) == {}
+
+
+def test_two_outlets_are_enough():
+    assert "XX" in red_dots(history(2) + spike(8, outlets=2), {}, NOW)
+
+
+def test_a_mild_spike_fires():
+    assert "XX" in red_dots(history(2) + spike(5, stress=1.8), {}, NOW)
+
+
+def test_a_hot_story_outside_the_window_does_not_fire():
+    quiet_now = [story(age_days=0.1, country="XX") for _ in range(8)]
+    assert red_dots(history(2) + quiet_now + [story(age_days=0.5, outlets=5, stress=2.5)], {}, NOW) == {}
+
+
+def test_a_past_burst_has_cleared():
+    burst = [story(age_days=0.5, outlets=3, stress=2.5) for _ in range(8)]
+    assert red_dots(history(2) + burst, {}, NOW) == {}
 
 
 def test_dot_names_its_story():
-    dot = red_dots(history(6) + spike(18), {}, NOW)["XX"]
+    dot = red_dots(history(2) + spike(8), {}, NOW)["XX"]
     assert (dot["lat"], dot["lon"], dot["outlets"], dot["since"]) == (1.0, 2.0, 3, NOW)
 
 
 def test_dot_keeps_its_start_time():
-    first = red_dots(history(6) + spike(18), {}, NOW)
-    assert red_dots(history(6) + spike(18), first, NOW + 60)["XX"]["since"] == NOW
+    first = red_dots(history(2) + spike(8), {}, NOW)
+    assert red_dots(history(2) + spike(8), first, NOW + 60)["XX"]["since"] == NOW
 
 
 def test_dot_holds_for_a_day():
-    first = red_dots(history(6) + spike(18), {}, NOW)
+    first = red_dots(history(2) + spike(8), {}, NOW)
     assert "XX" in red_dots([], first, NOW + 23 * 3600)
 
 
 def test_dot_clears_after_a_day():
-    first = red_dots(history(6) + spike(18), {}, NOW)
+    first = red_dots(history(2) + spike(8), {}, NOW)
     assert red_dots([], first, NOW + 25 * 3600) == {}
 
 
@@ -140,7 +158,7 @@ def test_output_counts_the_last_day():
 
 
 def test_output_lists_dots():
-    held = red_dots(history(6) + spike(18), {}, NOW)
+    held = red_dots(history(2) + spike(8), {}, NOW)
     dot = build_output([], held, NOW)["dots"][0]
     assert dot["country"] == "XX" and "held" not in dot
 
@@ -152,3 +170,5 @@ def test_empty_input():
 
 def test_constants_are_the_documented_ones():
     assert (scoring.HALF_LIFE_HOURS, scoring.PRIOR, scoring.NO_SIGNAL) == (48, 10, 3)
+    assert (scoring.BLUE, scoring.ORANGE) == (0.87, 1.39)
+    assert (scoring.DOT_WINDOW_HOURS, scoring.DOT_Z, scoring.DOT_MIN_OUTLETS, scoring.DOT_STRESS) == (6, 2, 2, 1.8)
