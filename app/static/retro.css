@@ -59,6 +59,7 @@ h1 .cursor { color: var(--accent); }
 nav { display: flex; flex-wrap: wrap; gap: .25rem 1.25rem; color: var(--muted); }
 nav .key { text-decoration: underline; text-underline-offset: 3px; }
 nav .on { color: var(--ink); }
+nav a { text-decoration: none; }
 .advanced { margin-top: .5rem; font-size: .9em; }
 .search { display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem 1ch; margin-top: .75rem; }
 .search input {

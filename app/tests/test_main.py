@@ -511,3 +511,7 @@ def test_the_site_is_named_by_its_config(client, monkeypatch):
     manifest = client.get("/manifest.webmanifest")
     assert manifest.headers["content-type"] == "application/manifest+json"
     assert manifest.json()["name"] == "local.txt" and manifest.json()["description"] == "News of our town."
+
+
+def test_page_links_to_stats(client):
+    assert 'href="/stats/"' in client.get("/").text
