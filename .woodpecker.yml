@@ -54,6 +54,7 @@ steps:
         ADMIN_API_KEY=${ADMIN_API_KEY}
         API_RATE_LIMIT=${API_RATE_LIMIT}
         UVICORN_WORKERS=${UVICORN_WORKERS}
+        STATS_REDIS_PASSWORD=unused-in-build
         EOF
         docker compose build
 

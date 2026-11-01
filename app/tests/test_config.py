@@ -53,3 +53,12 @@ def test_the_starting_tab_comes_from_the_regions_countries(monkeypatch):
         {"id": "south", "label": "South", "countries": "IN LK", "sources": [{"name": "A", "url": "https://a", "weight": 1.0}]},
     ], extras=[]))
     assert region_for_country("lk") == "south" and region_for_country("US") == "all" and region_for_country(None) == "all"
+
+
+def test_the_stats_worker_reaches_only_redis_and_with_its_own_user():
+    compose = yaml.safe_load(COMPOSE.read_text())
+    assert compose["services"]["stats"]["networks"] == ["stats"]
+    assert compose["networks"]["stats"]["internal"] is True
+    assert "stats" in compose["services"]["redis"]["networks"]
+    assert any("redis://stats:" in entry for entry in compose["services"]["stats"]["environment"])
+    assert "+xread" in compose["services"]["redis"]["command"] and "~stats:items" in compose["services"]["redis"]["command"]

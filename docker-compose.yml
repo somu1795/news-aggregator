@@ -264,7 +264,8 @@ services:
     image: news-aggregator-stats
     build: ./stats
     environment:
-      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+      - REDIS_URL=redis://stats:${STATS_REDIS_PASSWORD?You must set STATS_REDIS_PASSWORD in your .env file}@redis:6379
+    networks: [stats]  # Redis only: no internet, and no other service
     volumes:
       - stats_data:/data  # Headlines, stories and red dots (SQLite), 30 days; rebuilt with backfill.py
       - stats_public:/public  # heatmap.json
@@ -341,7 +342,10 @@ services:
     environment:
       - REDISCLI_AUTH=${REDIS_PASSWORD?You must set REDIS_PASSWORD in your .env file}  # For the healthcheck's redis-cli
     # Must start with redis-server: only then does the image's entrypoint switch to the redis user
-    command: ["redis-server", "/usr/local/etc/redis/redis.conf", "--requirepass", "${REDIS_PASSWORD}"]
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf", "--requirepass", "${REDIS_PASSWORD}",
+              # The stats worker's own user: it can only read its stream
+              "--user", "stats", "on", ">${STATS_REDIS_PASSWORD}", "~stats:items", "+xread", "+xinfo|stream", "+client|setinfo"]
+    networks: [default, stats]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -357,6 +361,8 @@ services:
 
 networks:
   default:
+  stats:
+    internal: true
   # The browser's network: internal, so nothing on it reaches the internet directly
   browser:
     internal: true
