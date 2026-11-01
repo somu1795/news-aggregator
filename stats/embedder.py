@@ -17,6 +17,8 @@ PREFIX = "query: "
 
 class Embedder:
     def __init__(self, model_dir: Path):
+        self.model_dir = model_dir
+        ort.disable_telemetry_events()
         self.tokenizer = Tokenizer.from_file(str(model_dir / "tokenizer.json"))
         self.tokenizer.enable_truncation(MAX_TOKENS)
         self.tokenizer.enable_padding()

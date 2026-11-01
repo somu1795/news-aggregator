@@ -57,3 +57,10 @@ def test_many_stories_fit():
         index.insert(i, vector(0.0), 0.0)
     index.insert(9999, vector(1.0), 0.0)
     assert index.match(vector(1.0), 1.0) == 9999
+
+
+def test_an_old_story_does_not_hide_a_recent_one():
+    index = StoryIndex()
+    index.insert(1, vector(1.0), 0.0)
+    index.insert(2, vector(0.95), 71 * HOUR)
+    assert index.match(vector(1.0), 73 * HOUR) == 2

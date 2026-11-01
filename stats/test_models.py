@@ -97,3 +97,10 @@ def test_no_titles_give_an_empty_array(fake_embedder):
 
 def test_titles_are_truncated(fake_embedder):
     assert fake_embedder.tokenizer.truncation == 48
+
+
+def test_telemetry_is_off(fake_embedder, monkeypatch):
+    calls = []
+    monkeypatch.setattr(embedder.ort, "disable_telemetry_events", lambda: calls.append(True))
+    Embedder.__init__(fake_embedder, fake_embedder.model_dir)
+    assert calls == [True]

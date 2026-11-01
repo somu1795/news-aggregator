@@ -23,10 +23,9 @@ class StoryIndex:
         if not self.ids:
             return None
         similarity = self.vectors[: len(self.ids)] @ vector
+        similarity[np.array(self.first_seen) < now - STORY_WINDOW_HOURS * 3600] = -1
         best = int(similarity.argmax())
-        if similarity[best] < STORY_THRESHOLD or now - self.first_seen[best] > STORY_WINDOW_HOURS * 3600:
-            return None
-        return self.ids[best]
+        return self.ids[best] if similarity[best] >= STORY_THRESHOLD else None
 
     def insert(self, story_id: int, vector: np.ndarray, first_seen: float) -> None:
         if len(self.ids) == len(self.vectors):

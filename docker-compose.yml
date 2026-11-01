@@ -254,6 +254,32 @@ services:
       start_period: 180s  # The first start compiles the model for the NPU and trains (~1.5 min)
     restart: unless-stopped
 
+  # The heatmap: reads the stream of fetched headlines, writes heatmap.json for Caddy.
+  # Nothing depends on it; when it stops, the map says how old it is.
+  stats:
+    init: true
+    <<: *hardened
+    image: news-aggregator-stats
+    build: ./stats
+    environment:
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+    volumes:
+      - stats_data:/data  # Headlines, stories and red dots (SQLite), 30 days; rebuilt with backfill.py
+      - stats_public:/public  # heatmap.json
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+          pids: 64
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os, sys, time; sys.exit(time.time() - os.path.getmtime('/public/heatmap.json') > 900)"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+    restart: unless-stopped
+
   caddy:
     init: true
     <<: *hardened
@@ -338,6 +364,8 @@ volumes:
   archive_data:
   browser2_cache:
   tagger_data:
+  stats_data:
+  stats_public:
   redis_data:
   caddy_data:
   caddy_config:
