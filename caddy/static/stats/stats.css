@@ -1,0 +1,18 @@
+.regions { margin-top: .5rem; }
+.map-frame { margin-top: 1rem; }
+#map { display: block; width: 100%; aspect-ratio: 180 / 80; cursor: pointer; touch-action: manipulation; }
+.legend, .note { margin: .5rem 0 0; color: var(--muted); font-size: .85em; }
+.swatch { display: inline-block; width: .7em; height: .7em; border-radius: 50%; margin-left: .75ch; }
+.swatch:first-child { margin-left: 0; }
+.swatch.calm { background: #4a90c2; }
+.swatch.stressed { background: #e8742c; }
+.swatch.dot { background: #d9281e; box-shadow: 0 0 0 2px var(--paper), 0 0 0 3px #d9281e; }
+section { margin-top: 1rem; }
+section h2 { margin: 0; font-size: 1em; }
+section ul { list-style: none; margin: .25rem 0 0; padding: 0; }
+section li { display: block; margin-top: .4rem; padding: 0; }
+.source { color: var(--muted); font-size: .9em; }
+#countries { list-style: none; margin: 1rem 0 0; padding: 0; columns: 2 24ch; font-size: .9em; }
+#countries li { display: block; padding: .1rem 0; break-inside: avoid; }
+#countries .band { color: var(--muted); }
+@media (max-width: 40rem) { #countries { columns: 1; } }

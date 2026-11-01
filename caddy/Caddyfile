@@ -61,6 +61,25 @@
 		file_server
 	}
 
+	# The stats page: static files baked into this image, and the heatmap the stats service
+	# writes to a shared volume. Neither touches the app or the stats service.
+	redir /stats /stats/ 308
+	@stats path /stats/*
+	header @stats {
+		Content-Security-Policy "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+	}
+	handle /stats/heatmap.json {
+		root * /srv/stats-data
+		uri strip_prefix /stats
+		header Cache-Control "public, max-age=60"
+		file_server
+	}
+	handle @stats {
+		root * /srv/static
+		header Cache-Control "public, max-age=300"
+		file_server
+	}
+
 	# Reverse proxy all other requests to the 'app' service.
 	# Caddy automatically discovers and load-balances across all scaled 'app' containers.
 	reverse_proxy app:8989 {

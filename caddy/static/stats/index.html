@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stats</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/static/retro.css">
+    <link rel="stylesheet" href="/stats/stats.css">
+    <script src="/stats/stats.js" defer></script>
+</head>
+<body>
+    <header>
+        <div class="masthead">
+            <h1>STATS<span class="cursor blink">_</span></h1>
+            <nav aria-label="Site"><a href="/">headlines</a></nav>
+        </div>
+        <nav class="regions" id="tabs" aria-label="Stats"></nav>
+        <p class="status"><span id="status" aria-live="polite">connecting...</span></p>
+        <hr class="rule">
+    </header>
+
+    <main>
+        <div class="map-frame"><canvas id="map" role="img" aria-label="World map of how stressful each country's news is. The same information is in the list below."></canvas></div>
+        <p class="legend"><span class="swatch calm"></span> calm <span class="swatch stressed"></span> stressful <span class="swatch dot"></span> unusual right now</p>
+        <p class="note">What English-language outlets in our feeds are saying. Not a measure of how safe a place is. Dim means little coverage.</p>
+        <section id="dots" aria-label="Unusual right now" hidden></section>
+        <section id="country" aria-live="polite" hidden></section>
+        <ol id="countries"></ol>
+    </main>
+
+    <footer>
+        <hr class="rule">
+        <p>Places from <a href="https://www.geonames.org/">GeoNames</a> (CC BY) and <a href="https://github.com/mledoze/countries">world-countries</a> (ODbL). Map from <a href="https://www.naturalearthdata.com/">Natural Earth</a>.</p>
+    </footer>
+</body>
+</html>
