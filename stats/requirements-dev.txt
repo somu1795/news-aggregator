@@ -1,0 +1,5 @@
+-r requirements.txt
+pytest==9.2.0
+fakeredis==2.40.0
+scikit-learn==1.9.1  # train.py
+shapely==2.2.0  # build_map.py

@@ -1,0 +1,5 @@
+# Direct dependencies; requirements.txt pins the full set
+numpy==2.5.4
+onnxruntime==1.31.1
+tokenizers==0.23.3
+redis==8.1.0
