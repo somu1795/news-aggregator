@@ -62,11 +62,11 @@ def test_global_outlet_has_no_home(places):
 
 
 def test_city_gives_coordinates(places):
-    assert places.locate("Quake hits Lagos", "x").lat == pytest.approx(6.45, abs=0.5)
+    assert places.locate("Quake hits Lagos", "x").positions["NG"][0] == pytest.approx(6.45, abs=0.5)
 
 
 def test_country_alone_gives_its_capital(places):
-    assert places.locate("Kenya votes", "x").lat == pytest.approx(-1.29, abs=0.5)
+    assert places.locate("Kenya votes", "x").positions["KE"][0] == pytest.approx(-1.29, abs=0.5)
 
 
 def test_entities_are_unescaped():
@@ -75,3 +75,8 @@ def test_entities_are_unescaped():
 
 def test_spaces_are_tidied():
     assert clean_title("  A   headline\n") == "A headline"
+
+
+def test_a_second_country_gets_its_own_position(places):
+    positions = places.locate("Russia strikes Lagos", "x").positions
+    assert positions["RU"][0] == pytest.approx(55.75, abs=0.5) and positions["NG"][0] == pytest.approx(6.45, abs=0.5)

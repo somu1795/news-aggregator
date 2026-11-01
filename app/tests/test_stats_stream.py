@@ -4,9 +4,11 @@ only, never the feed's text, and never a way to hold up or break a refresh.
 """
 
 import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 
 from config import settings
 from services import stats_stream
@@ -131,3 +133,23 @@ async def test_sent_links_stay_bounded(mock_redis, monkeypatch):
     monkeypatch.setattr(stats_stream, "MAX_SENT_LINKS", 2)
     await publish_new(mock_redis, {"Feed": [item(f"https://a.example/{i}") for i in range(5)]})
     assert len(stats_stream._sent) == 2
+
+
+async def test_long_titles_are_cut(mock_redis):
+    await publish_new(mock_redis, {"Feed": [item(title="x" * 5000)]})
+    assert len((await entries(mock_redis))[0]["title"]) == stats_stream.MAX_TITLE_CHARS
+
+
+async def test_long_publisher_names_are_cut(mock_redis):
+    await publish_new(mock_redis, {"Feed": [item(source="x" * 5000)]})
+    assert len((await entries(mock_redis))[0]["source"]) == stats_stream.MAX_SOURCE_CHARS
+
+
+async def test_oversized_links_are_not_sent(mock_redis):
+    await publish_new(mock_redis, {"Feed": [item(link="https://a.example/" + "x" * 5000)]})
+    assert await mock_redis.xlen(STREAM) == 0
+
+
+def test_the_off_switch_reaches_the_refresher():
+    compose = yaml.safe_load((Path(__file__).parents[2] / "docker-compose.yml").read_text())
+    assert "STATS_STREAM_ENABLED" in compose["services"]["refresher"]["environment"]

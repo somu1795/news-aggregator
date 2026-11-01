@@ -19,6 +19,8 @@ logger = structlog.get_logger(__name__)
 
 STREAM = "stats:items"
 MAX_SENT_LINKS = 200_000
+# The stream can't be evicted, so a feed's oversized fields stop here
+MAX_TITLE_CHARS, MAX_SOURCE_CHARS, MAX_LINK_CHARS = 300, 100, 2000
 
 _sent: "OrderedDict[str, None]" = OrderedDict()  # Links already in the stream, oldest first
 
@@ -34,7 +36,8 @@ async def _send(redis_client: aioredis.Redis, results_by_source: Dict[str, List[
     labels = _labels()
     new = {
         item["link"]: (item, labels.get(name, ""))
-        for name, items in results_by_source.items() for item in items if item["link"] not in _sent
+        for name, items in results_by_source.items() for item in items
+        if item["link"] not in _sent and len(item["link"]) <= MAX_LINK_CHARS
     }
     if not new:
         return
@@ -43,7 +46,7 @@ async def _send(redis_client: aioredis.Redis, results_by_source: Dict[str, List[
         published = item.get("published")
         pipe.xadd(
             STREAM,
-            {"title": item["title"], "link": item["link"], "source": item["source"],
+            {"title": item["title"][:MAX_TITLE_CHARS], "link": item["link"], "source": item["source"][:MAX_SOURCE_CHARS],
              "published": "" if published is None else str(published), "label": label},
             maxlen=settings.STATS_STREAM_MAXLEN, approximate=True,
         )

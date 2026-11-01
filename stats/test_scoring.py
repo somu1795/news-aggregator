@@ -13,7 +13,7 @@ def story(age_days=0.0, stress=1.0, country="XX", from_title=True, outlets=1, id
     story.next_id += 1
     return Story(id=id or story.next_id, first_seen=NOW - age_days * DAY, stress=stress, title=title,
                  link="https://example.com/a", source="Outlet", outlets={f"o{i}" for i in range(outlets)},
-                 countries={country: from_title}, lat=1.0, lon=2.0)
+                 countries={country: from_title}, positions={country: (1.0, 2.0)})
 
 
 story.next_id = 0
@@ -119,6 +119,14 @@ def test_a_past_burst_has_cleared():
 def test_dot_names_its_story():
     dot = red_dots(history(2) + spike(8), {}, NOW)["XX"]
     assert (dot["lat"], dot["lon"], dot["outlets"], dot["since"]) == (1.0, 2.0, 3, NOW)
+
+
+def test_each_country_dot_sits_in_its_own_country():
+    both = spike(8)
+    for s in both:
+        s.countries, s.positions = {"XX": True, "YY": True}, {"XX": (1.0, 2.0), "YY": (3.0, 4.0)}
+    dots = red_dots(history(2) + history(2, country="YY") + both, {}, NOW)
+    assert (dots["XX"]["lat"], dots["YY"]["lat"]) == (1.0, 3.0)
 
 
 def test_dot_keeps_its_start_time():

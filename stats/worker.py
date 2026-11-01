@@ -31,7 +31,7 @@ BATCH = 2000
 LOOP_SECONDS = 60
 PUBLISH_SECONDS = 300
 MAX_STRESS = 3.0
-MAX_DATE_AGE = 7 * DAY  # A feed date older than this says more about the feed than the headline
+MAX_DATE_AGE = 7 * DAY  # A headline dated before this isn't news now: it's seen, and not counted
 DROPPED_LABELS = {"sport", "culture", "tech", "science", "nature"}
 
 
@@ -50,8 +50,8 @@ class State:
 
 def parse_entry(entry_id: str, fields: Dict[str, str]) -> Optional[dict]:
     """A stream entry as an item, or None if it can't be used. Links other than http(s) are never kept."""
-    title = clean_title(fields.get("title", ""))
     link, source = fields.get("link", ""), fields.get("source", "")
+    title = clean_title(fields.get("title", ""), source)
     if not title or not source or not link.startswith(("https://", "http://")):
         return None
     arrived = int(entry_id.split("-")[0]) / 1000
@@ -60,7 +60,8 @@ def parse_entry(entry_id: str, fields: Dict[str, str]) -> Optional[dict]:
     except ValueError:
         published = arrived
     when = published if arrived - MAX_DATE_AGE <= published <= arrived else arrived
-    return {"title": title, "link": link, "source": source, "label": fields.get("label", ""), "when": when}
+    return {"title": title, "link": link, "source": source, "label": fields.get("label", ""), "when": when,
+            "stale": published < arrived - MAX_DATE_AGE}
 
 
 def _ingest(items: List[dict], vectors: np.ndarray, state: State) -> int:
@@ -77,15 +78,14 @@ def _ingest(items: List[dict], vectors: np.ndarray, state: State) -> int:
             continue
         story = state.index.match(vector, item["when"])
         if story is None:
-            story = state.store.add_story(item["when"], float(score), item["title"], item["link"], item["source"],
-                                          located.lat, located.lon, vector)
+            story = state.store.add_story(item["when"], float(score), item["title"], item["link"], item["source"], vector)
             state.index.insert(story, vector, item["when"])
         else:
             state.store.join_story(story, float(score))
         state.store.add_headline(item["link"], story, item["when"])
         state.store.add_outlet(story, item["source"])
         for country in located.countries:
-            state.store.add_country(story, country, located.from_title)
+            state.store.add_country(story, country, located.from_title, located.positions.get(country))
         counted += 1
     return counted
 
@@ -111,6 +111,10 @@ def process(entries: List[Tuple[str, Dict[str, str]]], state: State) -> int:
         logger.warning("Skipped %d unusable stream entries", len(parsed) - len(usable))
     try:
         items = _new_items(usable, state)
+        for item in items:
+            if item["stale"]:
+                state.store.add_headline(item["link"], None, item["when"])
+        items = [item for item in items if not item["stale"]]
         vectors = state.embedder.embed([item["title"] for item in items]) if items else None
         counted = _ingest(items, vectors, state)
         state.store.set_last_id(entries[-1][0])
@@ -124,7 +128,7 @@ def process(entries: List[Tuple[str, Dict[str, str]]], state: State) -> int:
 
 def ingest_rows(rows: List[dict], state: State) -> int:
     """Stored headlines with their embeddings, from backfill.py, as one transaction."""
-    items = [{"title": clean_title(r["title"]), "link": r["link"], "source": r["source"], "label": r["label"] or "",
+    items = [{"title": clean_title(r["title"], r["source"]), "link": r["link"], "source": r["source"], "label": r["label"] or "",
               "when": r["first_seen"], "vector": r["vector"]} for r in rows if r["link"]]
     items = _new_items(items, state)
     if items:

@@ -7,7 +7,7 @@ and can be rebuilt with backfill.py. A batch is one transaction (commit).
 import json
 import sqlite3
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -31,8 +31,6 @@ CREATE TABLE IF NOT EXISTS stories (
     title      TEXT NOT NULL,
     link       TEXT NOT NULL,
     source     TEXT NOT NULL,
-    lat        REAL,
-    lon        REAL,
     vector     BLOB                -- float16[384]; only while headlines can still join
 );
 CREATE INDEX IF NOT EXISTS stories_first_seen ON stories (first_seen);
@@ -40,6 +38,8 @@ CREATE TABLE IF NOT EXISTS story_countries (
     story      INTEGER NOT NULL,
     country    TEXT NOT NULL,
     from_title INTEGER NOT NULL,
+    lat        REAL,
+    lon        REAL,
     PRIMARY KEY (story, country)
 );
 CREATE TABLE IF NOT EXISTS story_outlets (
@@ -86,12 +86,11 @@ class Store:
     def add_headline(self, link: str, story: Optional[int], first_seen: float) -> None:
         self.db.execute("INSERT OR IGNORE INTO headlines VALUES (?, ?, ?)", (link, story, first_seen))
 
-    def add_story(self, first_seen: float, stress: float, title: str, link: str, source: str,
-                  lat: Optional[float], lon: Optional[float], vector: np.ndarray) -> int:
+    def add_story(self, first_seen: float, stress: float, title: str, link: str, source: str, vector: np.ndarray) -> int:
         cursor = self.db.execute(
-            "INSERT INTO stories (first_seen, stress_sum, count, title, link, source, lat, lon, vector) "
-            "VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)",
-            (first_seen, stress, title, link, source, lat, lon, vector.astype(np.float16).tobytes()),
+            "INSERT INTO stories (first_seen, stress_sum, count, title, link, source, vector) "
+            "VALUES (?, ?, 1, ?, ?, ?, ?)",
+            (first_seen, stress, title, link, source, vector.astype(np.float16).tobytes()),
         )
         return cursor.lastrowid
 
@@ -101,28 +100,31 @@ class Store:
     def add_outlet(self, story: int, source: str) -> None:
         self.db.execute("INSERT OR IGNORE INTO story_outlets VALUES (?, ?)", (story, source))
 
-    def add_country(self, story: int, country: str, from_title: bool) -> None:
+    def add_country(self, story: int, country: str, from_title: bool, position: Optional[Tuple[float, float]]) -> None:
+        lat, lon = position or (None, None)
         self.db.execute(
-            "INSERT INTO story_countries VALUES (?, ?, ?) "
+            "INSERT INTO story_countries VALUES (?, ?, ?, ?, ?) "
             "ON CONFLICT DO UPDATE SET from_title = MAX(from_title, excluded.from_title)",
-            (story, country, int(from_title)),
+            (story, country, int(from_title), lat, lon),
         )
 
     def stories_since(self, since: float) -> List[Story]:
         stories = {
             row[0]: Story(id=row[0], first_seen=row[1], stress=row[2] / row[3], title=row[4], link=row[5], source=row[6],
-                          outlets=set(), countries={}, lat=row[7], lon=row[8])
+                          outlets=set(), countries={}, positions={})
             for row in self.db.execute(
-                "SELECT id, first_seen, stress_sum, count, title, link, source, lat, lon FROM stories WHERE first_seen >= ?",
+                "SELECT id, first_seen, stress_sum, count, title, link, source FROM stories WHERE first_seen >= ?",
                 (since,))
         }
         for story, source in self.db.execute(
                 "SELECT o.story, o.source FROM story_outlets o JOIN stories s ON s.id = o.story WHERE s.first_seen >= ?", (since,)):
             stories[story].outlets.add(source)
-        for story, country, from_title in self.db.execute(
-                "SELECT c.story, c.country, c.from_title FROM story_countries c JOIN stories s ON s.id = c.story "
-                "WHERE s.first_seen >= ?", (since,)):
+        for story, country, from_title, lat, lon in self.db.execute(
+                "SELECT c.story, c.country, c.from_title, c.lat, c.lon FROM story_countries c "
+                "JOIN stories s ON s.id = c.story WHERE s.first_seen >= ?", (since,)):
             stories[story].countries[country] = bool(from_title)
+            if lat is not None:
+                stories[story].positions[country] = (lat, lon)
         return list(stories.values())
 
     def load_index(self, index: StoryIndex, now: float) -> None:

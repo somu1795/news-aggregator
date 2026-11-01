@@ -17,6 +17,7 @@ import catalog as catalog_module
 from catalog import ALL_VIEW, Catalog
 from config import settings
 from keys import snapshot_key
+import refresher
 from refresher import refresh_once
 from services import stats_stream
 
@@ -449,3 +450,16 @@ async def test_a_stream_failure_leaves_the_refresh_alone(mock_redis, poller, mon
     mock_feeds()
     async with httpx.AsyncClient() as http_client:
         assert await refresh_once(http_client, mock_redis, poller) == 3
+
+
+async def test_topic_feeds_reach_the_stream_when_the_topic_phase_fails(mock_redis, poller, monkeypatch):
+    stats_stream._sent.clear()
+    monkeypatch.setattr(refresher, "get_topic_views", raising_topic_views)
+    poller.topic_feeds["results"] = {"Feed": [{"title": "T", "link": "https://t.example/1", "source": "S", "published": 1.0}]}
+    async with httpx.AsyncClient() as http_client:
+        assert await refresher.refresh_topics(http_client, mock_redis, poller, {}) == 0
+    assert await mock_redis.xlen(stats_stream.STREAM) == 1
+
+
+async def raising_topic_views(*args):
+    raise RuntimeError("no tagger")

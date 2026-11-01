@@ -16,9 +16,11 @@ from typing import Dict, List, Optional, Tuple
 MAX_COUNTRIES = 2
 
 
-def clean_title(title: str) -> str:
-    """A feed's title as text: entities decoded, spaces tidied."""
-    return " ".join(html.unescape(title).split())
+def clean_title(title: str, source: str = "") -> str:
+    """A feed's title as text: entities decoded, spaces tidied, Google's " - Publisher" dropped (as in the training data)."""
+    title = " ".join(html.unescape(title).split())
+    suffix = f" - {source}"
+    return title[:-len(suffix)] if source and len(title) > len(suffix) and title.endswith(suffix) else title
 
 
 @dataclass
@@ -32,8 +34,7 @@ class Hit:
 class Located:
     countries: List[str]
     from_title: bool  # False: from the outlet's country
-    lat: Optional[float]  # The city named, or else the first country's capital
-    lon: Optional[float]
+    positions: Dict[str, Tuple[float, float]]  # By country: the city named there, or else its capital
 
 
 class Places:
@@ -71,8 +72,11 @@ class Places:
         countries = [hit.country for hit in hits]
         if not hits and source in self.homes:
             countries = [self.homes[source]]
-        city = next((hit for hit in hits if hit.lat is not None), None)
-        if city is not None:
-            return Located(countries, from_title, city.lat, city.lon)
-        lat, lon = self.capitals.get(countries[0], (None, None)) if countries else (None, None)
-        return Located(countries, from_title, lat, lon)
+        positions = {}
+        for country in countries:
+            hit = next((h for h in hits if h.country == country and h.lat is not None), None)
+            if hit is not None:
+                positions[country] = (hit.lat, hit.lon)
+            elif country in self.capitals:
+                positions[country] = tuple(self.capitals[country])
+        return Located(countries, from_title, positions)

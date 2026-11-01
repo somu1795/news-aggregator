@@ -12,7 +12,7 @@ needs a stressful story carried by more than one outlet, so a cup final doesn't 
 import math
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 HALF_LIFE_HOURS = 48
 PRIOR = 10  # Stories' worth of the world's mean in every country's score
@@ -41,8 +41,7 @@ class Story:
     source: str
     outlets: Set[str]
     countries: Dict[str, bool]  # Country: whether the title names it (else it's the outlet's)
-    lat: Optional[float]
-    lon: Optional[float]
+    positions: Dict[str, Tuple[float, float]]  # By country: where its red dot would sit
 
 
 def weight(story: Story, now: float) -> float:
@@ -114,8 +113,9 @@ def red_dots(stories: List[Story], held: Dict[str, dict], now: float) -> Dict[st
     for country, own in named.items():
         story = _fires(own, blocks_known, now)
         if story is not None:
+            lat, lon = story.positions.get(country, (None, None))
             dots[country] = {
-                "country": country, "lat": story.lat, "lon": story.lon, "title": story.title, "link": story.link,
+                "country": country, "lat": lat, "lon": lon, "title": story.title, "link": story.link,
                 "outlets": len(story.outlets), "since": held.get(country, {}).get("since", now), "held": now,
             }
     return dots

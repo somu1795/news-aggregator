@@ -100,8 +100,37 @@ def test_parse_ignores_a_future_date():
     assert worker.parse_entry(*entry(published=str(NOW + DAY)))["when"] == pytest.approx(NOW, abs=1)
 
 
-def test_parse_ignores_a_very_old_date():
-    assert worker.parse_entry(*entry(published=str(NOW - 30 * DAY)))["when"] == pytest.approx(NOW, abs=1)
+def test_parse_marks_a_very_old_date():
+    assert worker.parse_entry(*entry(published=str(NOW - 30 * DAY)))["stale"] is True
+
+
+def test_parse_keeps_an_undated_item_fresh():
+    assert worker.parse_entry(*entry(published=""))["stale"] is False
+
+
+def test_an_old_item_makes_no_story(state):
+    worker.process([entry(published=str(NOW - 30 * DAY))], state)
+    assert stories(state) == [] and state.store.headline_count() == 1
+
+
+def test_an_old_item_is_not_embedded(state):
+    state.embedder = None  # Would fail if used
+    worker.process([entry(published=str(NOW - 30 * DAY))], state)
+
+
+def test_parse_removes_googles_publisher_suffix():
+    item = worker.parse_entry(*entry(title="Budget vote delayed - The Times of India", source="The Times of India"))
+    assert item["title"] == "Budget vote delayed"
+
+
+def test_parse_keeps_a_dash_that_is_not_the_publisher():
+    assert worker.parse_entry(*entry(title="Kenya - a nation votes", source="Paper"))["title"] == "Kenya - a nation votes"
+
+
+def test_an_outlet_name_is_not_a_place_in_the_title(state):
+    state.places = Places({"India": ["IN", None, None]}, {}, {}, {})
+    worker.process([entry(title="Budget vote delayed - The Times of India", source="The Times of India")], state)
+    assert stories(state) == []
 
 
 def test_a_new_headline_starts_a_story(state):
@@ -301,6 +330,12 @@ def test_backfill_uses_stored_embeddings(state):
              "first_seen": NOW - DAY, "vector": vector(1)}]
     worker.ingest_rows(rows, state)
     assert stories(state)[0].first_seen == NOW - DAY
+
+
+def test_each_country_keeps_its_own_position(state):
+    state.places = Places({"Kyiv": ["UA", 50.45, 30.52], "Russia": ["RU", None, None]}, {}, {"RU": [55.75, 37.62]}, {})
+    worker.process([entry(title="Russia strikes Kyiv")], state)
+    assert stories(state)[0].positions == {"RU": (55.75, 37.62), "UA": (50.45, 30.52)}
 
 
 def test_outlet_home_marks_the_country(state):

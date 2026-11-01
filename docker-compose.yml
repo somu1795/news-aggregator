@@ -82,6 +82,8 @@ services:
       - MAX_PER_PUBLISHER
       - MAX_RELATED
       - REFRESH_INTERVAL_SECONDS
+      - STATS_STREAM_ENABLED
+      - STATS_STREAM_MAXLEN
       - TOPIC_FEEDS_INTERVAL_SECONDS
     volumes:
       # The site's config folder (regions, topics, sources, name, prompts): edit it and

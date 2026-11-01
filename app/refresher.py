@@ -153,13 +153,14 @@ async def refresh_topics(
         views = await asyncio.wait_for(
             get_topic_views(http_client, redis_client, poller, results_by_source), settings.TOPIC_REFRESH_TIMEOUT_SECONDS,
         )
-        await publish_new(redis_client, poller.topic_feeds["results"])
         views = await group_stories(http_client, views)
         await publish(redis_client, views, time.time())
     except Exception as e:
         TOPIC_REFRESHES.labels(result="error").inc()
         logger.warning("Topic views not refreshed, keeping their previous snapshots", error=str(e) or type(e).__name__)
         return 0
+    finally:  # Whether or not the tagger answered
+        await publish_new(redis_client, poller.topic_feeds["results"])
     TOPIC_REFRESHES.labels(result="success").inc()
     logger.info("Published topic snapshots", counts={view: len(items) for view, items in views.items()})
     return len(views)
