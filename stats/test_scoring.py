@@ -180,3 +180,15 @@ def test_constants_are_the_documented_ones():
     assert (scoring.HALF_LIFE_HOURS, scoring.PRIOR, scoring.NO_SIGNAL) == (48, 10, 3)
     assert (scoring.BLUE, scoring.ORANGE) == (0.87, 1.39)
     assert (scoring.DOT_WINDOW_HOURS, scoring.DOT_Z, scoring.DOT_MIN_OUTLETS, scoring.DOT_STRESS) == (6, 2, 2, 1.8)
+
+
+def test_baseline_covers_all_fourteen_days():
+    assert scoring.blocks_known(NOW - 14.3 * DAY, NOW) == 56
+
+
+def test_baseline_stops_at_fourteen_days():
+    assert scoring.blocks_known(NOW - 40 * DAY, NOW) == 56
+
+
+def test_baseline_counts_only_whole_blocks():
+    assert scoring.blocks_known(NOW - 7 * DAY, NOW) == 27

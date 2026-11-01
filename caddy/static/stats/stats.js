@@ -70,7 +70,8 @@
         var width = canvas.clientWidth, cell = width / grid.width, scale = window.devicePixelRatio || 1;
         canvas.width = cells.width = Math.round(width * scale);
         canvas.height = cells.height = Math.round(width * grid.height / grid.width * scale);
-        var rule = getComputedStyle(document.documentElement).getPropertyValue("--rule").trim();
+        // The fallbacks are for when the app, which serves the site's stylesheet, is down
+        var rule = getComputedStyle(document.documentElement).getPropertyValue("--rule").trim() || "#cfc8b6";
         var countries = data && data.countries || {}, layer = cells.getContext("2d");
         layer.setTransform(scale, 0, 0, scale, 0, 0);
         grid.cells.forEach(function (c) {
@@ -97,7 +98,7 @@
         context.clearRect(0, 0, canvas.width, canvas.height);
         context.drawImage(cells, 0, 0);
         context.setTransform(scale, 0, 0, scale, 0, 0);
-        var paper = getComputedStyle(document.documentElement).getPropertyValue("--paper").trim();
+        var paper = getComputedStyle(document.documentElement).getPropertyValue("--paper").trim() || "#f3efe4";
         ((data && data.dots) || []).forEach(function (dot) {
             if (typeof dot.lat !== "number" || typeof dot.lon !== "number") return;
             var x = (dot.lon + 180) / 360 * width;
@@ -191,8 +192,10 @@
 
     function offline() {
         data = null;
+        chosen = null;
         statusEl.textContent = "stats are offline";
         dotsEl.hidden = true;
+        countryEl.hidden = true;
         redraw();
     }
 

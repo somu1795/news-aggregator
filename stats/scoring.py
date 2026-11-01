@@ -78,13 +78,18 @@ def _hot(story: Story) -> bool:
     return len(story.outlets) >= DOT_MIN_OUTLETS and story.stress >= DOT_STRESS
 
 
-def _fires(own: List[Story], blocks_known: int, now: float) -> Optional[Story]:
+def blocks_known(earliest: float, now: float) -> int:
+    """How many whole past blocks of the baseline there is data for."""
+    return min(int((now - earliest) // (DOT_WINDOW_HOURS * 3600)) - 1, DOT_BASE_DAYS * 24 // DOT_WINDOW_HOURS)
+
+
+def _fires(own: List[Story], blocks: int, now: float) -> Optional[Story]:
     """The story that puts a red dot on a country now, if any."""
     length = DOT_WINDOW_HOURS * 3600
-    counts = [0] * (blocks_known + 1)
+    counts = [0] * (blocks + 1)
     for story in own:
         block = int((now - story.first_seen) // length)
-        if 0 <= block <= blocks_known:
+        if 0 <= block <= blocks:
             counts[block] += 1
     past = counts[1:]
     mean = sum(past) / len(past)
@@ -101,17 +106,17 @@ def red_dots(stories: List[Story], held: Dict[str, dict], now: float) -> Dict[st
     dots = {c: dot for c, dot in held.items() if now - dot["held"] < DOT_HOLD_HOURS * 3600}
     if not stories:
         return dots
-    days_known = min(DOT_BASE_DAYS, (now - min(s.first_seen for s in stories)) / DAY)
-    if days_known < DOT_MIN_HISTORY_DAYS:
+    earliest = min(s.first_seen for s in stories)
+    if now - earliest < DOT_MIN_HISTORY_DAYS * DAY:
         return dots
-    blocks_known = int(days_known * 24 // DOT_WINDOW_HOURS) - 1
+    blocks = blocks_known(earliest, now)
     named = defaultdict(list)
     for story in stories:
         for country, from_title in story.countries.items():
             if from_title:
                 named[country].append(story)
     for country, own in named.items():
-        story = _fires(own, blocks_known, now)
+        story = _fires(own, blocks, now)
         if story is not None:
             lat, lon = story.positions.get(country, (None, None))
             dots[country] = {

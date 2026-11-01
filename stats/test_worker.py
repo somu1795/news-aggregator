@@ -1,6 +1,7 @@
 """Tests for the worker: from stream entries to the published file."""
 
 import json
+import sqlite3
 
 import fakeredis
 import numpy as np
@@ -354,3 +355,63 @@ def test_backfill_drops_stories_too_old_to_join(state):
     worker.ingest_rows([{**row, "link": "https://example.com/1", "first_seen": NOW}], state)
     worker.ingest_rows([{**row, "link": "https://example.com/2", "first_seen": NOW + 4 * DAY}], state)
     assert len(state.index.ids) == 1
+
+
+def test_backfill_drops_unsafe_links(state):
+    rows = [{"title": "Kenya votes", "source": "Paper", "link": "javascript:alert(1)", "label": None, "first_seen": NOW, "vector": vector(1)}]
+    worker.ingest_rows(rows, state)
+    assert state.store.headline_count() == 0
+
+
+def test_a_failed_save_keeps_the_dots(state):
+    state.store.save_dots({"KE": {"country": "KE", "held": NOW, "since": NOW}})
+    state.store.commit()
+    state.store.db = FailingInsert(state.store.db)
+    with pytest.raises(sqlite3.OperationalError):
+        state.store.save_dots({})
+    state.store.db = state.store.db.real
+    state.store.rollback()
+    assert "KE" in state.store.held_dots()
+
+
+class FailingInsert:
+    def __init__(self, real):
+        self.real = real
+
+    def execute(self, *args):
+        return self.real.execute(*args)
+
+    def executemany(self, *args):
+        raise sqlite3.OperationalError("disk full")
+
+
+def test_a_failed_pass_leaves_no_half_saved_dots(state, monkeypatch):
+    state.store.save_dots({"KE": {"country": "KE", "held": NOW, "since": NOW}})
+    state.store.commit()
+    monkeypatch.setattr(worker, "write_output", lambda *a: (_ for _ in ()).throw(OSError("disk full")))
+    monkeypatch.setattr(worker, "red_dots", lambda stories, held, now: {})
+    with pytest.raises(OSError):
+        worker.tick(redis_with(), state, NOW)
+    assert "KE" in state.store.held_dots()
+
+
+def test_old_rows_are_pruned_even_when_writing_fails(state, monkeypatch):
+    worker.process([entry()], state)
+    monkeypatch.setattr(worker, "write_output", lambda *a: (_ for _ in ()).throw(OSError("disk full")))
+    with pytest.raises(OSError):
+        worker.tick(redis_with(), state, NOW + 31 * DAY)
+    assert state.store.headline_count() == 0
+
+
+def test_a_failed_index_reload_keeps_the_old_index(state, monkeypatch):
+    worker.process([entry()], state)
+    old = state.index
+    monkeypatch.setattr(state.store, "load_index", lambda *a: (_ for _ in ()).throw(RuntimeError("no")))
+    with pytest.raises(RuntimeError):
+        worker._reset_index(state, NOW)
+    assert state.index is old
+
+
+def test_undecodable_bytes_do_not_stop_the_stream():
+    client = worker.connect("redis://example.invalid:6379")
+    assert client.get_encoder().encoding_errors == "replace"

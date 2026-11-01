@@ -54,7 +54,8 @@ What in this project is written by hand and ages, how often to look at it, and a
 
 ### Only when something breaks
 
-- **Heatmap database lost:** `stats_data` isn't backed up. Stop `stats`, export `title`, `source`, `link`, `label`, `first_seen` and base64 `story_embedding` from the tagger's `headlines` table as JSON lines, and run `python backfill.py <file>` in the `stats` image (~20 minutes). Without it the red dots need 7 days to start.
+- **Heatmap database lost:** `stats_data` isn't backed up. Stop `stats`, export `title`, `source`, `link`, `label`, `first_seen` and base64 `story_embedding` from the tagger's `headlines` table as JSON lines, and run `python backfill.py <file>` in the `stats` image (~25 minutes). Without it the red dots need 7 days to start.
+
 | What | Where | Sign it broke |
 | --- | --- | --- |
 | Google link resolution | `app/services/links/google_news.py` | `redirect_fallbacks_total` rises, or headlines link to `news.google.com` |

@@ -153,3 +153,7 @@ async def test_oversized_links_are_not_sent(mock_redis):
 def test_the_off_switch_reaches_the_refresher():
     compose = yaml.safe_load((Path(__file__).parents[2] / "docker-compose.yml").read_text())
     assert "STATS_STREAM_ENABLED" in compose["services"]["refresher"]["environment"]
+
+
+def test_sent_links_cost_little_memory():
+    assert stats_stream.MAX_SENT_LINKS == 50_000

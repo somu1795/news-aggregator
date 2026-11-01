@@ -33,6 +33,7 @@ PUBLISH_SECONDS = 300
 MAX_STRESS = 3.0
 MAX_DATE_AGE = 7 * DAY  # A headline dated before this isn't news now: it's seen, and not counted
 DROPPED_LABELS = {"sport", "culture", "tech", "science", "nature"}
+WEB_LINK = ("https://", "http://")  # Nothing else is ever kept
 
 
 @dataclass
@@ -49,10 +50,10 @@ class State:
 
 
 def parse_entry(entry_id: str, fields: Dict[str, str]) -> Optional[dict]:
-    """A stream entry as an item, or None if it can't be used. Links other than http(s) are never kept."""
+    """A stream entry as an item, or None if it can't be used."""
     link, source = fields.get("link", ""), fields.get("source", "")
     title = clean_title(fields.get("title", ""), source)
-    if not title or not source or not link.startswith(("https://", "http://")):
+    if not title or not source or not link.startswith(WEB_LINK):
         return None
     arrived = int(entry_id.split("-")[0]) / 1000
     try:
@@ -99,8 +100,9 @@ def _new_items(items: List[dict], state: State) -> List[dict]:
 
 
 def _reset_index(state: State, now: float) -> None:
-    state.index = StoryIndex()
-    state.store.load_index(state.index, now)
+    index = StoryIndex()
+    state.store.load_index(index, now)
+    state.index = index
 
 
 def process(entries: List[Tuple[str, Dict[str, str]]], state: State) -> int:
@@ -129,7 +131,7 @@ def process(entries: List[Tuple[str, Dict[str, str]]], state: State) -> int:
 def ingest_rows(rows: List[dict], state: State) -> int:
     """Stored headlines with their embeddings, from backfill.py, as one transaction."""
     items = [{"title": clean_title(r["title"], r["source"]), "link": r["link"], "source": r["source"], "label": r["label"] or "",
-              "when": r["first_seen"], "vector": r["vector"]} for r in rows if r["link"]]
+              "when": r["first_seen"], "vector": r["vector"]} for r in rows if (r["link"] or "").startswith(WEB_LINK)]
     items = _new_items(items, state)
     if items:
         state.index.expire(items[0]["when"])
@@ -165,6 +167,10 @@ def write_output(output: dict, path: Path) -> None:
 def tick(client: redis.Redis, state: State, now: float) -> None:
     """One pass: new headlines, then the map, when it's due or a new red dot appears."""
     state.index.expire(now)
+    if now - state.last_prune >= DAY:
+        state.store.prune(now)
+        state.store.commit()
+        state.last_prune = now
     entries = read_entries(client, state.store.last_id())
     counted = process(entries, state) if entries else 0
     due = now - state.last_publish >= PUBLISH_SECONDS
@@ -172,15 +178,15 @@ def tick(client: redis.Redis, state: State, now: float) -> None:
         stories = state.store.stories_since(now - RETENTION_DAYS * DAY)
         held = state.store.held_dots()
         dots = red_dots(stories, held, now)
-        state.store.save_dots(dots)
-        state.store.commit()
-        if due or set(dots) - set(held):
-            write_output(build_output(stories, dots, now), state.public)
-            state.last_publish = now
-    if now - state.last_prune >= DAY:
-        state.store.prune(now)
-        state.store.commit()
-        state.last_prune = now
+        try:
+            state.store.save_dots(dots)
+            if due or set(dots) - set(held):
+                write_output(build_output(stories, dots, now), state.public)
+                state.last_publish = now
+            state.store.commit()
+        except Exception:
+            state.store.rollback()
+            raise
 
 
 def build_state(embedder: Optional[Embedder]) -> State:
@@ -195,10 +201,15 @@ def build_state(embedder: Optional[Embedder]) -> State:
     return state
 
 
+def connect(url: str) -> redis.Redis:
+    return redis.Redis.from_url(url, socket_timeout=10, socket_connect_timeout=5, decode_responses=True,
+                                encoding_errors="replace")  # One corrupt entry mustn't stop the stream
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     state = build_state(Embedder(Path(os.environ.get("STATS_MODEL_DIR", "/models/multilingual-e5-small"))))
-    client = redis.Redis.from_url(os.environ["REDIS_URL"], socket_timeout=10, socket_connect_timeout=5, decode_responses=True)
+    client = connect(os.environ["REDIS_URL"])
     healthy = True
     logger.info("Stats worker started")
     while True:
@@ -207,7 +218,7 @@ def main() -> None:
             if not healthy:
                 logger.info("Redis is back")
             healthy = True
-        except (redis.RedisError, OSError) as e:
+        except redis.RedisError as e:
             if healthy:  # Log the change, not every retry
                 logger.warning("Redis unavailable, will retry: %s", e)
             healthy = False

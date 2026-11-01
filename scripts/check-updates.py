@@ -131,7 +131,7 @@ def main():
         behind += 1
 
     if "--no-pip" not in sys.argv:
-        for label, image, pip in (("app", "news-aggregator-app", "pip"), ("tagger", "news-aggregator-tagger", "/venv/bin/pip")):
+        for label, image, pip in (("app", "news-aggregator-app", "pip"), ("tagger", "news-aggregator-tagger", "/venv/bin/pip"), ("stats", "news-aggregator-stats", "pip")):
             try:
                 packages = outdated_packages(image, pip)
             except Exception as e:
