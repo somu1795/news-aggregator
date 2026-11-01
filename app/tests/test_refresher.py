@@ -18,6 +18,7 @@ from catalog import ALL_VIEW, Catalog
 from config import settings
 from keys import snapshot_key
 from refresher import refresh_once
+from services import stats_stream
 
 pytestmark = pytest.mark.asyncio
 
@@ -427,3 +428,24 @@ async def test_the_refresher_writes_the_search_index_for_the_app(tmp_path, monke
     assert archive_index.Index(archive_index.index_path()).prefix("bri")[1] == archive_index.BitMap([1])
     monkeypatch.setattr(settings, "ARCHIVE_PATH", str(tmp_path / "missing" / "archive.db"))
     await write_search_index()  # A failure is logged, not raised
+
+
+@respx.mock
+async def test_every_fetched_item_reaches_the_stats_stream(mock_redis, poller, monkeypatch):
+    monkeypatch.setattr(settings, "MAX_HEADLINES", 5)  # Far fewer than the feeds carry
+    stats_stream._sent.clear()
+    mock_feeds()
+    async with httpx.AsyncClient() as http_client:
+        await refresh_once(http_client, mock_redis, poller)
+    links = {fields["link"] for _, fields in await mock_redis.xrange(stats_stream.STREAM)}
+    assert len(links) > len(await read_view(mock_redis, ALL_VIEW))
+
+
+@respx.mock
+async def test_a_stream_failure_leaves_the_refresh_alone(mock_redis, poller, monkeypatch):
+    def broken():
+        raise RuntimeError("no catalog")
+    monkeypatch.setattr(stats_stream, "get_catalog", broken)
+    mock_feeds()
+    async with httpx.AsyncClient() as http_client:
+        assert await refresh_once(http_client, mock_redis, poller) == 3

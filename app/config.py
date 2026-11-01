@@ -118,6 +118,11 @@ class Settings(BaseSettings):
     BROWSER_HOST_TTL_SECONDS: int = 7 * 86400  # A blocking site goes straight to the browser for this long
     FEED_TEXT_TTL_SECONDS: int = 2 * 86400  # The feed's own text of published items, for the summarizer
 
+    # --- Stats (every fetched headline, copied to a Redis stream; see services/stats_stream.py) ---
+    STATS_STREAM_ENABLED: bool = True
+    STATS_STREAM_MAXLEN: int = 30000  # Entries kept: days of headlines, for when the stats service is down
+    STATS_STREAM_TIMEOUT_SECONDS: float = 5.0  # Longest a refresh waits for it
+
     # --- Archive (every published headline, kept; see services/archive.py) ---
     ARCHIVE_PATH: str = ""  # A SQLite file, written by the refresher, searched by the app; empty disables the archive
     ARCHIVE_SNAPSHOT_SECONDS: int = 3600  # How often each view's order is recorded

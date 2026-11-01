@@ -11,6 +11,7 @@ summary when the summarizer (summarizer.py) has made one. Every published
 item is also kept in the archive (services/archive.py), when ARCHIVE_PATH is set,
 with its story, which the refresher keeps up to date there (sync_stories), and the
 archive's search index is written for the app after each cycle (write_search_index).
+Every fetched headline is copied to a stream for the stats service (services/stats_stream.py).
 
 If a refresh fails, or a view comes back empty, that view's previous snapshot
 is left in place: users keep getting slightly older headlines instead of errors.
@@ -37,6 +38,7 @@ from models import APIResponse
 from services import archive_index
 from services.archive import apply_story_moves, archive, last_story_move, set_stories, without_story
 from services.feeds.poller import FeedPoller
+from services.stats_stream import publish_new
 from services.views.main_views import get_fresh_views
 from services.views.topic_views import get_topic_views
 from services.redis_client import create_redis_client
@@ -119,6 +121,7 @@ async def refresh_once(http_client: httpx.AsyncClient, redis_client: aioredis.Re
     topic views. Returns the number of main views published.
     """
     views, results_by_source = await get_fresh_views(http_client, redis_client, poller)
+    await publish_new(redis_client, results_by_source)
     fetched_at = time.time()
     published = {view: items for view, items in views.items() if items}
     if not published:
@@ -150,6 +153,7 @@ async def refresh_topics(
         views = await asyncio.wait_for(
             get_topic_views(http_client, redis_client, poller, results_by_source), settings.TOPIC_REFRESH_TIMEOUT_SECONDS,
         )
+        await publish_new(redis_client, poller.topic_feeds["results"])
         views = await group_stories(http_client, views)
         await publish(redis_client, views, time.time())
     except Exception as e:
