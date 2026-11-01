@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Stats</title>
+    <title>World news heatmap</title>
+    <meta name="description" content="A live world map of how stressful each country's news is, in English-language outlets.">
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="/static/retro.css">
     <link rel="stylesheet" href="/stats/stats.css">
@@ -13,7 +14,10 @@
     <header>
         <div class="masthead">
             <h1>STATS<span class="cursor blink">_</span></h1>
-            <nav aria-label="Site"><a href="/">headlines</a></nav>
+            <nav aria-label="Site">
+                <button id="theme" title="Toggle dark mode (d)">[<span class="key">d</span>]ark</button>
+                <a href="/">headlines</a>
+            </nav>
         </div>
         <nav class="regions" id="tabs" aria-label="Stats"></nav>
         <p class="status"><span id="status" aria-live="polite">connecting...</span></p>
@@ -24,6 +28,7 @@
         <div class="map-frame"><canvas id="map" role="img" aria-label="World map of how stressful each country's news is. Tap a country for its stories."></canvas></div>
         <p class="legend"><span class="swatch calm"></span> calm <span class="swatch stressed"></span> stressful <span class="swatch dot"></span> unusual right now</p>
         <p class="note">What English-language outlets in our feeds are saying. Not a measure of how safe a place is. Dim means little coverage.</p>
+        <select id="jump" class="jump" aria-label="Choose a country"></select>
         <section id="dots" aria-label="Unusual right now" hidden></section>
         <section id="country" aria-live="polite" hidden></section>
     </main>

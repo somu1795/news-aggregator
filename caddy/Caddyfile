@@ -68,7 +68,8 @@
 	header @stats {
 		Content-Security-Policy "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
 	}
-	handle /stats/heatmap.json {
+	@stats_data path /stats/heatmap.json /stats/stories.json
+	handle @stats_data {
 		root * /srv/stats-data
 		uri strip_prefix /stats
 		header Cache-Control "public, max-age=60"

@@ -5,6 +5,8 @@
     var TABS = [{ id: "heatmap", label: "heatmap" }];
     var BLUE = [74, 144, 194], ORANGE = [232, 116, 44], RED = "#d9281e";
     var REFRESH_MS = 60000;  // The worker adds a red dot within a minute of a story's arrival
+    var FRAME_MS = 50;  // A pulse needs no more than 20 frames a second
+    var TAP_CELLS = 4;  // A tap this near a country counts: cells are about 2 px wide on a phone
     var STALE_SECONDS = 1800;
     var PULSE_MS = 1800;
     var FADE = 0.3;  // Opacity of a country with next to no evidence
@@ -17,13 +19,21 @@
     var countryEl = document.getElementById("country");
     var calm = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-    var grid = null, data = null, chosen = null, cellOwner = {};
+    var jumpEl = document.getElementById("jump");
+    var grid = null, data = null, chosen = null, stories = null, lastLoad = 0, lastFrame = 0;
 
     function applySavedTheme() {
         try {
             var theme = localStorage.getItem("retroTheme");
             if (theme) document.documentElement.setAttribute("data-theme", theme);
         } catch (e) { /* Private windows: keep the default */ }
+    }
+
+    function toggleTheme() {
+        var next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+        document.documentElement.setAttribute("data-theme", next);
+        try { localStorage.setItem("retroTheme", next); } catch (e) { /* Private windows: just this page */ }
+        redraw();
     }
 
     function renderTabs() {
@@ -132,7 +142,10 @@
     }
 
     function animate(time) {
-        paint(time);
+        if (time - lastFrame >= FRAME_MS) {
+            lastFrame = time;
+            paint(time);
+        }
         if (!calm && data && data.dots && data.dots.length) window.requestAnimationFrame(animate);
     }
 
@@ -147,15 +160,34 @@
         return ul;
     }
 
+    // The story lists are most of the data, so they only load once a country is chosen
+    function loadStories() {
+        if (!stories) {
+            stories = fetch("/stats/stories.json", { cache: "no-cache" }).then(function (response) {
+                if (!response.ok) throw new Error(String(response.status));
+                return response.json();
+            }).catch(function () {
+                stories = null;
+                return null;
+            });
+        }
+        return stories;
+    }
+
     function showCountry(code) {
         chosen = code;
         var country = data && data.countries && data.countries[code];
         countryEl.textContent = "";
         countryEl.hidden = false;
         countryEl.appendChild(element("h2", nameOf(code) + ": " + (country ? band(country) : "little signal")));
-        if (country && country.top && country.top.length) countryEl.appendChild(storyList(country.top));
-        else countryEl.appendChild(element("p", "No stories here lately.", "source"));
+        var body = countryEl.appendChild(element("p", "loading...", "source"));
         redraw();
+        loadStories().then(function (all) {
+            if (chosen !== code) return;
+            var list = all && all[code];
+            if (list && list.length) countryEl.replaceChild(storyList(list), body);
+            else body.textContent = all ? "No stories here lately." : "Stories are unavailable right now.";
+        });
     }
 
     function renderDots() {
@@ -172,6 +204,21 @@
             ul.appendChild(li);
         });
         dotsEl.appendChild(ul);
+    }
+
+    function renderJump() {
+        var codes = Object.keys(data.countries || {}).sort(function (a, b) {
+            return nameOf(a).localeCompare(nameOf(b));
+        });
+        jumpEl.textContent = "";
+        jumpEl.appendChild(element("option", "Choose a country"));
+        jumpEl.firstChild.value = "";
+        codes.forEach(function (code) {
+            var option = element("option", nameOf(code));
+            option.value = code;
+            option.selected = code === chosen;
+            jumpEl.appendChild(option);
+        });
     }
 
     function ageWords(seconds) {
@@ -200,6 +247,7 @@
     }
 
     function load() {
+        lastLoad = Date.now();
         fetch("/stats/heatmap.json", { cache: "no-cache" }).then(function (response) {
             if (!response.ok) throw new Error(String(response.status));
             return response.json();
@@ -208,24 +256,43 @@
                 throw new Error("unexpected file");
             }
             var wasStill = !data || !data.dots || !data.dots.length;
+            if (!data || json.generated_at !== data.generated_at) stories = null;
             data = json;
             renderStatus();
             renderDots();
+            renderJump();
             if (chosen) showCountry(chosen); else redraw();
             if (wasStill) window.requestAnimationFrame(animate);
         }).catch(offline);
     }
 
+    function nearestCountry(x, y) {
+        var best = null, bestDistance = TAP_CELLS * TAP_CELLS;
+        grid.cells.forEach(function (c) {
+            var distance = Math.pow(c[0] + 0.5 - x, 2) + Math.pow(c[1] + 0.5 - y, 2);
+            if (distance <= bestDistance) {
+                best = c[2];
+                bestDistance = distance;
+            }
+        });
+        return best;
+    }
+
     canvas.addEventListener("click", function (event) {
         if (!grid) return;
         var box = canvas.getBoundingClientRect(), cell = box.width / grid.width;
-        var x = Math.floor((event.clientX - box.left) / cell), y = Math.floor((event.clientY - box.top) / cell);
-        var code = null;
-        [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]].some(function (step) {
-            code = cellOwner[(x + step[0]) + "," + (y + step[1])] || null;
-            return code;
-        });
+        var code = nearestCountry((event.clientX - box.left) / cell, (event.clientY - box.top) / cell);
         if (code) showCountry(code);
+    });
+    jumpEl.addEventListener("change", function () {
+        if (jumpEl.value) showCountry(jumpEl.value);
+    });
+    document.getElementById("theme").addEventListener("click", toggleTheme);
+    document.addEventListener("keydown", function (event) {
+        if (event.key === "d" && !event.ctrlKey && !event.metaKey && !event.altKey && event.target === document.body) toggleTheme();
+    });
+    document.addEventListener("visibilitychange", function () {
+        if (!document.hidden && grid && Date.now() - lastLoad >= REFRESH_MS) load();
     });
     window.addEventListener("resize", redraw);
 
@@ -233,9 +300,8 @@
     renderTabs();
     fetch("/stats/map.json").then(function (response) { return response.json(); }).then(function (json) {
         grid = json;
-        grid.cells.forEach(function (c) { cellOwner[c[0] + "," + c[1]] = c[2]; });
         load();
-        setInterval(load, REFRESH_MS);
+        setInterval(function () { if (!document.hidden) load(); }, REFRESH_MS);
         setInterval(renderStatus, 30000);
     }).catch(offline);
 }());
