@@ -335,6 +335,24 @@ def test_backfill_uses_stored_embeddings(state):
     assert stories(state)[0].first_seen == NOW - DAY
 
 
+def test_backfill_embeds_rows_without_a_stored_embedding(state):
+    rows = [{"title": "Kenya votes", "source": "Paper", "link": "https://example.com/1", "label": None,
+             "first_seen": NOW - DAY, "vector": None}]
+    worker.ingest_rows(rows, state)
+    stored = np.frombuffer(state.store.db.execute("SELECT vector FROM stories").fetchone()[0], dtype=np.float16)
+    assert np.allclose(stored, FakeEmbedder().embed(["Kenya votes"])[0], atol=1e-3)
+
+
+def test_backfill_embeds_only_the_rows_it_keeps(state):
+    embedded = []
+    state.embedder.embed = lambda titles: embedded.extend(titles) or FakeEmbedder().embed(titles)
+    row = {"source": "Paper", "first_seen": NOW - DAY, "vector": None}
+    worker.ingest_rows([{**row, "title": "Kenya votes", "link": "https://example.com/1", "label": None},
+                        {**row, "title": "Kenya wins", "link": "https://example.com/2", "label": "sport"},
+                        {**row, "title": "Kenya again", "link": "https://example.com/1", "label": None}], state)
+    assert embedded == ["Kenya votes"]
+
+
 def test_each_country_keeps_its_own_position(state):
     state.places = Places({"Kyiv": ["UA", 50.45, 30.52], "Russia": ["RU", None, None]}, {}, {"RU": [55.75, 37.62]}, {})
     worker.process([entry(title="Russia strikes Kyiv")], state)

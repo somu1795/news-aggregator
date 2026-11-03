@@ -34,6 +34,7 @@ MAX_STRESS = 3.0
 MAX_DATE_AGE = 7 * DAY  # A headline dated before this isn't news now: it's seen, and not counted
 DROPPED_LABELS = {"sport", "culture", "tech", "science", "nature"}
 WEB_LINK = ("https://", "http://")  # Nothing else is ever kept
+MODEL_DIR = Path(os.environ.get("STATS_MODEL_DIR", "/models/multilingual-e5-small"))
 
 
 @dataclass
@@ -131,10 +132,17 @@ def process(entries: List[Tuple[str, Dict[str, str]]], state: State) -> int:
 
 
 def ingest_rows(rows: List[dict], state: State) -> int:
-    """Stored headlines with their embeddings, from backfill.py, as one transaction."""
+    """
+    Stored headlines, from backfill.py, as one transaction. The tagger embeds only the
+    headlines a tab shows, so the others are embedded here, as the stream's are.
+    """
     items = [{"title": clean_title(r["title"], r["source"]), "link": r["link"], "source": r["source"], "label": r["label"] or "",
               "when": r["first_seen"], "vector": r["vector"]} for r in rows if (r["link"] or "").startswith(WEB_LINK)]
     items = _new_items(items, state)
+    missing = [item for item in items if item["vector"] is None]
+    if missing:
+        for item, vector in zip(missing, state.embedder.embed([item["title"] for item in missing])):
+            item["vector"] = vector
     if items:
         state.index.expire(items[0]["when"])
     vectors = np.stack([item["vector"] for item in items]) if items else None
@@ -211,7 +219,7 @@ def connect(url: str) -> redis.Redis:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    state = build_state(Embedder(Path(os.environ.get("STATS_MODEL_DIR", "/models/multilingual-e5-small"))))
+    state = build_state(Embedder(MODEL_DIR))
     client = connect(os.environ["REDIS_URL"])
     healthy = True
     logger.info("Stats worker started")

@@ -5,6 +5,7 @@ import json
 
 import numpy as np
 
+import backfill
 import label
 import train
 
@@ -44,3 +45,17 @@ def test_training_reads_the_export(tmp_path):
     path.write_text(json.dumps(row) + "\n")
     rows, vectors = train.load(path)
     assert rows[0]["title"] == "T" and vectors.shape == (1, 384) and vectors.dtype == np.float32
+
+
+def test_training_skips_rows_without_an_embedding(tmp_path):
+    vector = base64.b64encode(np.ones(384, dtype=np.float16).tobytes()).decode()
+    rows = [{"title": "T", "tags": "[]", "label": None, "story_embedding": vector},
+            {"title": "U", "tags": "[]", "label": None, "story_embedding": None}]
+    path = tmp_path / "export.jsonl"
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    rows, vectors = train.load(path)
+    assert [row["title"] for row in rows] == ["T"] and len(vectors) == 1
+
+
+def test_backfill_reads_a_missing_embedding_as_none():
+    assert backfill.vector(None) is None

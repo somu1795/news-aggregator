@@ -27,7 +27,7 @@ RELEVANT_THRESHOLD = 1.0  # Log-odds: drops 37% of the topic stories left, for 3
 
 
 def load(export_path):
-    rows = [json.loads(line) for line in open(export_path, encoding="utf8")]
+    rows = [row for row in map(json.loads, open(export_path, encoding="utf8")) if row["story_embedding"]]  # Not every headline has one
     vectors = np.stack([np.frombuffer(base64.b64decode(r.pop("story_embedding")), dtype=np.float16) for r in rows])
     return rows, vectors.astype(np.float32)
 
