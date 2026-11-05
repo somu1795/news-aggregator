@@ -1,16 +1,19 @@
 """
 Background article summarizer.
 
-Runs as its own container (a single replica). Every SUMMARY_INTERVAL_SECONDS it
-reads the published snapshots and summarizes the first SUMMARY_TOP_N items of
-every view that don't have a summary yet: the main views first, then the topic
-views, top positions first. For each, it reads the article's text and asks an
-LLM (an Ollama server at SUMMARIZER_LLM_URL) for 2-3 sentences. Summaries are
-stored in Redis at summary_key(link) for SUMMARY_TTL_SECONDS, with how the text
-was read; the refresher adds them to the items it publishes.
+Runs as its own container (a single replica), as two loops:
+- reading: every SUMMARY_INTERVAL_SECONDS it reads the published snapshots and
+  reads the text of the first SUMMARY_TOP_N items of every view that have
+  neither a summary nor a text yet: the main views first, then the topic views,
+  top positions first. Several sites are read at once (SUMMARY_READ_CONCURRENCY),
+  each site's articles one at a time. The text is kept for ARTICLE_TEXT_TTL_SECONDS.
+- summaries: the read items, in the same order, SUMMARY_BATCH at a time, each
+  asked of an LLM (an Ollama server at SUMMARIZER_LLM_URL) for 2-3 sentences.
+  Summaries are stored in Redis at summary_key(link) for SUMMARY_TTL_SECONDS,
+  with how the text was read; the refresher adds them to the items it publishes.
 
-The LLM server may be a machine that's often off: then nothing is fetched or
-summarized and the summarizer checks again next interval.
+The LLM server may be a machine that's often off: reading goes on without it,
+so when it's back the articles are ready and it summarizes one after another.
 
 An article's text is read, each step only if the previous ones failed:
 1. directly (a plain request);
@@ -54,7 +57,7 @@ from prometheus_client import Counter, start_http_server
 
 from catalog import get_catalog
 from config import settings
-from keys import snapshot_key, summary_key
+from keys import article_text_key, snapshot_key, summary_key
 from logging_config import configure_logging
 from services.redis_client import create_redis_client
 from services.summaries.llm import LLMUnavailable, check_llm, same_story, summarize
@@ -128,39 +131,103 @@ async def judge_stories(client: httpx.AsyncClient) -> int:
     return sum(judged.values())
 
 
-async def summarize_new(client: httpx.AsyncClient, redis_client: aioredis.Redis) -> int:
-    """One pass over the top items. Returns how many were summarized; raises LLMUnavailable."""
+async def _unsummarized(redis_client: aioredis.Redis) -> List[tuple]:
+    """(item, its read text or None) for the top items without a summary, in top_items' order."""
     items = await top_items(redis_client)
     if not items:
-        return 0
-    known = await redis_client.mget([summary_key(item["link"]) for item in items])
-    todo = [item for item, value in zip(items, known) if value is None]
+        return []
+    links = [item["link"] for item in items]
+    # One command: a summary saved (and its text deleted) meanwhile is never seen half done
+    found = await redis_client.mget([summary_key(link) for link in links] + [article_text_key(link) for link in links])
+    return [(item, read and json.loads(read)) for item, summary, read in zip(items, found[:len(items)], found[len(items):])
+            if summary is None]
+
+
+async def read_ahead(client: httpx.AsyncClient, redis_client: aioredis.Redis) -> int:
+    """
+    One pass reading the top items' text, LLM or not. Returns how many were read; those that
+    can't be are marked, as summaries, and retried later.
+    """
+    todo = [item["link"] for item, read in await _unsummarized(redis_client) if read is None]
     if not todo:
         return 0
-    await check_llm(client)
     reads = Tally()
+    slots = asyncio.Semaphore(settings.SUMMARY_READ_CONCURRENCY)
+    sites = {}  # A site's articles one at a time: the first teaches the next (a bot check, the whole page)
+
+    async def read(link: str) -> None:
+        async with sites.setdefault(httpx.URL(link).host, asyncio.Lock()), slots:
+            try:
+                text, method = await fetch_text(client, redis_client, link)
+            except ArticleUnusable as e:
+                reads["failed"] += 1
+                ARTICLE_READS.labels(method="failed").inc()
+                retry = settings.SUMMARY_FAILED_TTL_SECONDS if e.final else settings.SUMMARY_RETRY_SECONDS
+                await redis_client.set(summary_key(link), json.dumps({"failed": str(e)}), ex=retry)
+                return
+            reads[method] += 1
+            ARTICLE_READS.labels(method=method).inc()
+            await redis_client.set(article_text_key(link), json.dumps({"text": text, "via": method}),
+                                   ex=settings.ARTICLE_TEXT_TTL_SECONDS)
+
+    await asyncio.gather(*(read(link) for link in todo))
+    read_count = sum(reads.values()) - reads["failed"]
+    logger.info("Read articles", read=dict(reads), pending_before=len(todo))
+    return read_count
+
+
+async def summarize_ready(client: httpx.AsyncClient, redis_client: aioredis.Redis) -> int:
+    """
+    Summarizes up to SUMMARY_BATCH read items, top first. Returns how many were summarized;
+    raises LLMUnavailable (asked only when something is ready).
+    """
+    ready = [(item, read) for item, read in await _unsummarized(redis_client) if read][:settings.SUMMARY_BATCH]
+    if not ready:
+        return 0
+    await check_llm(client)
     done = 0
-    for item in todo:
+    for item, read in ready:
         key = summary_key(item["link"])
-        try:
-            text, method = await fetch_text(client, redis_client, item["link"])
-        except ArticleUnusable as e:
-            reads["failed"] += 1
-            ARTICLE_READS.labels(method="failed").inc()
-            retry = settings.SUMMARY_FAILED_TTL_SECONDS if e.final else settings.SUMMARY_RETRY_SECONDS
-            await redis_client.set(key, json.dumps({"failed": str(e)}), ex=retry)
-            continue
-        reads[method] += 1
-        ARTICLE_READS.labels(method=method).inc()
-        summary = await summarize(client, item["title"], text)
+        summary = await summarize(client, item["title"], read["text"])
         if LINK.search(summary):  # Articles can steer the model (prompt injection); a summary never needs a link
             await redis_client.set(key, json.dumps({"failed": "summary contains a link"}), ex=settings.SUMMARY_FAILED_TTL_SECONDS)
-            continue
-        await redis_client.set(key, json.dumps({"text": summary, "model": settings.SUMMARIZER_MODEL, "via": method}),
-                               ex=settings.SUMMARY_TTL_SECONDS)
-        done += 1
-    logger.info("Summarized articles", summarized=done, pending_before=len(todo), read=dict(reads))
+        else:
+            await redis_client.set(key, json.dumps({"text": summary, "model": settings.SUMMARIZER_MODEL, "via": read["via"]}),
+                                   ex=settings.SUMMARY_TTL_SECONDS)
+            done += 1
+        await redis_client.delete(article_text_key(item["link"]))
+    logger.info("Summarized articles", summarized=done, batch=len(ready))
     return done
+
+
+async def read_loop(client: httpx.AsyncClient, redis_client: aioredis.Redis) -> None:
+    while True:
+        try:
+            await read_ahead(client, redis_client)
+        except Exception as e:
+            logger.error("Reading articles failed", error=str(e), exc_info=True)
+        await asyncio.sleep(settings.SUMMARY_INTERVAL_SECONDS)
+
+
+async def summary_loop(client: httpx.AsyncClient, redis_client: aioredis.Redis) -> None:
+    available: Optional[bool] = None
+    while True:
+        done = 0
+        try:
+            done = await summarize_ready(client, redis_client)
+            if not done:
+                await judge_stories(client)  # Summaries come first: only once there are none to make
+            if available is False:
+                logger.info("LLM server is back")
+            available = True
+        except LLMUnavailable as e:
+            if available is not False:  # Log the change, not every retry
+                logger.warning("LLM server unavailable, will retry", error=str(e))
+            available = False
+        except Exception as e:
+            logger.error("Summarizer pass failed", error=str(e), exc_info=True)
+        if not done:  # A full batch: the next one at once, in the tabs' order of now
+            await asyncio.sleep(settings.SUMMARY_INTERVAL_SECONDS)
 
 
 async def run() -> None:
@@ -172,24 +239,10 @@ async def run() -> None:
     get_catalog(), get_site()  # A broken config folder stops the summarizer at once, with its error
     start_http_server(settings.METRICS_PORT)
     redis_client = create_redis_client(socket_timeout=10, retries=3)
-    available: Optional[bool] = None
     async with httpx.AsyncClient(timeout=15.0, http2=True) as client:
         logger.info("Summarizer started", llm=settings.SUMMARIZER_LLM_URL, model=settings.SUMMARIZER_MODEL,
                     browser=settings.SUMMARIZER_BROWSER_URL or None, browser2=settings.SUMMARIZER_BROWSER2_URL or None)
-        while True:
-            try:
-                await summarize_new(client, redis_client)
-                await judge_stories(client)  # Summaries come first: only once there are none to make
-                if available is False:
-                    logger.info("LLM server is back")
-                available = True
-            except LLMUnavailable as e:
-                if available is not False:  # Log the change, not every retry
-                    logger.warning("LLM server unavailable, will retry", error=str(e))
-                available = False
-            except Exception as e:
-                logger.error("Summarizer pass failed", error=str(e), exc_info=True)
-            await asyncio.sleep(settings.SUMMARY_INTERVAL_SECONDS)
+        await asyncio.gather(read_loop(client, redis_client), summary_loop(client, redis_client))
 
 
 if __name__ == "__main__":

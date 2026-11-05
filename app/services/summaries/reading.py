@@ -6,7 +6,8 @@ snapshot. Paywalled sites skip the browsers.
 """
 
 import asyncio
-from typing import Tuple
+import weakref
+from typing import Dict, Tuple
 
 import httpx
 import redis.asyncio as aioredis
@@ -29,6 +30,14 @@ MAX_ARTICLE_BYTES = 3_000_000
 ARCHIVE = "https://archive.ph/newest/"  # Redirects to the latest snapshot, or 404s
 BLOCKING_STATUSES = {401, 402, 403, 429, 503}  # What bot checks answer a plain request with
 BOT_CHECK_HEADERS = ("cf-mitigated", "x-datadome", "x-amzn-waf-action")  # Cloudflare, DataDome, AWS WAF (HTTP 202)
+
+
+# A browser reads one page at a time: one page can take 1.3 GB of its 2 GB. By event loop: a lock belongs to one
+_browser_turns: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, Dict[str, asyncio.Lock]]" = weakref.WeakKeyDictionary()
+
+
+def _browser_turn(browser_url: str) -> asyncio.Lock:
+    return _browser_turns.setdefault(asyncio.get_running_loop(), {}).setdefault(browser_url, asyncio.Lock())
 
 
 class ArticleUnusable(Exception):
@@ -138,8 +147,9 @@ async def fetch_browser_text(client: httpx.AsyncClient, browser_url: str, link: 
     if proxy:
         request["proxy"] = {"url": proxy}
     try:
-        response = await client.post(f"{browser_url}/v1", json=request,
-                                     timeout=settings.SUMMARY_BROWSER_TIMEOUT + 30)
+        async with _browser_turn(browser_url):
+            response = await client.post(f"{browser_url}/v1", json=request,
+                                         timeout=settings.SUMMARY_BROWSER_TIMEOUT + 30)
         result = response.json()
     except (httpx.HTTPError, ValueError) as e:
         raise ArticleUnusable(type(e).__name__)

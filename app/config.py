@@ -101,6 +101,9 @@ class Settings(BaseSettings):
     SUMMARY_TTL_SECONDS: int = 7 * 86400
     SUMMARY_FAILED_TTL_SECONDS: int = 86400  # An article that couldn't be summarized isn't retried before this
     SUMMARY_INTERVAL_SECONDS: int = 60  # How often the summarizer looks for new top items
+    SUMMARY_READ_CONCURRENCY: int = 3  # Articles read at once (each site's one at a time), whether or not the LLM is up
+    ARTICLE_TEXT_TTL_SECONDS: int = 2 * 86400  # An article read ahead waits this long for the LLM
+    SUMMARY_BATCH: int = 10  # Summaries per pass: the next pass takes the tabs' order afresh
     SUMMARY_LLM_TIMEOUT: float = 180.0  # The first request also loads the model
     SUMMARY_MIN_TEXT_CHARS: int = 600  # Less is usually a paywall teaser or a video page
     SUMMARY_MAX_TEXT_CHARS: int = 6000  # ~1,500 tokens: enough for the gist, keeps prompts fast

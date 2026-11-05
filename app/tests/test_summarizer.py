@@ -3,6 +3,7 @@ Tests for the summarizer (which articles it summarizes, what it stores) and for
 the refresher adding stored summaries to published items.
 """
 
+import asyncio
 import json
 
 import httpx
@@ -14,9 +15,9 @@ import summarizer
 from services.summaries import reading
 from catalog import Catalog
 from config import settings
-from keys import browser_host_key, feed_text_key, full_page_host_key, snapshot_key, summary_key
+from keys import article_text_key, browser_host_key, feed_text_key, full_page_host_key, snapshot_key, summary_key
 from refresher import publish
-from summarizer import LLMUnavailable, summarize_new, top_items
+from summarizer import LLMUnavailable, read_ahead, summarize_ready, top_items
 
 pytestmark = pytest.mark.asyncio
 
@@ -70,6 +71,12 @@ def llm_up(text="The council approved a new bridge."):
     return respx.post(f"{LLM}/api/chat").mock(return_value=llm_reply(text))
 
 
+async def summarize_new(client, redis):
+    """A read pass, then a summary pass: what the summarizer's two loops do between them."""
+    await read_ahead(client, redis)
+    return await summarize_ready(client, redis)
+
+
 async def test_top_items_main_views_first_by_position(mock_redis):
     await put_view(mock_redis, "all", [1, 2, 3])
     await put_view(mock_redis, "asia", [4, 1, 5])
@@ -103,16 +110,98 @@ async def test_summarizes_new_articles_and_marks_unusable_ones(mock_redis):
 
 
 @respx.mock
-async def test_llm_down_leaves_articles_for_later(mock_redis):
+async def test_articles_are_read_while_the_llm_is_down(mock_redis):
     await put_view(mock_redis, "all", [1])
-    article = respx.get("https://pub.example/1").mock(return_value=httpx.Response(200, html=ARTICLE))
+    respx.get("https://pub.example/1").mock(return_value=httpx.Response(200, html=ARTICLE))
     respx.get(f"{LLM}/api/tags").mock(side_effect=httpx.ConnectError("unreachable"))
 
     async with httpx.AsyncClient() as client:
+        assert await read_ahead(client, mock_redis) == 1
         with pytest.raises(LLMUnavailable):
-            await summarize_new(client, mock_redis)
-    assert await mock_redis.get(summary_key("https://pub.example/1")) is None  # Retried next pass
-    assert article.call_count == 0  # Nothing is fetched while the LLM is down
+            await summarize_ready(client, mock_redis)
+    assert await mock_redis.get(summary_key("https://pub.example/1")) is None  # Summarized once the LLM is back
+    read = json.loads(await mock_redis.get(article_text_key("https://pub.example/1")))
+    assert read["via"] == "direct" and "the bridge plan" in read["text"]
+    assert 0 < await mock_redis.ttl(article_text_key("https://pub.example/1")) <= settings.ARTICLE_TEXT_TTL_SECONDS
+
+
+@respx.mock
+async def test_read_articles_are_summarized_without_reading_them_again(mock_redis):
+    await put_view(mock_redis, "all", [1])
+    link = "https://pub.example/1"
+    await mock_redis.set(article_text_key(link), json.dumps({"text": "The council met. " * 50, "via": "browser"}))
+    page = respx.get(link).mock(return_value=httpx.Response(200, html=ARTICLE))
+    llm = llm_up()
+
+    async with httpx.AsyncClient() as client:
+        assert await read_ahead(client, mock_redis) == 0  # Already read
+        assert await summarize_ready(client, mock_redis) == 1
+
+    assert page.call_count == 0
+    assert "The council met." in json.loads(llm.calls.last.request.content)["messages"][1]["content"]
+    assert json.loads(await mock_redis.get(summary_key(link)))["via"] == "browser"
+    assert await mock_redis.get(article_text_key(link)) is None  # Not needed once summarized
+
+
+async def test_unread_articles_wait_for_their_text(mock_redis):
+    await put_view(mock_redis, "all", [1])
+    async with httpx.AsyncClient() as client:
+        assert await summarize_ready(client, mock_redis) == 0  # Nothing read: the LLM isn't even asked
+
+
+@respx.mock
+async def test_summaries_go_by_the_tabs_order_a_batch_at_a_time(mock_redis, monkeypatch):
+    monkeypatch.setattr(settings, "SUMMARY_TOP_N", 3)
+    monkeypatch.setattr(settings, "SUMMARY_BATCH", 2)
+    await put_view(mock_redis, "all", [1, 2, 3])
+    for n in (3, 1, 2):  # Read in any order
+        await mock_redis.set(article_text_key(f"https://pub.example/{n}"), json.dumps({"text": f"Text {n}. " * 100, "via": "direct"}))
+    llm = llm_up()
+
+    async with httpx.AsyncClient() as client:
+        assert await summarize_ready(client, mock_redis) == 2
+        await put_view(mock_redis, "all", [4, 3])  # The tabs changed; story 4 isn't read yet
+        assert await summarize_ready(client, mock_redis) == 1
+
+    asked = [json.loads(call.request.content)["messages"][1]["content"].split("\n")[0] for call in llm.calls]
+    assert asked == ["Headline: Story 1", "Headline: Story 2", "Headline: Story 3"]
+
+
+def slow_page(active, peak):
+    """An article page that takes a moment, counting how many are being read at once."""
+    async def respond(request):
+        active[0] += 1
+        peak[0] = max(peak[0], active[0])
+        await asyncio.sleep(0.05)
+        active[0] -= 1
+        return httpx.Response(200, html=ARTICLE)
+    return respond
+
+
+@respx.mock
+async def test_several_sites_are_read_at_once(mock_redis, monkeypatch):
+    monkeypatch.setattr(settings, "SUMMARY_TOP_N", 4)
+    monkeypatch.setattr(settings, "SUMMARY_READ_CONCURRENCY", 3)
+    links = [f"https://site{n}.example/a" for n in range(4)]
+    await mock_redis.set(snapshot_key("all"), json.dumps({"data": [{**item(n), "link": link} for n, link in enumerate(links)]}))
+    active, peak = [0], [0]
+    respx.get(url__regex=r"https://site\d\.example/a").mock(side_effect=slow_page(active, peak))
+
+    async with httpx.AsyncClient() as client:
+        assert await read_ahead(client, mock_redis) == 4
+    assert peak[0] == 3  # At most SUMMARY_READ_CONCURRENCY
+
+
+@respx.mock
+async def test_one_site_is_read_one_article_at_a_time(mock_redis, monkeypatch):
+    monkeypatch.setattr(settings, "SUMMARY_TOP_N", 3)
+    await put_view(mock_redis, "all", [1, 2, 3])
+    active, peak = [0], [0]
+    respx.get(url__regex=r"https://pub\.example/\d").mock(side_effect=slow_page(active, peak))
+
+    async with httpx.AsyncClient() as client:
+        assert await read_ahead(client, mock_redis) == 3
+    assert peak[0] == 1
 
 
 async def test_published_items_carry_their_summary(mock_redis):
@@ -353,6 +442,28 @@ async def test_a_site_is_not_remembered_when_the_whole_page_fails_too(mock_redis
 
     assert json.loads(await mock_redis.get(summary_key("https://pub.example/1")))["via"] == "feed"
     assert not await mock_redis.exists(full_page_host_key("pub.example"))
+
+@respx.mock
+async def test_each_browser_reads_one_page_at_a_time(mock_redis, with_browser, monkeypatch):
+    monkeypatch.setattr(settings, "SUMMARY_TOP_N", 3)
+    links = [f"https://site{n}.example/a" for n in range(3)]
+    await mock_redis.set(snapshot_key("all"), json.dumps({"data": [{**item(n), "link": link} for n, link in enumerate(links)]}))
+    for n in range(3):
+        await mock_redis.set(browser_host_key(f"site{n}.example"), 1)  # All three need the browser
+    active, peak = [0], [0]
+
+    async def page(request):  # A page can take most of the browser's memory
+        active[0] += 1
+        peak[0] = max(peak[0], active[0])
+        await asyncio.sleep(0.05)
+        active[0] -= 1
+        return browser_page()
+    respx.post(f"{BROWSER}/v1").mock(side_effect=page)
+
+    async with httpx.AsyncClient() as client:
+        assert await read_ahead(client, mock_redis) == 3
+    assert peak[0] == 1
+
 
 TAGGER = "http://tagger.test"
 
