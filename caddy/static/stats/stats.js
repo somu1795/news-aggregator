@@ -7,7 +7,6 @@
     var REFRESH_MS = 60000;  // The worker adds a red dot within a minute of a story's arrival
     var FRAME_MS = 50;  // A pulse needs no more than 20 frames a second
     var TAP_CELLS = 4;  // A tap this near a country counts: cells are about 2 px wide on a phone
-    var STALE_SECONDS = 1800;
     var PULSE_MS = 1800;
     var FADE = 0.3;  // Opacity of a country with next to no evidence
 
@@ -232,8 +231,7 @@
         if (!data) return;
         var age = Date.now() / 1000 - data.generated_at;
         var words = "updated " + ageWords(age);
-        if (age > STALE_SECONDS) words += ": this map is out of date";
-        else if (!Object.keys(data.countries || {}).length) words += ": no stories yet";
+        if (!Object.keys(data.countries || {}).length) words += ": no stories yet";
         statusEl.textContent = words;
     }
 

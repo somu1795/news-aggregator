@@ -456,7 +456,7 @@ A visitor makes 2 requests per page load plus 1 per region viewed, so 100/minute
 | Redis down | Every worker keeps serving its in-memory copies; rate limits fall back to memory. `/health` reports `degraded` (HTTP 200), so Caddy keeps routing. Measured: 46,000+ requests at ~2,300 req/s during a 10s outage, 100% OK, p99 ≈ 420ms (same as with Redis up). |
 | Redis down and a worker has no snapshot | That worker returns 503 for that view, and its `/health` fails if it has no "all" snapshot. Only possible if Redis was empty or down when the worker started. |
 | Redis restarted | Snapshots, resolved URLs and counters are reloaded from disk. |
-| Stats worker stopped or failing | The site is unaffected. `/stats/` keeps its last file, shows its age, and says it's out of date after 30 minutes. The worker catches up from the stream when it restarts; entries older than the stream's cap are skipped and logged. |
+| Stats worker stopped or failing | The site is unaffected. `/stats/` keeps its last file and shows its age. The worker catches up from the stream when it restarts; entries older than the stream's cap are skipped and logged. |
 | Stats stream can't be written | Logged (`Stats stream not written`); the refresh carries on and sends those links next time. |
 | `heatmap.json` missing or unreadable | `/stats/` says the stats are offline and shows a plain map. |
 | App down | `/stats/` still loads, unstyled, as Caddy serves it. |
