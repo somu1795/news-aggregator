@@ -502,3 +502,39 @@ async def test_story_judging_reports_the_llm_down(monkeypatch):
         with pytest.raises(LLMUnavailable):
             await summarizer.judge_stories(client)
     assert not verdicts.called
+
+
+class Stop(BaseException):  # Not an Exception: the loop logs those and carries on
+    pass
+
+
+async def run_summary_loop(monkeypatch, summarized, judged):
+    """Runs summary_loop over the given results of each pass; returns its pauses."""
+    passes, judgings, pauses = iter(summarized), iter(judged), []
+
+    async def summarize_ready(client, redis):
+        try:
+            return next(passes)
+        except StopIteration:
+            raise Stop
+
+    async def judge_stories(client):
+        return next(judgings)
+
+    async def sleep(seconds):
+        pauses.append(seconds)
+    monkeypatch.setattr(summarizer, "summarize_ready", summarize_ready)
+    monkeypatch.setattr(summarizer, "judge_stories", judge_stories)
+    monkeypatch.setattr(summarizer.asyncio, "sleep", sleep)
+    with pytest.raises(Stop):
+        await summarizer.summary_loop(None, None)
+    return pauses
+
+
+async def test_after_judging_story_pairs_it_looks_for_articles_at_once(monkeypatch):
+    # Nothing to summarize, so pairs are judged; articles read meanwhile are next, without a pause
+    assert await run_summary_loop(monkeypatch, summarized=[0, 3], judged=[12]) == []
+
+
+async def test_it_pauses_only_when_there_was_nothing_to_do(monkeypatch):
+    assert await run_summary_loop(monkeypatch, summarized=[0], judged=[0]) == [settings.SUMMARY_INTERVAL_SECONDS]

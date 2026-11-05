@@ -215,8 +215,8 @@ async def summary_loop(client: httpx.AsyncClient, redis_client: aioredis.Redis) 
         done = 0
         try:
             done = await summarize_ready(client, redis_client)
-            if not done:
-                await judge_stories(client)  # Summaries come first: only once there are none to make
+            if not done:  # Summaries come first: only once there are none to make
+                done = await judge_stories(client)  # It may take minutes: articles read meanwhile are next
             if available is False:
                 logger.info("LLM server is back")
             available = True
@@ -226,7 +226,7 @@ async def summary_loop(client: httpx.AsyncClient, redis_client: aioredis.Redis) 
             available = False
         except Exception as e:
             logger.error("Summarizer pass failed", error=str(e), exc_info=True)
-        if not done:  # A full batch: the next one at once, in the tabs' order of now
+        if not done:  # After a batch or pairs, the next pass at once (the tabs' order of now)
             await asyncio.sleep(settings.SUMMARY_INTERVAL_SECONDS)
 
 
