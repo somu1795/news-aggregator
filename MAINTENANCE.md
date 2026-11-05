@@ -55,7 +55,7 @@ What in this project is written by hand and ages, how often to look at it, and a
 
 ### Only when something breaks
 
-- **Heatmap database lost:** `stats_data` isn't backed up. From the repo's root: `docker compose stop stats`, `docker compose exec -T tagger python3 - < stats/export_tagger.py > export.jsonl`, `docker compose run --rm --no-deps -T -v "$PWD/export.jsonl:/tmp/export.jsonl:ro" stats python backfill.py /tmp/export.jsonl`, then `docker compose up -d --no-build stats`. The backfill takes about 50 minutes (it embeds the headlines no tab showed), while the map keeps its last output. Without it the red dots need 7 days to start.
+- **Heatmap database lost:** `stats_data` isn't backed up. From the repo's root: `docker compose stop stats`, `docker compose exec -T tagger python3 - < stats/export_tagger.py > export.jsonl`, `docker compose run --rm --no-deps -T -v "$PWD/export.jsonl:/tmp/export.jsonl:ro" stats python backfill.py /tmp/export.jsonl`, then `docker compose up -d --no-build stats`. The backfill takes about 1.5 hours with 200,000 headlines, and longer as the tagger keeps more (it embeds the headlines no tab showed), while the map keeps its last output. Without it the red dots need 7 days to start.
 
 | What | Where | Sign it broke |
 | --- | --- | --- |
