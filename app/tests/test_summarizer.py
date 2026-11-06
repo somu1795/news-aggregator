@@ -276,6 +276,31 @@ async def test_summaries_with_links_are_rejected(mock_redis):
     assert json.loads(await mock_redis.get(summary_key("https://pub.example/1"))) == {"failed": "summary contains a link"}
 
 
+@respx.mock
+@pytest.mark.parametrize("answer", ["UNREADABLE", "UNREADABLE.", " UNREADABLE\n"])
+async def test_pages_the_llm_calls_unreadable_get_no_summary(mock_redis, answer):
+    # A block, error or cookie page read in place of the article
+    await put_view(mock_redis, "all", [1])
+    respx.get("https://pub.example/1").mock(return_value=httpx.Response(200, html=ARTICLE))
+    llm_up(answer)
+
+    async with httpx.AsyncClient() as client:
+        assert await summarize_new(client, mock_redis) == 0
+    assert json.loads(await mock_redis.get(summary_key("https://pub.example/1"))) == {"failed": "not the article"}
+    assert 0 < await mock_redis.ttl(summary_key("https://pub.example/1")) <= settings.SUMMARY_FAILED_TTL_SECONDS
+    assert await mock_redis.get(article_text_key("https://pub.example/1")) is None
+
+
+@respx.mock
+async def test_summaries_mentioning_unreadable_are_kept(mock_redis):
+    await put_view(mock_redis, "all", [1])
+    respx.get("https://pub.example/1").mock(return_value=httpx.Response(200, html=ARTICLE))
+    llm_up("Archivists said the water-damaged letters were left unreadable.")
+
+    async with httpx.AsyncClient() as client:
+        assert await summarize_new(client, mock_redis) == 1
+
+
 BROWSER, PROXY = "http://browser.example:8191", "http://proxy.example:4750"
 
 

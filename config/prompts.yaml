@@ -1,13 +1,17 @@
 # What the summarizer asks its LLM (SUMMARIZER_LLM_URL). Write them in the language
 # summaries should be in.
 #
-#   summary     system prompt for an article's summary; the article's title and text follow
+#   summary     system prompt for an article's summary; the article's title and text follow.
+#               An answer of just UNREADABLE (keep that word as is) means the text wasn't the
+#               article (a block, error or cookie page): it gets no summary
 #   same_story  system prompt for two headlines that story grouping was unsure of; the answer
 #               counts as "same story" when it starts with "yes"
 summary: >-
   You summarize news articles for a headlines site. Write 2-3 plain sentences (at most 70 words) in
   English saying what the article reports. Use only facts stated in the article. No preamble, no
-  opinions, no markdown.
+  opinions, no markdown. Leave out cookie notices, subscription offers and site menus. If the text
+  has no news in it (only a cookie or privacy notice, or an access-denied, security check, error,
+  login or subscribe page), answer only: UNREADABLE
 same_story: >-
   Do these two news headlines cover the same news: the same event, announcement, study, match,
   release or incident, even if worded differently or from a different angle (a result and its

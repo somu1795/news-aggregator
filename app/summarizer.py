@@ -67,6 +67,7 @@ from site_config import get_site
 logger = structlog.get_logger(__name__)
 
 LINK = re.compile(r"https?://|www\.", re.IGNORECASE)
+UNREADABLE = re.compile(r"\s*UNREADABLE\W*$")  # The summary prompt's answer for a block, error or cookie page
 
 ARTICLE_READS = Counter(
     "summarizer_article_reads_total",
@@ -191,6 +192,8 @@ async def summarize_ready(client: httpx.AsyncClient, redis_client: aioredis.Redi
         summary = await summarize(client, item["title"], read["text"])
         if LINK.search(summary):  # Articles can steer the model (prompt injection); a summary never needs a link
             await redis_client.set(key, json.dumps({"failed": "summary contains a link"}), ex=settings.SUMMARY_FAILED_TTL_SECONDS)
+        elif UNREADABLE.match(summary):  # What was read wasn't the article
+            await redis_client.set(key, json.dumps({"failed": "not the article"}), ex=settings.SUMMARY_FAILED_TTL_SECONDS)
         else:
             await redis_client.set(key, json.dumps({"text": summary, "model": settings.SUMMARIZER_MODEL, "via": read["via"]}),
                                    ex=settings.SUMMARY_TTL_SECONDS)
