@@ -115,7 +115,7 @@ li {
 .meta { grid-column: 2; color: var(--muted); font-size: .85em; }
 .meta a { color: var(--muted); }
 .meta a:hover { color: var(--accent); }
-.paywall { color: var(--accent); }
+.meta a.paywall, .related a.paywall { color: var(--accent); }
 .meta button { color: var(--muted); text-decoration: underline; }
 .meta button:hover { color: var(--accent); }
 .summary {

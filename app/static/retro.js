@@ -717,7 +717,7 @@
         var href = safeUrl(item.link);
         if (!href) return null;
         var host = hostOf(href);
-        var shown = viaBypass(href, service);
+        var bypassed = viaBypass(href, service);
 
         var li = document.createElement("li");
         var num = document.createElement("span");
@@ -725,7 +725,7 @@
         // A tab's rank; search results have none: each page of older headlines adds results among them
         num.textContent = searching() ? "" : (i + 1) + ".";
         li.appendChild(num);
-        li.appendChild(headline(item, shown, host, words));
+        li.appendChild(headline(item, href, host, words));
 
         var meta = document.createElement("div");
         meta.className = "meta";
@@ -743,12 +743,7 @@
         if (summary) appendPart(meta, summary.toggle);
         var related = relatedOf(item, i, service, words);
         if (related) appendPart(meta, related.toggle);
-        if (shown !== href) {
-            var mark = document.createElement("span");
-            mark.className = "paywall";
-            mark.textContent = " · via " + service.name;
-            meta.appendChild(mark);
-        }
+        if (bypassed !== href) appendPart(meta, link(bypassed, "via " + service.name, "paywall"));
         li.appendChild(meta);
 
         // A result found only in its summary: show where, so it's clear why it's here
@@ -818,12 +813,14 @@
             var otherHref = safeUrl(other.link);
             if (!otherHref) return;
             var row = document.createElement("li");
-            var otherLink = link(viaBypass(otherHref, service), "");
+            var otherLink = link(otherHref, "");
             otherLink.appendChild(highlighted(cleanTitle(other.title, other.source), words));
             row.appendChild(otherLink);
             var from = document.createElement("span");
             from.textContent = " · " + other.source;
             row.appendChild(from);
+            var otherBypassed = viaBypass(otherHref, service);
+            if (otherBypassed !== otherHref) appendPart(row, link(otherBypassed, "via " + service.name, "paywall"));
             var otherComments = other.comments && safeUrl(other.comments);
             if (otherComments) appendPart(row, link(otherComments, "discuss", "discuss"));
             block.appendChild(row);
@@ -837,7 +834,8 @@
         return { block: block, toggle: toggle };
     }
 
-    // A link to a paywalled site goes through the bypass service, when one is chosen
+    // A paywalled site's link through the bypass service, when one is chosen (shown as "via <service>"
+    // beside the headline, which keeps the site's own link); otherwise the link itself
     function viaBypass(href, service) {
         return service.prefix && isPaywalled(hostOf(href)) ? service.prefix + href : href;
     }
