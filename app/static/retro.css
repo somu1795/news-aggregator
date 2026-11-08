@@ -5,6 +5,9 @@
     --rule: #cfc8b6;
     --accent: #a8431a;
     --visited: #7a6a8c;
+    --moon: #d9a441;
+    --moon-shade: #d3cbb6;
+    --moon-crater: #b8862f;
     color-scheme: light;
 }
 :root[data-theme="dark"] {
@@ -14,6 +17,9 @@
     --rule: #3a2e1a;
     --accent: #ffd27a;
     --visited: #c99a52;
+    --moon: #f2b84b;
+    --moon-shade: #3a2e1a;
+    --moon-crater: #c48f3a;
     color-scheme: dark;
 }
 
@@ -56,6 +62,12 @@ h1 {
     letter-spacing: .08em;
 }
 h1 .cursor { color: var(--accent); }
+.masthead > nav { flex-basis: 100%; }  /* The controls go under the title and the moon */
+.moon { display: inline-flex; align-items: center; gap: .75ch; margin-left: auto; color: var(--muted); font-size: .85em; }
+.moon svg { width: 24px; height: 24px; flex: none; }
+.moon .lit { fill: var(--moon); }
+.moon .shade { fill: var(--moon-shade); }
+.moon .crater { fill: var(--moon-crater); }
 nav { display: flex; flex-wrap: wrap; gap: .25rem 1.25rem; color: var(--muted); }
 nav .key { text-decoration: underline; text-underline-offset: 3px; }
 nav .on { color: var(--ink); }

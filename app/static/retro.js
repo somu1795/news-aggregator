@@ -1007,9 +1007,108 @@
         }
         else if (/^[1-9]$/.test(event.key) && VIEWS[Number(event.key) - 1]) selectView(VIEWS[Number(event.key) - 1].id, currentTopic, true);
     });
+    // --- The moon: its phase now, drawn in 16x16 pixels like the site icons, with its name ---
+    var MOON_SOUTH = JSON.parse(document.getElementById("moon-data").textContent).south;  // Mirrored: lit on the left while waxing
+    var MOON_NAMES = ["new moon", "waxing crescent", "first quarter", "waxing gibbous", "full moon", "waning gibbous", "last quarter", "waning crescent"];
+    var MOON_CRATERS = [[5, 4], [6, 4], [4, 5], [5, 5], [9, 6], [10, 6], [10, 7], [6, 10], [7, 10], [11, 11]];
+    var moonEl = document.getElementById("moon");
+    var moonShown = null;
+
+    // The moon's elongation from the sun at a time, in degrees: 0 new, 90 first quarter, 180 full,
+    // 270 last quarter. Mean elongation plus the main periodic terms (Meeus, Astronomical Algorithms
+    // 48.4): within about 0.3 degrees, so the exact phases come out within an hour or so.
+    function moonElongation(time) {
+        var t = (time / 86400000 - 10957.5) / 36525;  // Julian centuries since 2000-01-01 12:00 UTC
+        var rad = Math.PI / 180;
+        var d = 297.8501921 + 445267.1114034 * t;  // Mean elongation
+        var m = (357.5291092 + 35999.0502909 * t) * rad;  // The sun's mean anomaly
+        var mm = (134.9633964 + 477198.8675055 * t) * rad;  // The moon's mean anomaly
+        var e = d + 6.289 * Math.sin(mm) - 2.100 * Math.sin(m) + 1.274 * Math.sin(2 * d * rad - mm)
+            + 0.658 * Math.sin(2 * d * rad) + 0.214 * Math.sin(2 * mm) + 0.110 * Math.sin(d * rad);
+        return (e % 360 + 360) % 360;
+    }
+
+    function moonName(e) {
+        var quarter = Math.round(e / 90);
+        if (Math.abs(e - quarter * 90) < 6) return MOON_NAMES[(quarter % 4) * 2];  // About half a day either side
+        return MOON_NAMES[Math.floor(e / 90) * 2 + 1];
+    }
+
+    // Hours until the next full moon (while waxing) or new moon (while waning)
+    function hoursToNext(time, e) {
+        var target = e < 180 ? 180 : 360;
+        for (var h = 1; h < 24 * 31; h++) {
+            var next = moonElongation(time + h * 3600000);
+            if (target === 180 ? next >= 180 : next < e) return h;
+            e = next;
+        }
+        return null;
+    }
+
+    function moonPixels(e, south) {
+        var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("viewBox", "0 0 16 16");
+        svg.setAttribute("shape-rendering", "crispEdges");
+        svg.setAttribute("aria-hidden", "true");
+        var cos = Math.cos(e * Math.PI / 180);
+        var craters = {};
+        MOON_CRATERS.forEach(function (p) { craters[p[0] + "," + p[1]] = true; });
+        for (var y = 0; y < 16; y++) {
+            for (var x = 0; x < 16; x++) {
+                // A pixel is part of the disc if half of it is (4x4 points each), and lit if a third of that is
+                var inside = 0, litPoints = 0;
+                for (var sy = 0; sy < 4; sy++) {
+                    for (var sx = 0; sx < 4; sx++) {
+                        var px = (x + (sx + 0.5) / 4 - 8) / 8, py = (y + (sy + 0.5) / 4 - 8) / 8;  // The disc's radius is 1
+                        if (px * px + py * py > 1) continue;
+                        inside++;
+                        var half = Math.sqrt(1 - py * py);  // Half the disc's width at this height
+                        var side = south ? -px : px;
+                        // The terminator is half an ellipse: lit beyond it, on the right while waxing (seen from the north)
+                        if (e < 180 ? side > half * cos : -side > half * cos) litPoints++;
+                    }
+                }
+                if (inside < 8) continue;
+                var lit = litPoints * 3 >= inside;  // A third: thin crescents stay unbroken arcs
+                var rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+                rect.setAttribute("x", x);
+                rect.setAttribute("y", y);
+                rect.setAttribute("width", 1);
+                rect.setAttribute("height", 1);
+                rect.setAttribute("class", !lit ? "shade" : craters[(south ? 15 - x : x) + "," + y] ? "crater" : "lit");
+                svg.appendChild(rect);
+            }
+        }
+        return svg;
+    }
+
+    function renderMoon() {
+        var now = Date.now();
+        var e = moonElongation(now);
+        var percent = Math.round((1 - Math.cos(e * Math.PI / 180)) / 2 * 100);
+        var name = percent === 0 ? "new moon" : percent === 100 ? "full moon" : moonName(e);
+        var label = name === "new moon" || name === "full moon" ? name : name + " " + percent + "%";
+        var key = label + " " + Math.round(e);
+        if (key === moonShown) return;
+        moonShown = key;
+        var hours = hoursToNext(now, e);
+        var next = e < 180 ? "full moon" : "new moon";
+        var when = hours === null ? "" : hours < 12 ? " today" : hours < 36 ? " tomorrow" : " in " + Math.round(hours / 24) + " days";
+        var title = name.charAt(0).toUpperCase() + name.slice(1) + " · " + percent + "% lit" +
+            (name === next ? "" : " · " + next + when);
+        moonEl.textContent = "";
+        var text = document.createElement("span");
+        text.textContent = label;
+        moonEl.appendChild(text);
+        moonEl.appendChild(moonPixels(e, MOON_SOUTH));
+        moonEl.title = title;
+        moonEl.setAttribute("aria-label", "Moon: " + title);
+    }
+
     setInterval(function () {
         updateStatus();  // Keep "updated Xm ago" honest
         autoRefreshIfDue();
+        renderMoon();
     }, 30000);
 
     renderBypass();
@@ -1018,6 +1117,7 @@
     renderAutoRefresh();
     renderBackAction();
     renderInstall();
+    renderMoon();
     // A view in the URL wins (shared links); otherwise reopen the last one viewed
     var params = new URLSearchParams(location.search);
     var linked = params.has("region") || params.has("topic");

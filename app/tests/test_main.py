@@ -458,6 +458,13 @@ def test_page_starts_on_the_visitors_region(client, country, region):
     assert json.loads(page.split('<script id="home-data" type="application/json">')[1].split("</script>")[0]) == region
 
 
+@pytest.mark.parametrize("country, south", [("AU", True), ("AR", True), ("ZA", True), ("ID", True), ("GB", False), ("US", False), ("KE", False), (None, False)])
+def test_page_shows_the_moon_as_seen_from_the_visitors_hemisphere(client, country, south):
+    headers = {"Accept": "text/html", **({"CF-IPCountry": country} if country else {})}
+    page = client.get("/", headers=headers).text
+    assert json.loads(page.split('<script id="moon-data" type="application/json">')[1].split("</script>")[0]) == {"south": south}
+
+
 @pytest.mark.parametrize("theme, color", [("light", "#f3efe4"), ("dark", "#120f0a")])
 def test_page_opens_in_the_default_theme(client, monkeypatch, theme, color):
     monkeypatch.setattr(settings, "DEFAULT_THEME", theme)

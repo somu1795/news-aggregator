@@ -19,6 +19,7 @@
     <header>
         <div class="masthead">
             <h1>{{ site.name | upper }}<span class="cursor blink">_</span></h1>
+            <span class="moon" id="moon" role="img"></span>
             <nav aria-label="Controls">
                 <button id="refresh" title="Refresh (r)">[<span class="key">r</span>]efresh</button>
                 <button id="theme" title="Toggle dark mode (d)">[<span class="key">d</span>]ark</button>
@@ -62,5 +63,6 @@
     <script id="topics-data" type="application/json">{{ topics | tojson }}</script>
     <script id="paywalled-data" type="application/json">{{ site.paywalled_hosts | tojson }}</script>
     <script id="home-data" type="application/json">{{ home_region | tojson }}</script>
+    <script id="moon-data" type="application/json">{{ moon | tojson }}</script>
 </body>
 </html>

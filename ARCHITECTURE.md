@@ -320,6 +320,7 @@ Consequence: a newly published snapshot reaches users within about 5s, and the A
   - A tab that was already loaded switches instantly and refreshes in the background if older than a minute.
   - A refresh that brings the same snapshot (one isn't out yet) leaves the list as it is, so reading position, keyboard focus and selected text stay. Screen readers announce the status line's view, item count and "refreshing...", but not its age ("updated 3m ago"), which changes every minute.
   - A slow response for one view can never overwrite another view's list.
+- The header's top right shows the moon's phase now, worked out in the browser (mean elongation plus Meeus' main periodic terms: the exact phases within about an hour), drawn as 16×16 square pixels like the site icons, with its name and how much is lit ("waxing gibbous 87%"; the title adds when the next full or new moon is). It's lit on the right while waxing, mirrored for visitors from southern-hemisphere countries (`CF-IPCountry`, `services/geo.py`). It's redrawn every 30 s if it changed.
 - Each item shows the title (without Google's " - Publisher" suffix), the domain, the source and age, plus "discuss" for Hacker News posts (a feed's comments link is dropped when it's just the article itself) and "summary" for items with one, which opens it under the item, labelled as a machine summary (it stays open across refreshes). A story that other outlets in the view also carry shows "+N sources", which opens their headlines (linked, with their source) under it.
 - Other controls:
   - `r` refreshes;
@@ -353,7 +354,7 @@ Without Cloudflare nothing needs changing: everything else is browser caching, w
 
 | Path | `Cache-Control` | At Cloudflare |
 | --- | --- | --- |
-| `/`, error pages | none | Never cached, and must stay so: each response has its own CSP nonce and the visitor's starting tab (from `CF-IPCountry`). |
+| `/`, error pages | none | Never cached, and must stay so: each response has its own CSP nonce and the visitor's starting tab and moon (from `CF-IPCountry`). |
 | `/api/headlines`, `/api/search-index` | seconds until the next refresh is due | By the cache rule, for `CDN-Cache-Control` (above). |
 | `/api/search` | 5 minutes | Only if the cache rule lists it (it must keep the query string in the cache key); otherwise each search reaches the server, which is fine at a few ms each. |
 | `/static/retro.css`, `/static/retro.js` | current `?v=` hash: a year, `immutable`; otherwise `no-cache` | Cached without a rule (`.css`/`.js`). The query string must stay in the cache key. |
