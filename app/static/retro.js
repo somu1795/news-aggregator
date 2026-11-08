@@ -1011,6 +1011,10 @@
     var MOON_SOUTH = JSON.parse(document.getElementById("moon-data").textContent).south;  // Mirrored: lit on the left while waxing
     var MOON_NAMES = ["new moon", "waxing crescent", "first quarter", "waxing gibbous", "full moon", "waning gibbous", "last quarter", "waning crescent"];
     var MOON_CRATERS = [[5, 4], [6, 4], [4, 5], [5, 5], [9, 6], [10, 6], [10, 7], [6, 10], [7, 10], [11, 11]];
+    var MOON_X = 5;  // The moon's left edge in the icon; the stars are either side of it
+    var MOON_STARS = [[1, 3], [3, 12], [23, 1], [24, 10]];
+    var MOON_CLOUD = [[1, 0, 2], [5, 0, 2], [0, 1, 8], [1, 2, 6]];  // The cloud's rows of pixels: x, y, width
+    var MOON_CLOUD_WIDTH = 8, MOON_CLOUD_Y = 1;  // Across the top: lower down, the craters and a cloud looked like a face
     var moonEl = document.getElementById("moon");
     var moonShown = null;
 
@@ -1045,15 +1049,16 @@
         return null;
     }
 
+    // The moon (16x16, 5 pixels in) between twinkling stars, with a cloud now and then: 26x16 pixels
     function moonPixels(e, south) {
-        var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-        svg.setAttribute("viewBox", "0 0 16 16");
-        svg.setAttribute("shape-rendering", "crispEdges");
-        svg.setAttribute("aria-hidden", "true");
+        var svg = svgElement("svg", { viewBox: "0 0 26 16", "shape-rendering": "crispEdges", "aria-hidden": "true" });
+        MOON_STARS.forEach(function (star, i) { svg.appendChild(pixel(star[0], star[1], 1, "star s" + (i + 1))); });
+        var clip = svgElement("clipPath", { id: "moon-disc" });  // The cloud shows only where it crosses the moon
         var cos = Math.cos(e * Math.PI / 180);
         var craters = {};
         MOON_CRATERS.forEach(function (p) { craters[p[0] + "," + p[1]] = true; });
         for (var y = 0; y < 16; y++) {
+            var first = null, last = null;
             for (var x = 0; x < 16; x++) {
                 // A pixel is part of the disc if half of it is (4x4 points each), and lit if a third of that is
                 var inside = 0, litPoints = 0;
@@ -1069,17 +1074,32 @@
                     }
                 }
                 if (inside < 8) continue;
+                if (first === null) first = x;
+                last = x;
                 var lit = litPoints * 3 >= inside;  // A third: thin crescents stay unbroken arcs
-                var rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-                rect.setAttribute("x", x);
-                rect.setAttribute("y", y);
-                rect.setAttribute("width", 1);
-                rect.setAttribute("height", 1);
-                rect.setAttribute("class", !lit ? "shade" : craters[(south ? 15 - x : x) + "," + y] ? "crater" : "lit");
-                svg.appendChild(rect);
+                svg.appendChild(pixel(MOON_X + x, y, 1, !lit ? "shade" : craters[(south ? 15 - x : x) + "," + y] ? "crater" : "lit"));
             }
+            if (first !== null) clip.appendChild(pixel(MOON_X + first, y, last - first + 1));
         }
+        svg.appendChild(clip);
+        var cloud = svgElement("g", { "class": "cloud" });  // Starts left of the moon; the CSS animation moves it across
+        MOON_CLOUD.forEach(function (run) { cloud.appendChild(pixel(run[0] - MOON_CLOUD_WIDTH, MOON_CLOUD_Y + run[1], run[2])); });
+        var clipped = svgElement("g", { "clip-path": "url(#moon-disc)" });
+        clipped.appendChild(cloud);
+        svg.appendChild(clipped);
         return svg;
+    }
+
+    function svgElement(name, attributes) {
+        var element = document.createElementNS("http://www.w3.org/2000/svg", name);
+        Object.keys(attributes).forEach(function (key) { element.setAttribute(key, attributes[key]); });
+        return element;
+    }
+
+    function pixel(x, y, width, className) {  // A row of square pixels
+        var attributes = { x: x, y: y, width: width, height: 1 };
+        if (className) attributes["class"] = className;
+        return svgElement("rect", attributes);
     }
 
     function renderMoon() {

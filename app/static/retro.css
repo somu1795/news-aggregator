@@ -8,6 +8,7 @@
     --moon: #d9a441;
     --moon-shade: #d3cbb6;
     --moon-crater: #b8862f;
+    --moon-cloud: #f7f3ea;
     color-scheme: light;
 }
 :root[data-theme="dark"] {
@@ -20,6 +21,7 @@
     --moon: #f2b84b;
     --moon-shade: #3a2e1a;
     --moon-crater: #c48f3a;
+    --moon-cloud: #7d6a48;
     color-scheme: dark;
 }
 
@@ -63,11 +65,21 @@ h1 {
 }
 h1 .cursor { color: var(--accent); }
 .masthead > nav { flex-basis: 100%; }  /* The controls go under the title and the moon */
-.moon { display: inline-flex; align-items: center; gap: .75ch; margin-left: auto; color: var(--muted); font-size: .85em; }
-.moon svg { width: 24px; height: 24px; flex: none; }
+.moon { display: flex; flex: 1 1 0; justify-content: flex-end; align-items: center; gap: .75ch; color: var(--muted); font-size: .85em; }
+.moon span { text-align: right; }  /* On the narrowest phones the label wraps, so the moon stays beside the title */
+.moon svg { width: 39px; height: 24px; flex: none; }  /* 26x16 pixels, 1.5px each */
 .moon .lit { fill: var(--moon); }
 .moon .shade { fill: var(--moon-shade); }
 .moon .crater { fill: var(--moon-crater); }
+.moon .star { fill: var(--moon); animation: moon-twinkle 3.1s steps(1) infinite; }
+.moon .s2 { animation-duration: 4.3s; animation-delay: -1.2s; }
+.moon .s3 { animation-duration: 2.7s; animation-delay: -.4s; }
+.moon .s4 { animation-duration: 5.3s; animation-delay: -2.6s; }
+@keyframes moon-twinkle { 50% { opacity: .25; } }
+/* Every 20 s a cloud steps across the moon, a pixel at a time, in 8 s */
+.moon .cloud { fill: var(--moon-cloud); animation: moon-cloud 20s steps(34) infinite; }
+@keyframes moon-cloud { 0% { transform: translateX(0); } 40%, 100% { transform: translateX(34px); } }
+@media (prefers-reduced-motion: reduce) { .moon .star, .moon .cloud { animation: none; } }
 nav { display: flex; flex-wrap: wrap; gap: .25rem 1.25rem; color: var(--muted); }
 nav .key { text-decoration: underline; text-underline-offset: 3px; }
 nav .on { color: var(--ink); }
