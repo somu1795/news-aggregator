@@ -199,7 +199,7 @@ The refresher runs this cycle forever:
 ```
 
 ### Step 1 — Fetch feeds
-The catalog (`config/sources.yaml`) has 84 news feeds (plus 55 topic feeds, Step 5). **Every view has the same overall mix: 50% news, 30% science, 20% Hacker News** (25 / 15 / 10 headlines). "News" is that region's news, or all regions equally on "all". Each region's weights sum to 1.0 and decide the make-up of its news share:
+The catalog (`config/sources.yaml`) has 84 news feeds (plus 55 topic feeds, Step 5). **Every view has the same overall mix: 75% news, 15% science, 10% Hacker News** (75 / 15 / 10 of its 100 headlines). "News" is that region's news, or all regions equally on "all". Each region's weights sum to 1.0 and decide the make-up of its news share:
 
 | Region | News sources (share of the region's news) |
 | --- | --- |
@@ -209,7 +209,7 @@ The catalog (`config/sources.yaml`) has 84 news feeds (plus 55 topic feeds, Step
 | **Africa** | Google News South Africa 12%, Nigeria 12%, Kenya 10%, Ghana 6%, Uganda 5% · AllAfrica 13% · BBC Africa 9% · Egypt Independent 6% · North Africa Post 6% · Daily Maverick 7% · Premium Times 4% · The Africa Report 4% · Business Daily Africa 3% · Radio Dabanga (Sudan) 3% |
 | **Oceania** | Google News Australia 24%, New Zealand 18% · ABC Australia 15% · RNZ 12% · BBC Australia 6% · Guardian Australia 8% · Pacific: RNZ Pacific 7%, Islands Business 4%, PNG Post-Courier 4%, Asia Pacific Report 2% |
 | **All** | The five regions' news lists, equally (5 headlines each) |
-| **Every view** (`extras`) | Google News Science 30% · Hacker News 20% — the view's news gets the remaining 50% |
+| **Every view** (`extras`) | Google News Science 15% · Hacker News 10% — the view's news gets the remaining 75% |
 
 How the sources were chosen (all measured live):
 - **Google News local editions, "Nation" section.** The backbone: 50–70 fresh items each from many local publishers. The Nation section is used instead of an edition's top stories because top stories mix in the biggest international story of the day. In every region view that same story led the list; Nation sections are domestic news (e.g. 0 international-keyword headlines for India, Ireland, Nigeria and New Zealand). The URLs in `sources.json` are the canonical `rss/topics/…` URLs that `…/section/topic/NATION?…` redirects to.
@@ -239,7 +239,7 @@ Fetching:
 `build_views()` in `services/views/main_views.py` builds every view in two stages, using `mix_headlines()` for each list:
 
 - **Stage 1, news lists.** Each region's news from its sources. "World" news is built from the five regional lists, equally. That keeps every region represented and drops a story two regions both carry, and the per-publisher cap applies across regions, so e.g. BBC appears at most 3 times. Science and Hacker News are each mixed on their own.
-- **Stage 2, views.** Each view interleaves its news list (50%) with science (30%) and Hacker News (20%). The lists were already capped, so this stage only interleaves and de-duplicates. News has the largest single weight, so it leads every view (pattern: *news, news, HN, news, science, …*).
+- **Stage 2, views.** Each view interleaves its news list (75%) with science (15%) and Hacker News (10%). The lists were already capped, so this stage only interleaves and de-duplicates. News has the largest single weight, so it leads every view (pattern: *news, news, science, news, news, HN, …*; about 19 news, 4 science and 2 HN in the top 25).
 - If a view's news list is empty (all of that region's feeds failed), the view stays empty and keeps its previous snapshot, rather than showing only science and HN.
 
 `mix_headlines()` builds a list from weighted sources like this:
@@ -250,7 +250,7 @@ Fetching:
 4. **Skip duplicates and over-represented publishers:**
    - an item is a duplicate if its link, or its title (case and punctuation ignored, Google's " - Publisher" suffix removed), was already taken; the first occurrence wins;
    - at most `MAX_PER_PUBLISHER` (**3**) items per publisher. The publisher is the publisher name for Google items and the link's domain for direct links. **A feed whose items all come from one publisher** (e.g. ABC Australia's own feed) is exempt, because its weight already bounds its share.
-5. **Redistribute unused slots.** A source that runs out, or reaches its `max_items` (an optional per-source cap in `sources.yaml`, for a feed whose quality varies), drops out of the rotation, and the others fill the list in proportion to their weights. Views are built `STORY_GROUP_HEADROOM` (**40**) longer than `MAX_HEADLINES` (**80**); Step 4 cuts them to 80 once each story is shown once.
+5. **Redistribute unused slots.** A source that runs out, or reaches its `max_items` (an optional per-source cap in `sources.yaml`, for a feed whose quality varies), drops out of the rotation, and the others fill the list in proportion to their weights. Views are built `STORY_GROUP_HEADROOM` (**40**) longer than `MAX_HEADLINES` (**100**); Step 4 cuts them to 100 once each story is shown once.
 
 The result is **deterministic**: the same feeds give the same order, so lists only change when the news changes. Each view logs a `Mixed headlines` line with counts per source and items dropped as stale, duplicate or over the cap.
 

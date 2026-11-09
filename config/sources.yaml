@@ -431,11 +431,11 @@ regions:
 extras:
 - name: Google News Science
   url: https://news.google.com/rss/topics/CAAqKggKIiRDQkFTRlFvSUwyMHZNRFp0Y1RjU0JXVnVMVWRDR2dKSlRpZ0FQAQ?hl=en-US&gl=US&ceid=US%3Aen
-  weight: 0.3
+  weight: 0.15
   label: science
 - name: Hacker News
   url: https://news.ycombinator.com/rss
-  weight: 0.2
+  weight: 0.1
 topic_extras:
 - name: Guardian Environment
   url: https://www.theguardian.com/environment/rss
