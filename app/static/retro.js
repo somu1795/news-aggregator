@@ -45,6 +45,7 @@
     var bypassEl = document.getElementById("bypass");
 
     // Per-view state, by viewKey(): { data, fetchedAt, loadedAt, loading, error }
+    var SNAPSHOT_OLD_SECONDS = 900;  // A snapshot older than this means the server's refresh is stuck (STALE_AFTER_SECONDS)
     var views = {};
     var current = DEFAULT_VIEW;
     var currentTopic = DEFAULT_TOPIC;
@@ -868,8 +869,11 @@
             setStatus(state.error ? label + " \u00b7 offline" : "loading " + label + "...");
             return;
         }
-        setStatus(label + " \u00b7 " + state.data.length + " items", " \u00b7 updated " + ago(state.fetchedAt),
-            state.loading ? " \u00b7 refreshing..." : "");
+        // "updated": when this page last got the view. The headlines themselves are from the server's
+        // latest snapshot (one every 5 minutes); only an unusually old one is mentioned
+        var age = " \u00b7 updated " + ago(state.loadedAt / 1000);
+        if (Date.now() / 1000 - state.fetchedAt > SNAPSHOT_OLD_SECONDS) age += " \u00b7 headlines from " + ago(state.fetchedAt);
+        setStatus(label + " \u00b7 " + state.data.length + " items", age, state.loading ? " \u00b7 refreshing..." : "");
     }
 
     // The status line's three parts. Screen readers announce changes to the first and last (aria-live),
