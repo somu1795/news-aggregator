@@ -157,7 +157,7 @@ async def refresh_topics(
 ) -> int:
     """Publishes every topic view (empty ones too). Returns how many; 0 if it failed and the previous ones were kept."""
     try:
-        views = await asyncio.wait_for(
+        views, misfiled = await asyncio.wait_for(
             get_topic_views(http_client, redis_client, poller, results_by_source), settings.TOPIC_REFRESH_TIMEOUT_SECONDS,
         )
         views = await group_stories(http_client, views, cut=False)
@@ -165,7 +165,8 @@ async def refresh_topics(
         views = {view: items[:settings.MAX_HEADLINES] for view, items in views.items()}
         now = time.time()
         views = await turn_over(redis_client, views, now)
-        await publish(redis_client, views, now, unlisted=capped)
+        shown = {item["link"] for items in views.values() for item in items}
+        await publish(redis_client, views, now, unlisted=capped + [h for h in misfiled if h["link"] not in shown])
     except Exception as e:
         TOPIC_REFRESHES.labels(result="error").inc()
         logger.warning("Topic views not refreshed, keeping their previous snapshots", error=str(e) or type(e).__name__)

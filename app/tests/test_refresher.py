@@ -510,3 +510,36 @@ async def test_a_tabs_top_headlines_give_their_places_up_after_a_while(mock_redi
     second = [h["link"] for h in (await read_view(mock_redis, "asia"))["data"]]
     top = settings.TOP_POSITIONS
     assert len(second) == len(first) and not set(first[:top]) & set(second[:top])
+
+
+@respx.mock
+async def test_a_topic_can_leave_out_what_its_feeds_misfiled(mock_redis, poller, topic_catalog, monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "ARCHIVE_PATH", str(tmp_path / "archive.db"))
+    strict = TOPIC_CATALOG.model_copy(update={"topics": [
+        TOPIC_CATALOG.topics[0].model_copy(update={"min_feed_score": 0.05}), TOPIC_CATALOG.topics[1]]})
+    monkeypatch.setattr(catalog_module, "_catalog", strict)
+
+    def tagger(request):  # The model doesn't think sports.example story 1 is sport at all
+        response = fake_tagger(request)
+        items = json.loads(request.content)["items"]
+        scores = [(0.01 if i["title"] == "sports.example story 1" else 0.7) if i["label"] == "sport" else None for i in items]
+        return httpx.Response(200, json=response.json() | {"scores": scores})
+    respx.post(TAGGER).mock(side_effect=tagger)
+    async with httpx.AsyncClient() as http_client:
+        await refresh_once(http_client, mock_redis, poller)
+    titles = [h["title"] for h in (await read_view(mock_redis, "asia:sport"))["data"]]
+    assert "sports.example story 0" in titles and "sports.example story 1" not in titles
+    with sqlite3.connect(tmp_path / "archive.db") as db:  # Still searchable
+        assert db.execute("SELECT COUNT(*) FROM items WHERE title = 'sports.example story 1'").fetchone()[0] == 1
+
+
+@respx.mock
+async def test_a_tagger_without_scores_leaves_every_feed_item_in(mock_redis, poller, topic_catalog, monkeypatch):
+    strict = TOPIC_CATALOG.model_copy(update={"topics": [
+        TOPIC_CATALOG.topics[0].model_copy(update={"min_feed_score": 0.05}), TOPIC_CATALOG.topics[1]]})
+    monkeypatch.setattr(catalog_module, "_catalog", strict)
+    respx.post(TAGGER).mock(side_effect=fake_tagger)
+    async with httpx.AsyncClient() as http_client:
+        await refresh_once(http_client, mock_redis, poller)
+    titles = [h["title"] for h in (await read_view(mock_redis, "asia:sport"))["data"]]
+    assert titles[:5] == [f"sports.example story {i}" for i in range(5)]

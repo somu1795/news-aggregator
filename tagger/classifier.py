@@ -37,6 +37,13 @@ class Classifier:
         return tags
 
 
+def label_scores(classifier: Classifier, X: np.ndarray, labels: List[str]) -> List[float]:
+    """The topic model's probability of each row's label (one of its classes)."""
+    classes = list(classifier.topic_model.classes_)
+    probs = classifier.topic_model.predict_proba(X)
+    return [float(row[classes.index(label)]) for row, label in zip(probs, labels)]
+
+
 def train(X: np.ndarray, labels: List[str]) -> Classifier:
     def fit(y):
         return LogisticRegression(max_iter=2000, C=4, class_weight="balanced").fit(X, y)

@@ -50,7 +50,7 @@ import numpy as np
 from fastapi import FastAPI
 from pydantic import BaseModel
 
-from classifier import OTHER, TOPICS, Classifier, evaluate, train
+from classifier import OTHER, TOPICS, Classifier, evaluate, label_scores, train
 from embedder import Embedder
 from stories import StoryGrouping
 from store import clean_title, connect, from_blobs, to_blob
@@ -160,6 +160,24 @@ class Tagger(StoryGrouping):
                 rows[title] = (json.dumps(tags), classifier.version, None)
         return [json.loads(rows[title][0]) for title in titles]
 
+
+    def label_scores(self, items: List["Item"]) -> List[Optional[float]]:
+        """
+        For each item labelled with a topic, the classifier's probability of that topic (None for
+        "other" or no label): low when its feed misfiled it (a cricket feature in a Technology
+        section). The items must be stored already (tag() does it).
+        """
+        classes = set(self.classifier.topic_model.classes_)
+        wanted = {clean_title(item.title, item.source): item.label for item in items if item.label in TOPICS and item.label in classes}
+        scored = {}
+        titles = list(wanted)
+        for start in range(0, len(titles), 500):
+            chunk = titles[start:start + 500]
+            rows = self.db.execute(f"SELECT title, embedding FROM headlines WHERE title IN ({','.join('?' * len(chunk))})", chunk).fetchall()
+            if rows:
+                scores = label_scores(self.classifier, from_blobs([blob for _, blob in rows]), [wanted[t] for t, _ in rows])
+                scored.update((title, round(score, 4)) for (title, _), score in zip(rows, scores))
+        return [scored.get(clean_title(item.title, item.source)) if item.label in TOPICS else None for item in items]
 
     def training_rows(self, db: sqlite3.Connection):
         """
@@ -306,7 +324,8 @@ app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
 async def tag(request: TagRequest):
     tagger = app.state.tagger
     tags = await on_worker(tagger.tag, request.items)
-    return {"tags": tags, "model": tagger.classifier.version}
+    scores = await on_worker(tagger.label_scores, request.items)
+    return {"tags": tags, "scores": scores, "model": tagger.classifier.version}
 
 
 @app.post("/group")

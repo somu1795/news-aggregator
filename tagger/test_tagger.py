@@ -75,6 +75,15 @@ def test_tags_and_stores_each_headline_once(tagger):
     assert stored == {"Team wins cup final": "Sports Daily"}
 
 
+def test_each_headline_gets_the_models_score_for_its_feeds_topic(tagger):
+    # So a site can leave out what a section feed misfiled (a cricket feature in a Technology section)
+    items = [Item(title="Team wins cup final", label="tech"), Item(title="New phone chip launch", label="tech"),
+             Item(title="Minister budget vote", label="other"), Item(title="Kind neighbours")]
+    tagger.tag(items)
+    scores = tagger.label_scores(items)
+    assert scores[0] < 0.5 < scores[1] and scores[2:] == [None, None]  # "other" and no label: nothing to score
+
+
 def test_feed_label_is_stored_and_a_topic_beats_other(tagger):
     tagger.tag([Item(title="Fans celebrate", label="other")])
     tagger.tag([Item(title="Fans celebrate", label="sport")])

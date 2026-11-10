@@ -6,6 +6,8 @@
 #   feed_only      true: only stories from feeds about this topic (sources labelled with it), never
 #                  ones the tagger's model picked from other feeds (for a topic it can't tell reliably,
 #                  like "uplifting", a tone)
+#   min_feed_score its feeds' stories the tagger's model gives less than this probability of being about
+#                  the topic are left out (a section feed's misfiled stories); still archived and searchable
 topics:
 - id: uplifting
   label: Uplifting
@@ -13,6 +15,7 @@ topics:
   feed_only: true
 - id: tech
   label: Tech
+  min_feed_score: 0.05
 - id: science
   label: Science
 - id: nature

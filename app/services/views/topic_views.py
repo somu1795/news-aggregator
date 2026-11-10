@@ -6,7 +6,7 @@ tagger tagged with it and the feeds about it (build_topic_views).
 import random
 import time
 from collections import Counter
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 import httpx
 import redis.asyncio as aioredis
@@ -22,12 +22,16 @@ from services.views.mixing import build_limit, mix_headlines, title_key
 logger = structlog.get_logger(__name__)
 
 
-async def tag(client: httpx.AsyncClient, catalog: Catalog, results_by_source: Dict[str, List[Dict]]) -> Dict[str, Set[str]]:
+async def tag(
+    client: httpx.AsyncClient, catalog: Catalog, results_by_source: Dict[str, List[Dict]],
+) -> Tuple[Dict[str, Set[str]], Set[str]]:
     """
     Tags every fetched headline: the tagger's topics, plus the topic its feed is
-    about (a Sports section's items are always "sport"). The feed's label is
-    also sent to the tagger, which stores it as training data.
-    Returns {title: topics}.
+    about (a Sports section's items are always "sport"), unless the topic has a
+    min_feed_score and the tagger's model gives the item less than that for it
+    (its feed misfiled it). The feed's label is also sent to the tagger, which
+    stores it as training data.
+    Returns ({title: topics}, titles left out of their feed's topic).
     """
     labels = {s.name: s.label for s in catalog.labelled_sources}
     candidates: Dict[str, tuple] = {}  # title -> (headline, label); a topic label beats "other" or none
@@ -44,11 +48,17 @@ async def tag(client: httpx.AsyncClient, catalog: Catalog, results_by_source: Di
     response = await client.post(f"{settings.TAGGER_URL}/tag", json={"items": payload}, timeout=settings.TAGGER_TIMEOUT)
     response.raise_for_status()
     body = response.json()
-    logger.info("Tagged headlines", count=len(payload), model=body["model"])
-    return {
-        item["title"]: set(tags) | ({item["label"]} if item["label"] not in (None, OTHER_LABEL) else set())
-        for item, tags in zip(payload, body["tags"])
-    }
+    minimum = {topic.id: topic.min_feed_score for topic in catalog.topics if topic.min_feed_score is not None}
+    scores = body.get("scores") or [None] * len(payload)  # A tagger from before scores: every item stays
+    tags_by_title, misfiled = {}, set()
+    for item, tags, score in zip(payload, body["tags"], scores):
+        label = item["label"]
+        if label in minimum and score is not None and score < minimum[label]:
+            misfiled.add(item["title"])
+            label = None
+        tags_by_title[item["title"]] = set(tags) | ({label} if label not in (None, OTHER_LABEL) else set())
+    logger.info("Tagged headlines", count=len(payload), model=body["model"], misfiled=len(misfiled))
+    return tags_by_title, misfiled
 
 
 def build_topic_views(
@@ -129,18 +139,20 @@ async def get_topic_views(
     redis_client: aioredis.Redis,
     poller: FeedPoller,
     results_by_source: Dict[str, List[Dict]],
-) -> Dict[str, List[Dict]]:
+) -> Tuple[Dict[str, List[Dict]], List[Dict]]:
     """
     Builds every topic view from this cycle's news (results_by_source, from
-    get_fresh_views) and the topic feeds, and resolves their links.
+    get_fresh_views) and the topic feeds, and resolves their links. Returns the
+    views and the topic feeds' items left out as misfiled (see tag), to archive.
     Raises if the tagger is unavailable.
     """
     catalog = get_catalog()
     if not catalog.topics:
-        return {}
+        return {}, []
     results = results_by_source | await poller.fetch_topic_feeds(client, catalog)
-    tags_by_title = await tag(client, catalog, results)
+    tags_by_title, misfiled = await tag(client, catalog, results)
     views = build_topic_views(catalog, results, tags_by_title, time.time(), random.Random())
-    unique = list({id(h): h for items in views.values() for h in items}.values())
+    left_out = list({h["link"]: h for items in results.values() for h in items if h["title"] in misfiled}.values())
+    unique = list({id(h): h for items in views.values() for h in items}.values()) + left_out
     await resolve_links(client, redis_client, unique)
-    return views
+    return views, left_out

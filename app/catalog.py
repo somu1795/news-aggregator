@@ -44,6 +44,9 @@ class Topic(BaseModel):
     # Only items from feeds about it, never ones the tagger's model tagged: for a topic the
     # model can't tell reliably ("uplifting" is a tone; its tags were about half wrong)
     feed_only: bool = False
+    # Its feeds' items the tagger's model gives less than this probability of being about it are
+    # left out (a section feed's misfiled items: a cricket feature in a Technology section)
+    min_feed_score: Optional[float] = Field(default=None, ge=0, le=1)
 
 
 class Region(BaseModel):
