@@ -12,6 +12,16 @@ def snapshot_key(view: str) -> str:
     return f"{settings.HEADLINES_KEY}:{view}"
 
 
+def topic_check_key(topic: str, title: str) -> str:
+    """Redis key holding the summarizer's LLM's verdict on a flagged feed item: about its feed's topic or not."""
+    return f"topic-check:{topic}:" + hashlib.sha256(title.encode()).hexdigest()[:32]
+
+
+def topic_checks_pending_key() -> str:
+    """Redis key holding the flagged feed items waiting for the LLM's verdict (the refresher's latest list)."""
+    return "topic-check:pending"
+
+
 def top_since_key(view: str) -> str:
     """Redis hash of a view: when each of its headlines (or stories) first reached its top positions."""
     return f"top-since:{view}"

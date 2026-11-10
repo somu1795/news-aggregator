@@ -36,7 +36,14 @@ Paywalled sites (site.yaml paywalled_hosts) go direct, archive, then feed text: 
 browser doesn't get past a paywall. Articles none of these can read are marked
 and retried after SUMMARY_RETRY_SECONDS.
 
-When nothing waits to be summarized, the same LLM names what each topic tab
+When nothing waits to be summarized, the same LLM answers a topic's yes/no
+question (prompts.yaml topic_checks) about the feed items the refresher left
+out of it because the tagger's model doubted them (topics.yaml min_feed_score;
+the refresher lists them at topic_checks_pending_key()): a yes puts one back in
+the topic's tabs on the refresher's next cycle. Verdicts are stored at
+topic_check_key(topic, title) for SUMMARY_TTL_SECONDS.
+
+Then it names what each topic tab
 headline is about, in a few words (services/subjects.py: a tab shows at most
 SUBJECT_CAP headlines about one subject), SUBJECT_BATCH at a time, top positions
 first; stored at subject_key(link) for SUMMARY_TTL_SECONDS.
@@ -62,11 +69,11 @@ from prometheus_client import Counter, start_http_server
 
 from catalog import get_catalog
 from config import settings
-from keys import article_text_key, snapshot_key, subject_key, summary_key
+from keys import article_text_key, snapshot_key, subject_key, summary_key, topic_check_key, topic_checks_pending_key
 from logging_config import configure_logging
 from services.redis_client import create_redis_client
 from services.safe_fetch import public_client
-from services.summaries.llm import LLMUnavailable, check_llm, same_story, subject, summarize
+from services.summaries.llm import LLMUnavailable, check_llm, same_story, subject, summarize, topic_check
 from services.summaries.reading import ArticleUnusable, fetch_text
 from site_config import get_site
 
@@ -106,6 +113,29 @@ async def top_items(redis_client: aioredis.Redis) -> List[dict]:
                 if rank < len(view_items):
                     items.setdefault(view_items[rank]["link"], view_items[rank])
     return list(items.values())
+
+
+async def check_topics(client: httpx.AsyncClient, redis_client: aioredis.Redis) -> int:
+    """
+    Answers, once each, the topic's question about the feed items the refresher left out of it as
+    doubtful. Returns how many; raises LLMUnavailable (asked only when there is one to answer).
+    """
+    raw = await redis_client.get(topic_checks_pending_key())
+    questions = get_site().prompts.topic_checks
+    pending = [p for p in json.loads(raw) if p["topic"] in questions] if raw else []
+    if not pending:
+        return 0
+    found = await redis_client.mget([topic_check_key(p["topic"], p["title"]) for p in pending])
+    todo = [p for p, verdict in zip(pending, found) if verdict is None]
+    if not todo:
+        return 0
+    await check_llm(client)
+    for p in todo:
+        title = p["title"].removesuffix(f" - {p['source']}") if p.get("source") else p["title"]
+        yes = await topic_check(client, questions[p["topic"]], title)
+        await redis_client.set(topic_check_key(p["topic"], p["title"]), json.dumps({"yes": yes}), ex=settings.SUMMARY_TTL_SECONDS)
+    logger.info("Checked doubtful feed items", checked=len(todo))
+    return len(todo)
 
 
 async def name_subjects(client: httpx.AsyncClient, redis_client: aioredis.Redis) -> int:
@@ -267,6 +297,8 @@ async def summary_loop(client: httpx.AsyncClient, redis_client: aioredis.Redis) 
         try:
             done = await summarize_ready(client, redis_client)
             if not done:  # Summaries come first: only once there are none to make
+                done = await check_topics(client, redis_client)
+            if not done:
                 done = await name_subjects(client, redis_client)
             if not done:
                 done = await judge_stories(client)  # It may take minutes: articles read meanwhile are next

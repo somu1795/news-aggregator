@@ -4,7 +4,7 @@ description and paywalled sites (site.yaml), and what the summarizer asks its
 LLM (prompts.yaml). Loaded once, on first use (get_site()).
 """
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import yaml
 from pydantic import BaseModel
@@ -16,6 +16,8 @@ class Prompts(BaseModel):
     summary: str  # System prompt for an article's summary
     same_story: str  # System prompt for two headlines: same story or not (an answer starting with "yes")
     subject: str  # System prompt for what a headline is about, in a few words (services/subjects.py)
+    # By topic: a yes/no question put to the LLM about a feed item the tagger's model doubts (min_feed_score)
+    topic_checks: Dict[str, str] = {}
 
 
 class Site(BaseModel):

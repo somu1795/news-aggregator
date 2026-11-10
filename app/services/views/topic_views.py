@@ -3,6 +3,7 @@ The topic views: one per region (and "all") per topic, from the headlines the
 tagger tagged with it and the feeds about it (build_topic_views).
 """
 
+import json
 import random
 import time
 from collections import Counter
@@ -14,6 +15,7 @@ import structlog
 
 from catalog import ALL_VIEW, OTHER_LABEL, Catalog, NewsSource, Topic, get_catalog, topic_view
 from config import settings
+from keys import topic_check_key, topic_checks_pending_key
 from services.feeds.poller import FeedPoller
 from services.links import resolve_links
 from services.places import matcher_for
@@ -23,14 +25,16 @@ logger = structlog.get_logger(__name__)
 
 
 async def tag(
-    client: httpx.AsyncClient, catalog: Catalog, results_by_source: Dict[str, List[Dict]],
+    client: httpx.AsyncClient, redis_client: aioredis.Redis, catalog: Catalog, results_by_source: Dict[str, List[Dict]],
 ) -> Tuple[Dict[str, Set[str]], Set[str]]:
     """
     Tags every fetched headline: the tagger's topics, plus the topic its feed is
     about (a Sports section's items are always "sport"), unless the topic has a
     min_feed_score and the tagger's model gives the item less than that for it
-    (its feed misfiled it). The feed's label is also sent to the tagger, which
-    stores it as training data.
+    (its feed may have misfiled it) and the summarizer's LLM hasn't said yes to
+    the topic's question about it (topic_check_key). Items not judged yet are
+    listed for the summarizer (topic_checks_pending_key). The feed's label is
+    also sent to the tagger, which stores it as training data.
     Returns ({title: topics}, titles left out of their feed's topic).
     """
     labels = {s.name: s.label for s in catalog.labelled_sources}
@@ -50,14 +54,18 @@ async def tag(
     body = response.json()
     minimum = {topic.id: topic.min_feed_score for topic in catalog.topics if topic.min_feed_score is not None}
     scores = body.get("scores") or [None] * len(payload)  # A tagger from before scores: every item stays
-    tags_by_title, misfiled = {}, set()
-    for item, tags, score in zip(payload, body["tags"], scores):
-        label = item["label"]
-        if label in minimum and score is not None and score < minimum[label]:
-            misfiled.add(item["title"])
-            label = None
+    doubtful = [(item, score) for item, score in zip(payload, scores)
+                if item["label"] in minimum and score is not None and score < minimum[item["label"]]]
+    verdicts = await redis_client.mget([topic_check_key(i["label"], i["title"]) for i, _ in doubtful]) if doubtful else []
+    rescued = {i["title"] for (i, _), v in zip(doubtful, verdicts) if v and json.loads(v)["yes"]}
+    misfiled = {i["title"] for i, _ in doubtful} - rescued
+    await redis_client.set(topic_checks_pending_key(), json.dumps(
+        [{"topic": i["label"], "title": i["title"], "source": i["source"]} for (i, _), v in zip(doubtful, verdicts) if v is None]))
+    tags_by_title = {}
+    for item, tags in zip(payload, body["tags"]):
+        label = None if item["title"] in misfiled else item["label"]
         tags_by_title[item["title"]] = set(tags) | ({label} if label not in (None, OTHER_LABEL) else set())
-    logger.info("Tagged headlines", count=len(payload), model=body["model"], misfiled=len(misfiled))
+    logger.info("Tagged headlines", count=len(payload), model=body["model"], misfiled=len(misfiled), rescued=len(rescued))
     return tags_by_title, misfiled
 
 
@@ -150,7 +158,7 @@ async def get_topic_views(
     if not catalog.topics:
         return {}, []
     results = results_by_source | await poller.fetch_topic_feeds(client, catalog)
-    tags_by_title, misfiled = await tag(client, catalog, results)
+    tags_by_title, misfiled = await tag(client, redis_client, catalog, results)
     views = build_topic_views(catalog, results, tags_by_title, time.time(), random.Random())
     left_out = list({h["link"]: h for items in results.values() for h in items if h["title"] in misfiled}.values())
     unique = list({id(h): h for items in views.values() for h in items}.values()) + left_out

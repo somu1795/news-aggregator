@@ -533,9 +533,10 @@ class Stop(BaseException):  # Not an Exception: the loop logs those and carries 
     pass
 
 
-async def run_summary_loop(monkeypatch, summarized, judged, named=()):
-    """Runs summary_loop over the given results of each pass; returns its pauses."""
-    passes, judgings, namings, pauses = iter(summarized), iter(judged), iter(named), []
+async def run_summary_loop(monkeypatch, summarized, judged, named=(), checked=(), calls=None):
+    """Runs summary_loop over the given results of each pass; returns its pauses (and records the steps in `calls`)."""
+    passes, judgings, namings, checks, pauses = iter(summarized), iter(judged), iter(named), iter(checked), []
+    calls = [] if calls is None else calls
 
     async def summarize_ready(client, redis):
         try:
@@ -547,13 +548,19 @@ async def run_summary_loop(monkeypatch, summarized, judged, named=()):
         return next(judgings)
 
     async def name_subjects(client, redis):
+        calls.append("name")
         return next(namings, 0)
+
+    async def check_topics(client, redis):
+        calls.append("check")
+        return next(checks, 0)
 
     async def sleep(seconds):
         pauses.append(seconds)
     monkeypatch.setattr(summarizer, "summarize_ready", summarize_ready)
     monkeypatch.setattr(summarizer, "judge_stories", judge_stories)
     monkeypatch.setattr(summarizer, "name_subjects", name_subjects)
+    monkeypatch.setattr(summarizer, "check_topics", check_topics)
     monkeypatch.setattr(summarizer.asyncio, "sleep", sleep)
     with pytest.raises(Stop):
         await summarizer.summary_loop(None, None)
@@ -624,3 +631,35 @@ async def test_a_rambling_answer_names_no_subject(mock_redis, monkeypatch):
 async def test_subjects_are_named_after_summaries_and_before_story_pairs(monkeypatch):
     # Nothing to summarize, so subjects are named; none either, so pairs are judged
     assert await run_summary_loop(monkeypatch, summarized=[0, 0], judged=[0], named=[5, 0]) == [settings.SUMMARY_INTERVAL_SECONDS]
+
+
+@respx.mock
+async def test_flagged_feed_items_are_put_to_the_llm_once(mock_redis, monkeypatch):
+    from keys import topic_check_key, topic_checks_pending_key
+    from site_config import Prompts, Site
+    import site_config
+    monkeypatch.setattr(site_config, "_site", Site(name="n", description="d", prompts=Prompts(
+        summary="s", same_story="t", subject="u", topic_checks={"tech": "Is this about technology? yes or no."})))
+    await mock_redis.set(topic_checks_pending_key(), json.dumps([
+        {"topic": "tech", "title": "OECD exposes AI-powered cybercrime - Pub", "source": "Pub"},
+        {"topic": "tech", "title": "Test cricket dying?", "source": "Pub"},
+        {"topic": "sport", "title": "No question for sport", "source": "Pub"},  # No prompt: never asked
+    ]))
+    respx.get(f"{LLM}/api/tags").mock(return_value=httpx.Response(200, json={"models": []}))
+    chat = respx.post(f"{LLM}/api/chat").mock(side_effect=lambda request: llm_reply(
+        "Yes." if "OECD" in request.content.decode() else "no"))
+    async with httpx.AsyncClient() as client:
+        assert await summarizer.check_topics(client, mock_redis) == 2
+        assert await summarizer.check_topics(client, mock_redis) == 0  # Each once
+    assert chat.call_count == 2
+    assert "OECD exposes AI-powered cybercrime" in chat.calls[0].request.content.decode()
+    assert "- Pub" not in chat.calls[0].request.content.decode()  # Without Google's publisher suffix
+    assert json.loads(await mock_redis.get(topic_check_key("tech", "OECD exposes AI-powered cybercrime - Pub"))) == {"yes": True}
+    assert json.loads(await mock_redis.get(topic_check_key("tech", "Test cricket dying?"))) == {"yes": False}
+
+
+async def test_flagged_items_are_judged_before_subjects_are_named(monkeypatch):
+    # A few a day, and each brings a headline back to its tab; subjects can be many after a deploy
+    calls = []
+    await run_summary_loop(monkeypatch, summarized=[0, 0], judged=[0], checked=[3, 0], calls=calls)
+    assert calls == ["check", "check", "name"]

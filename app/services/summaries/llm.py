@@ -1,7 +1,7 @@
 """
 The summarizer's LLM: an Ollama server (SUMMARIZER_LLM_URL) asked, with the
 prompts of prompts.yaml, for an article's summary, whether two headlines are
-the same story, or what a headline is about.
+the same story, what a headline is about, or whether it is about a topic.
 """
 
 import re
@@ -102,3 +102,24 @@ async def subject(client: httpx.AsyncClient, title: str) -> str:
         raise LLMUnavailable(str(e) or type(e).__name__)
     name = re.sub(r"<think>.*?</think>", "", response.json()["message"]["content"], flags=re.S).strip().strip("\"'.")
     return name if 0 < len(name.split()) <= SUBJECT_MAX_WORDS else ""
+
+
+async def topic_check(client: httpx.AsyncClient, question: str, title: str) -> bool:
+    """The LLM's answer to a topic's yes/no question (prompts.yaml topic_checks) about a headline."""
+    try:
+        response = await client.post(
+            f"{settings.SUMMARIZER_LLM_URL}/api/chat",
+            json={
+                "model": settings.SUMMARIZER_MODEL,
+                "messages": [{"role": "system", "content": question}, {"role": "user", "content": f"Headline: {title}"}],
+                "stream": False,
+                "think": False,
+                "keep_alive": "2m",
+                "options": {"temperature": 0, "num_ctx": 4096, "num_predict": 3},
+            },
+            timeout=httpx.Timeout(settings.SUMMARY_LLM_TIMEOUT, connect=5.0),
+        )
+        response.raise_for_status()
+    except httpx.HTTPError as e:
+        raise LLMUnavailable(str(e) or type(e).__name__)
+    return response.json()["message"]["content"].strip().lower().startswith("yes")

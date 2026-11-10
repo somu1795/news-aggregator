@@ -8,6 +8,9 @@
 #               counts as "same story" when it starts with "yes"
 #   subject     system prompt for what a topic tab's headline is about, as a short name; a tab
 #               shows at most SUBJECT_CAP headlines with the same one
+#   topic_checks  by topic (one with min_feed_score in topics.yaml): a yes/no question about a headline
+#               its feed filed under the topic but the tagger's model doubts; a yes puts it back in
+#               the topic's tabs. A topic without one leaves such headlines out
 summary: >-
   You summarize news articles for a headlines site. First check the text: if it has no news in it
   (only a cookie or privacy notice, or an access-denied, security check, error, login or subscribe
@@ -23,3 +26,9 @@ subject: >-
   What specific thing is this news about? Answer with only its name, in 1 to 3 words: the event,
   product, person or organisation at the centre of it (for example: "World Cup 2026", "Windows 12",
   "Taylor Swift", "Hurricane Milton"). No sentence, no explanation.
+topic_checks:
+  tech: >-
+    Is this news headline about technology: computers, software, the internet, AI, gadgets, phones,
+    telecoms, cybersecurity, video games, or technology companies? Science, health, space, cars and
+    business news are not technology unless that is what the headline is about. Answer with one word:
+    yes or no.

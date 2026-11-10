@@ -543,3 +543,29 @@ async def test_a_tagger_without_scores_leaves_every_feed_item_in(mock_redis, pol
         await refresh_once(http_client, mock_redis, poller)
     titles = [h["title"] for h in (await read_view(mock_redis, "asia:sport"))["data"]]
     assert titles[:5] == [f"sports.example story {i}" for i in range(5)]
+
+
+@respx.mock
+async def test_the_llm_can_bring_a_flagged_feed_item_back(mock_redis, poller, topic_catalog, monkeypatch):
+    # The tagger's model can miss what a section rightly filed (an AI cybercrime story in Technology);
+    # the summarizer's LLM is asked about flagged items, and a yes brings them back
+    from keys import topic_check_key, topic_checks_pending_key
+    strict = TOPIC_CATALOG.model_copy(update={"topics": [
+        TOPIC_CATALOG.topics[0].model_copy(update={"min_feed_score": 0.05}), TOPIC_CATALOG.topics[1]]})
+    monkeypatch.setattr(catalog_module, "_catalog", strict)
+    flagged = {"sports.example story 1", "sports.example story 2", "sports.example story 4"}  # Not 3: the model tags it sport
+
+    def tagger(request):
+        items = json.loads(request.content)["items"]
+        scores = [(0.01 if i["title"] in flagged else 0.7) if i["label"] == "sport" else None for i in items]
+        return httpx.Response(200, json=fake_tagger(request).json() | {"scores": scores})
+    respx.post(TAGGER).mock(side_effect=tagger)
+    await mock_redis.set(topic_check_key("sport", "sports.example story 1"), json.dumps({"yes": True}))
+    await mock_redis.set(topic_check_key("sport", "sports.example story 2"), json.dumps({"yes": False}))
+    async with httpx.AsyncClient() as http_client:
+        await refresh_once(http_client, mock_redis, poller)
+    titles = [h["title"] for h in (await read_view(mock_redis, "asia:sport"))["data"]]
+    assert "sports.example story 1" in titles  # The LLM said yes
+    assert "sports.example story 2" not in titles and "sports.example story 4" not in titles  # No; not judged yet
+    pending = json.loads(await mock_redis.get(topic_checks_pending_key()))
+    assert [(p["topic"], p["title"]) for p in pending] == [("sport", "sports.example story 4")]
