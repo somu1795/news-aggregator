@@ -38,6 +38,22 @@ def discussion_link(link: str, comments: str | None) -> str | None:
     return comments
 
 
+IMAGE = re.compile(r"\.(jpe?g|png|gif|webp|avif)$", re.IGNORECASE)
+
+
+def publisher(entry, source_name: str) -> str:
+    """
+    The item's own <source> (Google News: the article's publisher), else the feed's name from the
+    config. A <source> that is a photo credit (France 24 puts "© Fred Tanneau, AFP" there, pointing
+    at the photo) is not a publisher.
+    """
+    source = getattr(entry, "source", {})
+    title = (source.get("title") or "").strip()
+    if not title or title.startswith("\u00a9") or IMAGE.search(urlparse(source.get("href") or "").path):
+        return source_name
+    return title
+
+
 def parse(content: bytes, source_name: str) -> List[Dict]:
     feed = feedparser.parse(content)
     # Only treat bozo (malformed XML) as fatal if no entries were parsed.
@@ -51,8 +67,7 @@ def parse(content: bytes, source_name: str) -> List[Dict]:
         headlines.append({
             "title": entry.title,
             "link": entry.link,
-            # Prioritize the source from the article entry, fallback to the feed's name from config
-            "source": getattr(entry, "source", {}).get("title") or source_name,
+            "source": publisher(entry, source_name),
             "published": (
                 calendar.timegm(entry.published_parsed)
                 if getattr(entry, "published_parsed", None)

@@ -103,3 +103,17 @@ def test_a_feed_item_without_a_title_or_link_is_skipped():
         <item><title>No link</title></item>
         </channel></rss>"""
     assert [h["title"] for h in parse(feed, "Feed")] == ["Bridge approved"]
+
+
+def test_a_photo_credit_in_an_items_source_is_not_taken_for_its_publisher():
+    # France 24 puts each photo's credit in <source>, pointing at the photo; Google News puts the publisher there
+    from services.feeds.parse import parse
+    feed = b"""<?xml version="1.0"?><rss version="2.0"><channel><title>Feed</title>
+        <item><title>Credit</title><link>https://pub.example/1</link>
+            <source url="https://img.example/display/1.jpg">\xc2\xa9 Fred Tanneau, AFP</source></item>
+        <item><title>Credit without the sign</title><link>https://pub.example/2</link>
+            <source url="https://img.example/w:1024/2.JPEG">Stringer, Reuters</source></item>
+        <item><title>Publisher</title><link>https://pub.example/3</link>
+            <source url="https://www.bbc.co.uk">BBC</source></item>
+        </channel></rss>"""
+    assert [h["source"] for h in parse(feed, "France 24 Europe")] == ["France 24 Europe", "France 24 Europe", "BBC"]

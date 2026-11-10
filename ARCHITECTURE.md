@@ -231,7 +231,7 @@ Fetching:
 - A feed counts as **failed** after all attempts fail, or if its XML is so malformed that no entries can be parsed. A failed feed contributes nothing and increments `feed_fetch_failures_total{source}`; everything else is unaffected.
 - Each entry with a title and a link becomes a headline (one without is skipped, not the whole feed):
   - `title` and `link`;
-  - `source`: the publisher named in the entry, or else the feed's name;
+  - `source`: the publisher named in the entry (its `<source>`: Google News items carry their publisher there), or else the feed's name. A `<source>` that is a photo credit (starting with ©, or pointing at an image) is not a publisher: France 24 Europe puts each photo's credit there ("© Fred Tanneau, AFP"), which made its headlines look like other outlets' (e.g. in the stats page's count of outlets carrying a story);
   - `published`: the entry's date, or the fetch time if it has none;
   - `last_updated`;
   - `comments`: the discussion page, when the feed has one (Hacker News).
