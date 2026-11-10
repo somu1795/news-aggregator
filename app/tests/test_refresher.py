@@ -16,7 +16,7 @@ from prometheus_client import REGISTRY
 import catalog as catalog_module
 from catalog import ALL_VIEW, Catalog
 from config import settings
-from keys import snapshot_key
+from keys import snapshot_key, subject_key
 import refresher
 from refresher import refresh_once
 from services import stats_stream
@@ -486,3 +486,16 @@ def test_cycles_start_an_interval_apart_however_long_one_takes(monkeypatch):
     monkeypatch.setattr(settings, "REFRESH_INTERVAL_SECONDS", 300)
     assert until_next_cycle(started=1000.0, now=1025.0) == 275.0
     assert until_next_cycle(started=1000.0, now=1400.0) == 1.0  # A cycle that overran: the next one at once
+
+
+@respx.mock
+async def test_topic_tabs_keep_at_most_a_few_headlines_about_one_subject(mock_redis, poller, topic_catalog, monkeypatch):
+    monkeypatch.setattr(settings, "SUBJECT_CAP", 2)
+    respx.post(TAGGER).mock(side_effect=fake_tagger)
+    for i in range(4):  # Named by the summarizer, from an earlier cycle's tabs
+        await mock_redis.set(subject_key(f"https://sports.example/a/{i}"), json.dumps({"subject": "Big Match"}))
+    async with httpx.AsyncClient() as http_client:
+        await refresh_once(http_client, mock_redis, poller)
+    titles = [h["title"] for h in (await read_view(mock_redis, "asia:sport"))["data"]]
+    assert titles[:3] == ["sports.example story 0", "sports.example story 1", "sports.example story 4"]
+    assert "sports.example story 2" not in titles and "sports.example story 3" not in titles

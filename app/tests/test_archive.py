@@ -188,3 +188,13 @@ async def test_an_archive_from_before_stories_gets_them(archive_db):
 def test_the_archive_caps_its_write_ahead_log(tmp_path):
     from services.archive import connect
     assert connect(str(tmp_path / "a.db")).execute("PRAGMA journal_size_limit").fetchone()[0] == 64 * 2**20
+
+
+async def test_headlines_capped_from_every_tab_are_still_archived(mock_redis, archive_db):
+    # A subject's later headlines leave the topic tabs (services/subjects.py) but stay searchable
+    capped = item(2, story=7, related=[{"title": "Story 3", "link": "https://pub.example/3", "source": "Pub"}])
+    await publish(mock_redis, {"all:tech": [item(1)]}, 1000.0, unlisted=[capped])
+    with archive_db() as db:
+        assert dict(db.execute("SELECT title, story FROM items")) == {"Story 1": None, "Story 2": 7, "Story 3": 7}
+        listed = [json.loads(row[0]) for row in db.execute("SELECT items FROM snapshots")]
+    assert len(listed) == 1 and len(listed[0]) == 1  # Not listed in the tab

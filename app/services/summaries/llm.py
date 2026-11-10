@@ -1,7 +1,7 @@
 """
 The summarizer's LLM: an Ollama server (SUMMARIZER_LLM_URL) asked, with the
-prompts of prompts.yaml, for an article's summary or whether two headlines are
-the same story.
+prompts of prompts.yaml, for an article's summary, whether two headlines are
+the same story, or what a headline is about.
 """
 
 import re
@@ -10,6 +10,9 @@ import httpx
 
 from config import settings
 from site_config import get_site
+
+
+SUBJECT_MAX_WORDS = 6  # The prompt asks for 1-3; a longer answer is a sentence, not a name
 
 
 class LLMUnavailable(Exception):
@@ -73,3 +76,29 @@ async def same_story(client: httpx.AsyncClient, a: str, b: str) -> bool:
     except httpx.HTTPError as e:
         raise LLMUnavailable(str(e) or type(e).__name__)
     return response.json()["message"]["content"].strip().lower().startswith("yes")
+
+
+async def subject(client: httpx.AsyncClient, title: str) -> str:
+    """What the headline is about, in a few words ("GTA 6"); "" if the answer is more than a name."""
+    try:
+        response = await client.post(
+            f"{settings.SUMMARIZER_LLM_URL}/api/chat",
+            json={
+                "model": settings.SUMMARIZER_MODEL,
+                "messages": [
+                    {"role": "system", "content": get_site().prompts.subject},
+                    {"role": "user", "content": f"Headline: {title}"},
+                ],
+                "stream": False,
+                "think": False,
+                "keep_alive": "2m",
+                # The summaries' context size: another one would make Ollama reload the model (~7 s)
+                "options": {"temperature": 0, "num_ctx": 4096, "num_predict": 16},
+            },
+            timeout=httpx.Timeout(settings.SUMMARY_LLM_TIMEOUT, connect=5.0),
+        )
+        response.raise_for_status()
+    except httpx.HTTPError as e:
+        raise LLMUnavailable(str(e) or type(e).__name__)
+    name = re.sub(r"<think>.*?</think>", "", response.json()["message"]["content"], flags=re.S).strip().strip("\"'.")
+    return name if 0 < len(name.split()) <= SUBJECT_MAX_WORDS else ""

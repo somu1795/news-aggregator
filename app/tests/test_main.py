@@ -512,7 +512,7 @@ def test_the_site_is_named_by_its_config(client, monkeypatch):
     import site_config
     from site_config import Prompts, Site
     monkeypatch.setattr(site_config, "_site", Site(name="local.txt", description="News of our town.",
-                                                   prompts=Prompts(summary="s", same_story="t")))
+                                                   prompts=Prompts(summary="s", same_story="t", subject="u")))
     page = client.get("/", headers={"Accept": "text/html"}).text
     assert "<title>local.txt</title>" in page and "LOCAL.TXT" in page and "News of our town." in page
     manifest = client.get("/manifest.webmanifest")

@@ -15,6 +15,7 @@ from config import settings
 class Prompts(BaseModel):
     summary: str  # System prompt for an article's summary
     same_story: str  # System prompt for two headlines: same story or not (an answer starting with "yes")
+    subject: str  # System prompt for what a headline is about, in a few words (services/subjects.py)
 
 
 class Site(BaseModel):

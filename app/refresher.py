@@ -45,6 +45,7 @@ from services.redis_client import create_redis_client
 from services.safe_fetch import public_client
 from services.site_icons import cache_icons
 from services.story_groups import group_stories
+from services.subjects import cap_subjects, subjects_of
 
 logger = structlog.get_logger(__name__)
 
@@ -92,8 +93,11 @@ async def store_feed_texts(redis_client: aioredis.Redis, views: Dict[str, List[D
         await pipe.execute()
 
 
-async def publish(redis_client: aioredis.Redis, views: Dict[str, List[Dict]], fetched_at: float) -> None:
-    """Writes one snapshot per view, with summaries, and archives them. A view id is a region id or "region:topic"."""
+async def publish(redis_client: aioredis.Redis, views: Dict[str, List[Dict]], fetched_at: float, unlisted: List[Dict] = ()) -> None:
+    """
+    Writes one snapshot per view, with summaries, and archives them (and `unlisted`: headlines kept out
+    of every view, still searchable). A view id is a region id or "region:topic".
+    """
     await add_summaries(redis_client, views)
     await store_feed_texts(redis_client, views)
     async with redis_client.pipeline(transaction=False) as pipe:
@@ -111,7 +115,7 @@ async def publish(redis_client: aioredis.Redis, views: Dict[str, List[Dict]], fe
         await pipe.execute()
     if settings.ARCHIVE_PATH:
         try:
-            await asyncio.to_thread(archive, views, fetched_at)
+            await asyncio.to_thread(archive, views, fetched_at, unlisted)
         except Exception as e:  # The archive must never stop the site's refresh
             logger.warning("Headlines not archived", error=str(e) or type(e).__name__)
 
@@ -154,8 +158,10 @@ async def refresh_topics(
         views = await asyncio.wait_for(
             get_topic_views(http_client, redis_client, poller, results_by_source), settings.TOPIC_REFRESH_TIMEOUT_SECONDS,
         )
-        views = await group_stories(http_client, views)
-        await publish(redis_client, views, time.time())
+        views = await group_stories(http_client, views, cut=False)
+        views, capped = cap_subjects(views, await subjects_of(redis_client, views))
+        views = {view: items[:settings.MAX_HEADLINES] for view, items in views.items()}
+        await publish(redis_client, views, time.time(), unlisted=capped)
     except Exception as e:
         TOPIC_REFRESHES.labels(result="error").inc()
         logger.warning("Topic views not refreshed, keeping their previous snapshots", error=str(e) or type(e).__name__)

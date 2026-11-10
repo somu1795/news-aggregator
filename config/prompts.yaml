@@ -6,6 +6,8 @@
 #               article (a block, error or cookie page): it gets no summary
 #   same_story  system prompt for two headlines that story grouping was unsure of; the answer
 #               counts as "same story" when it starts with "yes"
+#   subject     system prompt for what a topic tab's headline is about, as a short name; a tab
+#               shows at most SUBJECT_CAP headlines with the same one
 summary: >-
   You summarize news articles for a headlines site. First check the text: if it has no news in it
   (only a cookie or privacy notice, or an access-denied, security check, error, login or subscribe
@@ -17,3 +19,7 @@ same_story: >-
   Do these two news headlines cover the same news: the same event, announcement, study, match,
   release or incident, even if worded differently or from a different angle (a result and its
   reaction, a study and an explainer of it)? Answer with one word: yes or no.
+subject: >-
+  What specific thing is this news about? Answer with only its name, in 1 to 3 words: the event,
+  product, person or organisation at the centre of it (for example: "World Cup 2026", "Windows 12",
+  "Taylor Swift", "Hurricane Milton"). No sentence, no explanation.

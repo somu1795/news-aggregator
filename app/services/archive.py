@@ -110,10 +110,13 @@ def clean_title(title: str, source: str) -> str:
     return title[:-len(suffix)] if source and len(title) > len(suffix) and title.endswith(suffix) else title
 
 
-def archive(views: Dict[str, List[Dict]], seen: float) -> None:
-    """Stores every item of the published views (and those folded under them, in its story); records each view's order hourly."""
+def archive(views: Dict[str, List[Dict]], seen: float, unlisted: List[Dict] = ()) -> None:
+    """
+    Stores every item of the published views (and those folded under them, in its story), and the
+    unlisted ones (kept out of every view: services/subjects.py); records each view's order hourly.
+    """
     rows, story_of = {}, {}
-    for items in views.values():
+    for items in [*views.values(), unlisted]:
         for item in items:
             rows[item["link"]] = item
             story_of[item["link"]] = item.get("story")

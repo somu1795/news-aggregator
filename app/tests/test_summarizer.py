@@ -15,7 +15,7 @@ import summarizer
 from services.summaries import reading
 from catalog import Catalog
 from config import settings
-from keys import article_text_key, browser_host_key, feed_text_key, full_page_host_key, snapshot_key, summary_key
+from keys import article_text_key, browser_host_key, feed_text_key, full_page_host_key, snapshot_key, subject_key, summary_key
 from refresher import publish
 from summarizer import LLMUnavailable, read_ahead, summarize_ready, top_items
 
@@ -533,9 +533,9 @@ class Stop(BaseException):  # Not an Exception: the loop logs those and carries 
     pass
 
 
-async def run_summary_loop(monkeypatch, summarized, judged):
+async def run_summary_loop(monkeypatch, summarized, judged, named=()):
     """Runs summary_loop over the given results of each pass; returns its pauses."""
-    passes, judgings, pauses = iter(summarized), iter(judged), []
+    passes, judgings, namings, pauses = iter(summarized), iter(judged), iter(named), []
 
     async def summarize_ready(client, redis):
         try:
@@ -546,10 +546,14 @@ async def run_summary_loop(monkeypatch, summarized, judged):
     async def judge_stories(client):
         return next(judgings)
 
+    async def name_subjects(client, redis):
+        return next(namings, 0)
+
     async def sleep(seconds):
         pauses.append(seconds)
     monkeypatch.setattr(summarizer, "summarize_ready", summarize_ready)
     monkeypatch.setattr(summarizer, "judge_stories", judge_stories)
+    monkeypatch.setattr(summarizer, "name_subjects", name_subjects)
     monkeypatch.setattr(summarizer.asyncio, "sleep", sleep)
     with pytest.raises(Stop):
         await summarizer.summary_loop(None, None)
@@ -586,3 +590,37 @@ async def test_an_article_the_llm_keeps_failing_on_is_set_aside(mock_redis):
     assert json.loads(await mock_redis.get(summary_key("https://pub.example/1"))) == {"failed": "the LLM failed on it"}
     assert 0 < await mock_redis.ttl(summary_key("https://pub.example/1")) <= settings.SUMMARY_RETRY_SECONDS
     assert json.loads(await mock_redis.get(summary_key("https://pub.example/2")))["text"] == "The council approved a new bridge."
+
+
+@respx.mock
+async def test_topic_tab_headlines_get_their_subject_named(mock_redis, monkeypatch):
+    monkeypatch.setattr(catalog_module, "_catalog", Catalog(
+        regions=[{"id": "asia", "label": "Asia", "sources": [{"name": "A", "url": "https://a.example/rss", "weight": 1.0}]}],
+        extras=[], topics=[{"id": "tech", "label": "Tech"}]))
+    await put_view(mock_redis, "asia:tech", [1, 2])
+    await put_view(mock_redis, "asia", [3])  # Main tabs aren't capped by subject
+    chat = llm_up("GTA VI.")
+    async with httpx.AsyncClient() as client:
+        assert await summarizer.name_subjects(client, mock_redis) == 2
+        assert await summarizer.name_subjects(client, mock_redis) == 0  # Each headline once
+    assert chat.call_count == 2
+    assert "Story 1" in chat.calls[0].request.content.decode()
+    assert json.loads(await mock_redis.get(subject_key("https://pub.example/1"))) == {"subject": "GTA VI"}
+    assert await mock_redis.get(subject_key("https://pub.example/3")) is None
+
+
+@respx.mock
+async def test_a_rambling_answer_names_no_subject(mock_redis, monkeypatch):
+    monkeypatch.setattr(catalog_module, "_catalog", Catalog(
+        regions=[{"id": "asia", "label": "Asia", "sources": [{"name": "A", "url": "https://a.example/rss", "weight": 1.0}]}],
+        extras=[], topics=[{"id": "tech", "label": "Tech"}]))
+    await put_view(mock_redis, "asia:tech", [1])
+    llm_up("This news is about a new game console that was released by a company today")
+    async with httpx.AsyncClient() as client:
+        assert await summarizer.name_subjects(client, mock_redis) == 1
+    assert json.loads(await mock_redis.get(subject_key("https://pub.example/1"))) == {"subject": ""}
+
+
+async def test_subjects_are_named_after_summaries_and_before_story_pairs(monkeypatch):
+    # Nothing to summarize, so subjects are named; none either, so pairs are judged
+    assert await run_summary_loop(monkeypatch, summarized=[0, 0], judged=[0], named=[5, 0]) == [settings.SUMMARY_INTERVAL_SECONDS]

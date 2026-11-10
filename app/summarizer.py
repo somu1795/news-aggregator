@@ -36,7 +36,12 @@ Paywalled sites (site.yaml paywalled_hosts) go direct, archive, then feed text: 
 browser doesn't get past a paywall. Articles none of these can read are marked
 and retried after SUMMARY_RETRY_SECONDS.
 
-When nothing waits to be summarized, the same LLM also judges pairs of headlines
+When nothing waits to be summarized, the same LLM names what each topic tab
+headline is about, in a few words (services/subjects.py: a tab shows at most
+SUBJECT_CAP headlines about one subject), SUBJECT_BATCH at a time, top positions
+first; stored at subject_key(link) for SUMMARY_TTL_SECONDS.
+
+When there is nothing to name either, the same LLM judges pairs of headlines
 that story grouping was unsure of (the tagger's /story-candidates: similar, but
 not similar enough to group): same story or not. The verdicts go back to the
 tagger (/story-verdicts), and every later grouping follows them, so such stories
@@ -57,11 +62,11 @@ from prometheus_client import Counter, start_http_server
 
 from catalog import get_catalog
 from config import settings
-from keys import article_text_key, snapshot_key, summary_key
+from keys import article_text_key, snapshot_key, subject_key, summary_key
 from logging_config import configure_logging
 from services.redis_client import create_redis_client
 from services.safe_fetch import public_client
-from services.summaries.llm import LLMUnavailable, check_llm, same_story, summarize
+from services.summaries.llm import LLMUnavailable, check_llm, same_story, subject, summarize
 from services.summaries.reading import ArticleUnusable, fetch_text
 from site_config import get_site
 
@@ -101,6 +106,33 @@ async def top_items(redis_client: aioredis.Redis) -> List[dict]:
                 if rank < len(view_items):
                     items.setdefault(view_items[rank]["link"], view_items[rank])
     return list(items.values())
+
+
+async def name_subjects(client: httpx.AsyncClient, redis_client: aioredis.Redis) -> int:
+    """
+    Names the subject of up to SUBJECT_BATCH topic tab headlines that have none yet, top positions
+    first. Returns how many; raises LLMUnavailable (asked only when there is one to name).
+    """
+    views = get_catalog().topic_view_ids
+    snapshots = await redis_client.mget([snapshot_key(view) for view in views])
+    tabs = [json.loads(raw)["data"] if raw else [] for raw in snapshots]
+    items = {}
+    for rank in range(max((len(tab) for tab in tabs), default=0)):
+        for tab in tabs:
+            if rank < len(tab):
+                items.setdefault(tab[rank]["link"], tab[rank])
+    if not items:
+        return 0
+    found = await redis_client.mget([subject_key(link) for link in items])
+    todo = [item for item, named in zip(items.values(), found) if named is None][:settings.SUBJECT_BATCH]
+    if not todo:
+        return 0
+    await check_llm(client)
+    for item in todo:
+        name = await subject(client, item["title"])  # "" when it gave none: not asked again, never capped
+        await redis_client.set(subject_key(item["link"]), json.dumps({"subject": name}), ex=settings.SUMMARY_TTL_SECONDS)
+    logger.info("Named subjects", named=len(todo))
+    return len(todo)
 
 
 async def judge_stories(client: httpx.AsyncClient) -> int:
@@ -235,6 +267,8 @@ async def summary_loop(client: httpx.AsyncClient, redis_client: aioredis.Redis) 
         try:
             done = await summarize_ready(client, redis_client)
             if not done:  # Summaries come first: only once there are none to make
+                done = await name_subjects(client, redis_client)
+            if not done:
                 done = await judge_stories(client)  # It may take minutes: articles read meanwhile are next
             if available is False:
                 logger.info("LLM server is back")
@@ -245,7 +279,7 @@ async def summary_loop(client: httpx.AsyncClient, redis_client: aioredis.Redis) 
             available = False
         except Exception as e:
             logger.error("Summarizer pass failed", error=str(e), exc_info=True)
-        if not done:  # After a batch or pairs, the next pass at once (the tabs' order of now)
+        if not done:  # After a batch, subjects or pairs, the next pass at once (the tabs' order of now)
             await asyncio.sleep(settings.SUMMARY_INTERVAL_SECONDS)
 
 

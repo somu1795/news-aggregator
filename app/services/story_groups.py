@@ -55,8 +55,8 @@ def collapse(items: List[Dict], group_of: Dict[str, int]) -> List[Dict]:
     return kept
 
 
-async def group_stories(client: httpx.AsyncClient, views: Dict[str, List[Dict]]) -> Dict[str, List[Dict]]:
-    """Each view with one item per story, cut to MAX_HEADLINES."""
+async def group_stories(client: httpx.AsyncClient, views: Dict[str, List[Dict]], cut: bool = True) -> Dict[str, List[Dict]]:
+    """Each view with one item per story, cut to MAX_HEADLINES (unless not `cut`: the topic tabs are cut once capped)."""
     group_of: Dict[str, int] = {}
     headlines = _in_rank_order(views)
     if headlines:
@@ -70,7 +70,7 @@ async def group_stories(client: httpx.AsyncClient, views: Dict[str, List[Dict]])
             group_of = {h["title"]: g for h, g in zip(headlines, response.json()["groups"])}
         except Exception as e:  # Optional: publish ungrouped rather than not at all
             logger.warning("Stories not grouped", error=str(e) or type(e).__name__)
-    grouped = {view: collapse(items, group_of)[:settings.MAX_HEADLINES] for view, items in views.items()}
+    grouped = {view: collapse(items, group_of)[:settings.MAX_HEADLINES if cut else None] for view, items in views.items()}
     if group_of:
         folded = sum(len(item["related"]) for items in grouped.values() for item in items)
         logger.info("Grouped stories", headlines=len(headlines), stories=len(set(group_of.values())), folded=folded)

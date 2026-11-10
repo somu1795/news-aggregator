@@ -17,6 +17,11 @@ def summary_key(link: str) -> str:
     return "summary:" + hashlib.sha256(link.encode()).hexdigest()[:32]
 
 
+def subject_key(link: str) -> str:
+    """Redis key holding what a headline is about, as the summarizer's LLM named it, by its link."""
+    return "subject:" + hashlib.sha256(link.encode()).hexdigest()[:32]
+
+
 def article_text_key(link: str) -> str:
     """Redis key holding an article's text, read ahead of its summary, and how it was read, by its link."""
     return "article-text:" + hashlib.sha256(link.encode()).hexdigest()[:32]
