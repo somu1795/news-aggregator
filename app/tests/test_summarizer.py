@@ -563,3 +563,26 @@ async def test_after_judging_story_pairs_it_looks_for_articles_at_once(monkeypat
 
 async def test_it_pauses_only_when_there_was_nothing_to_do(monkeypatch):
     assert await run_summary_loop(monkeypatch, summarized=[0], judged=[0]) == [settings.SUMMARY_INTERVAL_SECONDS]
+
+
+@respx.mock
+async def test_an_article_the_llm_keeps_failing_on_is_set_aside(mock_redis):
+    # Otherwise it would be first in every pass, and nothing after it would ever be summarized
+    await put_view(mock_redis, "all", [1, 2])
+    for n in (1, 2):
+        await mock_redis.set(article_text_key(f"https://pub.example/{n}"), json.dumps({"text": f"Text {n}. " * 80, "via": "direct"}))
+    respx.get(f"{LLM}/api/tags").mock(return_value=httpx.Response(200, json={"models": []}))
+
+    def chat(request):
+        return httpx.Response(500) if "Story 1" in request.content.decode() else llm_reply()
+    respx.post(f"{LLM}/api/chat").mock(side_effect=chat)
+
+    async with httpx.AsyncClient() as client:
+        for _ in range(summarizer.LLM_FAILURES_MAX - 1):
+            with pytest.raises(LLMUnavailable):
+                await summarize_ready(client, mock_redis)
+        assert await summarize_ready(client, mock_redis) == 1
+
+    assert json.loads(await mock_redis.get(summary_key("https://pub.example/1"))) == {"failed": "the LLM failed on it"}
+    assert 0 < await mock_redis.ttl(summary_key("https://pub.example/1")) <= settings.SUMMARY_RETRY_SECONDS
+    assert json.loads(await mock_redis.get(summary_key("https://pub.example/2")))["text"] == "The council approved a new bridge."

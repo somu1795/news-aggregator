@@ -60,6 +60,7 @@ from config import settings
 from keys import article_text_key, snapshot_key, summary_key
 from logging_config import configure_logging
 from services.redis_client import create_redis_client
+from services.safe_fetch import public_client
 from services.summaries.llm import LLMUnavailable, check_llm, same_story, summarize
 from services.summaries.reading import ArticleUnusable, fetch_text
 from site_config import get_site
@@ -68,6 +69,10 @@ logger = structlog.get_logger(__name__)
 
 LINK = re.compile(r"https?://|www\.", re.IGNORECASE)
 UNREADABLE = re.compile(r"\s*UNREADABLE\W*$")  # The summary prompt's answer for a block, error or cookie page
+# An article the LLM fails on this many passes in a row (while it answers its check) is set aside
+# and retried later: it is first in every pass, so nothing after it would be summarized
+LLM_FAILURES_MAX = 3
+_llm_failures: Tally = Tally()  # By link
 
 ARTICLE_READS = Counter(
     "summarizer_article_reads_total",
@@ -189,7 +194,18 @@ async def summarize_ready(client: httpx.AsyncClient, redis_client: aioredis.Redi
     done = 0
     for item, read in ready:
         key = summary_key(item["link"])
-        summary = await summarize(client, item["title"], read["text"])
+        try:
+            summary = await summarize(client, item["title"], read["text"])
+        except LLMUnavailable as e:
+            _llm_failures[item["link"]] += 1
+            if _llm_failures[item["link"]] < LLM_FAILURES_MAX:
+                raise
+            logger.warning("Article set aside: the LLM keeps failing on it", link=item["link"], error=str(e))
+            del _llm_failures[item["link"]]
+            await redis_client.set(key, json.dumps({"failed": "the LLM failed on it"}), ex=settings.SUMMARY_RETRY_SECONDS)
+            await redis_client.delete(article_text_key(item["link"]))
+            continue
+        _llm_failures.pop(item["link"], None)
         if LINK.search(summary):  # Articles can steer the model (prompt injection); a summary never needs a link
             await redis_client.set(key, json.dumps({"failed": "summary contains a link"}), ex=settings.SUMMARY_FAILED_TTL_SECONDS)
         elif UNREADABLE.match(summary):  # What was read wasn't the article
@@ -242,7 +258,9 @@ async def run() -> None:
     get_catalog(), get_site()  # A broken config folder stops the summarizer at once, with its error
     start_http_server(settings.METRICS_PORT)
     redis_client = create_redis_client(socket_timeout=10, retries=3)
-    async with httpx.AsyncClient(timeout=15.0, http2=True) as client:
+    # Articles are other people's servers: public addresses only, but for our own services
+    services = [settings.SUMMARIZER_LLM_URL, settings.TAGGER_URL, settings.SUMMARIZER_BROWSER_URL, settings.SUMMARIZER_BROWSER2_URL]
+    async with public_client(services, timeout=15.0) as client:
         logger.info("Summarizer started", llm=settings.SUMMARIZER_LLM_URL, model=settings.SUMMARIZER_MODEL,
                     browser=settings.SUMMARIZER_BROWSER_URL or None, browser2=settings.SUMMARIZER_BROWSER2_URL or None)
         await asyncio.gather(read_loop(client, redis_client), summary_loop(client, redis_client))
