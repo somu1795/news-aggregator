@@ -105,7 +105,7 @@ What the site is about is in the `config/` folder: `site.yaml` (name, descriptio
 | `ADMIN_API_KEY`    | A secret key to protect administrative endpoints. **Required.**          | `changeme`   |
 | `UVICORN_WORKERS`  | Uvicorn worker processes per container; keep equal to `APP_CPUS`.       | `4`          |
 | `CADDY_HTTP_PORT`  | The port Caddy listens on (this machine and the LAN).                   | `7001`       |
-| `API_RATE_LIMIT`   | Rate limit per client IP for `/`, `/api/headlines` and `/api/search-index`. | `100/minute` |
+| `API_RATE_LIMIT`   | Rate limit per client IP for `/`, `/api/headlines`, `/api/search-index` and `/api/search`. | `100/minute` |
 | `APP_CPUS`         | Max CPU cores for each app container.                                    | `4`          |
 | `APP_MEM_LIMIT`    | Max memory for each app container (e.g., `512m`, `2G`).                  | `2G`         |
 | `RENDER_GID`       | Host group id owning the NPU (`getent group render`), for the tagger.    | `991`        |
@@ -157,11 +157,11 @@ The tests don't need Docker or a running Redis (they use `fakeredis` and `respx`
 
 ```sh
 cd app
-pip install -r requirements-dev.txt
+pip install -r requirements.txt && pip install -r requirements-dev.txt
 python -m pytest
 ```
 
-Dependencies are pinned in `app/requirements.txt`, generated from `app/requirements.in`. To change a dependency, edit `requirements.in` and run `pip-compile requirements.in -o requirements.txt`.
+Dependencies are pinned in `app/requirements.txt`, with the hash of every file, generated from `app/requirements.in`. To change a dependency, edit `requirements.in` and run `pip-compile --generate-hashes --allow-unsafe --strip-extras requirements.in -o requirements.txt`.
 
 The tagger has its own tests (a fake embedder, so no NPU or OpenVINO model needed):
 
@@ -204,7 +204,7 @@ Because requests are served from memory and never fetch upstream, a single app c
 - `GET /api/search-index`: Every view's headlines in one response, for the page's search: `items` (each link once, with `views`, the views it's in), `fetched_at`, `expires_at`. 503 with `Retry-After` only before the first refresh.
 - `GET /site-icon/<domain>`: A website's icon, when the refresher has cached it (404 otherwise).
 - `GET /health`: Health check. Reports `healthy`, `degraded` (Redis down but still serving), or `unhealthy`, plus the headlines' age.
-- `POST /admin/cache/clear`: Triggers an immediate refresh (requires `X-API-Key`). Current headlines stay available meanwhile.
+- `POST /admin/cache/clear`: Triggers an immediate refresh (requires `X-API-Key`; from this machine or the LAN only). Current headlines stay available meanwhile.
 - `GET /metrics`: Prometheus metrics endpoint (blocked at Caddy).
 
 ## Data Credits
