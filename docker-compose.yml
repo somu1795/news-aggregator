@@ -24,6 +24,8 @@ services:
       - API_RATE_LIMIT
       - ALLOWED_HOSTS=${ALLOWED_HOSTS?You must set ALLOWED_HOSTS in your .env file}
       - ADMIN_API_KEY=${ADMIN_API_KEY?You must set ADMIN_API_KEY in your .env file}
+      # Port 8989 is never published: the app trusts the client IP that Caddy sends (X-Real-IP,
+      # entrypoint.sh --forwarded-allow-ips), which only holds while Caddy is its only way in.
       # One worker per CPU in APP_CPUS. Benchmarked: 4 workers on 4 CPUs match
       # 9 workers' throughput at half the memory; scale out with more containers.
       - UVICORN_WORKERS=${UVICORN_WORKERS:-4}
@@ -43,6 +45,7 @@ services:
       # Opened read-only (services/archive_search.py), but SQLite needs to write its
       # shared-memory file next to it while the refresher writes, so not mounted :ro
       - archive_data:/archive
+    networks: [backend]  # It only reads Redis and the archive: no internet
     deploy:
       resources:
         # These are resource limits per container. To handle very high traffic (10k+ users),
@@ -91,6 +94,7 @@ services:
       # points at your own folder elsewhere.
       - ${CONFIG_DIR:-./config}:/config:ro
       - archive_data:/archive  # Every published headline, kept (SQLite, see app/services/archive.py)
+    networks: [default, backend]  # Feeds, publishers and icons on the internet; Redis and the tagger
     deploy:
       resources:
         limits:
@@ -121,7 +125,7 @@ services:
       - SUMMARIZER_BROWSER2_URL=http://browser2:8191
     volumes:
       - ${CONFIG_DIR:-./config}:/config:ro
-    networks: [default, browser]
+    networks: [default, backend, browser]  # Articles and the LLM; Redis and the tagger; the browsers
     deploy:
       resources:
         limits:
@@ -240,6 +244,9 @@ services:
       - "${RENDER_GID:-991}"
     volumes:
       - tagger_data:/data  # Stored headlines (SQLite), the classifier, the NPU compile cache
+    # No internet (its models are in the image), and only the refresher and summarizer reach its
+    # API, which has no login: it can change story groupings
+    networks: [backend]
     deploy:
       resources:
         limits:
@@ -299,6 +306,8 @@ services:
       - caddy_data:/data
       - caddy_config:/config
       - stats_public:/srv/stats-data:ro  # heatmap.json; the stats page's files are in the image
+    # default: its published port and the Cloudflare Tunnel; backend: the app
+    networks: [default, backend]
     depends_on:
       app:
         condition: service_healthy
@@ -314,8 +323,7 @@ services:
   # (no inbound port needed). In the tunnel's Public Hostname, point the site at
   # http://caddy:7001. Started only with COMPOSE_PROFILES=cloudflare in .env.
   cloudflared:
-    image: cloudflare/cloudflared:latest
-    pull_policy: always  # Every `docker compose up` fetches the newest release
+    image: cloudflare/cloudflared:2026.10.7  # Pinned like the others (scripts/check-updates.py reports newer ones)
     <<: *hardened
     profiles: [cloudflare]
     command: tunnel --no-autoupdate run
@@ -345,7 +353,7 @@ services:
     command: ["redis-server", "/usr/local/etc/redis/redis.conf", "--requirepass", "${REDIS_PASSWORD}",
               # The stats worker's own user: it can only read its stream
               "--user", "stats", "on", ">${STATS_REDIS_PASSWORD}", "~stats:items", "+xread", "+xinfo|stream", "+client|setinfo"]
-    networks: [default, stats]
+    networks: [backend, stats]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -361,6 +369,9 @@ services:
 
 networks:
   default:
+  # The services that need no internet (app, tagger, Redis) and those that talk to them
+  backend:
+    internal: true
   stats:
     internal: true
   # The browser's network: internal, so nothing on it reaches the internet directly

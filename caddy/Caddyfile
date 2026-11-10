@@ -53,6 +53,18 @@
 	respond @metrics_via_cloudflare "Forbidden" 403
 	respond @metrics_from_outside "Forbidden" 403
 
+	# The admin API (its key still required) the same way: this machine and the LAN only
+	@admin_via_cloudflare {
+		path /admin/*
+		header Cf-Connecting-IP *
+	}
+	@admin_from_outside {
+		path /admin/*
+		not remote_ip private_ranges
+	}
+	respond @admin_via_cloudflare "Forbidden" 403
+	respond @admin_from_outside "Forbidden" 403
+
 	# Site icons are static files baked into this image (caddy/static); the app serves the manifest (site.yaml)
 	@icons path /favicon.svg /favicon.ico /apple-touch-icon.png /icon-192.png /icon-512.png
 	handle @icons {

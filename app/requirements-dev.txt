@@ -1,4 +1,5 @@
--r requirements.txt
+# Test tools, installed after requirements.txt (whose hashes pip checks on their own):
+#   pip install -r requirements.txt && pip install -r requirements-dev.txt
 pytest
 pytest-asyncio
 fakeredis

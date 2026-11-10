@@ -6,12 +6,16 @@ cached, so this never fetches anything.
 
 from fastapi import APIRouter, Request, Response
 
+from config import settings
+from deps import limiter
+
 from services.site_icons import get_icon
 
 router = APIRouter()
 
 
 @router.api_route("/site-icon/{host}", methods=["GET", "HEAD"], include_in_schema=False)
+@limiter.limit(settings.ICON_RATE_LIMIT)
 async def site_icon(request: Request, host: str):
     try:
         icon = await get_icon(request.app.state.redis, host)

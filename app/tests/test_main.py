@@ -522,3 +522,18 @@ def test_the_site_is_named_by_its_config(client, monkeypatch):
 
 def test_page_links_to_stats(client):
     assert 'href="/stats/"' in client.get("/").text
+
+
+def test_an_unexpected_error_tells_api_clients_nothing_about_the_server():
+    import json
+    from starlette.requests import Request
+    from middleware.exception import SmartExceptionMiddleware
+    request = Request({"type": "http", "method": "GET", "path": "/api/headlines", "query_string": b"x=1",
+                       "headers": [(b"accept", b"application/json")], "server": ("testserver", 80), "scheme": "http"})
+    response = SmartExceptionMiddleware._build_error_response(request, RuntimeError("database password is hunter2"))
+    assert response.status_code == 500
+    assert json.loads(response.body) == {"error": "Internal Server Error"}
+
+
+def test_site_icons_and_the_admin_route_are_rate_limited():
+    assert {"routes.site_icons.site_icon", "routes.admin.clear_cache"} <= set(limiter._route_limits)

@@ -82,6 +82,8 @@ CHECKS = [
      lambda: github_latest("ThePhaseless/Byparr")),
     ("Redis", lambda: pinned("docker-compose.yml", r"image: redis:([\d.]+)"), "docker-compose.yml",
      lambda: github_latest("redis/redis")),
+    ("cloudflared", lambda: pinned("docker-compose.yml", r"cloudflare/cloudflared:([\d.]+)"), "docker-compose.yml",
+     lambda: github_latest("cloudflare/cloudflared")),
     ("Caddy", lambda: pinned("caddy/Dockerfile", r"FROM caddy:([\d.]+)"), "caddy/Dockerfile",
      lambda: github_latest("caddyserver/caddy")),
     ("Python (app image)", lambda: pinned("app/Dockerfile", r"FROM python:([\d.]+)"), "app/Dockerfile",

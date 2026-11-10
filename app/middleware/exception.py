@@ -19,7 +19,6 @@ from starlette.exceptions import HTTPException
 from starlette.responses import Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from config import settings
 from site_config import get_site
 
 logger = structlog.get_logger(__name__)
@@ -102,5 +101,5 @@ class SmartExceptionMiddleware:
         # Fallback for non-HTML clients (APIs)
         return JSONResponse(
             status_code=status_code,
-            content={"error": detail, "path": str(request.url), "version": settings.APP_VERSION},
+            content={"error": detail},
         )
