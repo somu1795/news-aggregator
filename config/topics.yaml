@@ -15,7 +15,7 @@ topics:
   feed_only: true
 - id: tech
   label: Tech
-  min_feed_score: 0.05
+  min_feed_score: 0.1
 - id: science
   label: Science
 - id: nature

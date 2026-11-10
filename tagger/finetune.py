@@ -1,14 +1,15 @@
 """
-Fine-tunes bge-small-en-v1.5 on data/seed.json and exports the fp16 ONNX model
-the tagger image downloads (release tagger-model-v1). Run on a CUDA GPU, not in
-the tagger image:
+Fine-tunes bge-small-en-v1.5 on headlines labelled by their feeds and exports the
+fp16 ONNX model the tagger image downloads (release tagger-model-v2, with the
+training.json it was trained on). Run on a CUDA GPU, not in the tagger image:
 
     pip install torch transformers onnx onnxconverter-common scikit-learn fastapi
-    python finetune.py out/
+    python finetune.py training.json out/
 
-Training is deterministic: the same inputs give the same file (sha256 in the
-Dockerfile). It prints the result on data/eval.json, scored like the tagger's
-retrain gate; data/eval.json is never trained on.
+training.json: data/seed.json's headlines plus up to 12,000 per label of the
+tagger's stored ones (export_training.py makes it from a tagger's database).
+Training is deterministic on one machine. It prints the result on data/eval.json,
+scored like the tagger's retrain gate; data/eval.json is never trained on.
 """
 
 import json
@@ -26,7 +27,7 @@ from tagger import BUNDLED
 
 BASE = "BAAI/bge-small-en-v1.5"
 EPOCHS, LR, BATCH, SEED = 4, 5e-5, 32, 0
-CLASSES = TOPICS[:5] + [OTHER, "uplifting"]  # Every seed label
+CLASSES = TOPICS[:5] + [OTHER, "uplifting"]  # Every feed label
 
 tokenizer = AutoTokenizer.from_pretrained(BASE)
 
@@ -40,7 +41,7 @@ def cls(encoder, titles):
 
 
 def finetune(rows):
-    """The encoder with a softmax head over the seed labels and an uplifting head (as tagger.train), class-balanced."""
+    """The encoder with a softmax head over the labels and an uplifting head (as tagger.train), class-balanced."""
     torch.manual_seed(SEED)
     random.seed(SEED)
     encoder = AutoModel.from_pretrained(BASE).to("cuda")
@@ -89,11 +90,12 @@ class LastHiddenState(torch.nn.Module):
         return self.encoder(input_ids=input_ids, attention_mask=attention_mask, token_type_ids=token_type_ids).last_hidden_state
 
 
-def main(out: Path):
-    seed = json.loads((BUNDLED / "seed.json").read_text())
+def main(training: Path, out: Path):
+    rows = json.loads(training.read_text())
     eval_set = json.loads((BUNDLED / "eval.json").read_text())
-    encoder = finetune(seed)
-    classifier = train(embed(encoder, [r["title"] for r in seed]), [r["label"] for r in seed])
+    assert not {r["title"] for r in rows} & {r["title"] for r in eval_set}, "eval.json must never be trained on"
+    encoder = finetune(rows)
+    classifier = train(embed(encoder, [r["title"] for r in rows]), [r["label"] for r in rows])
     print("eval:", evaluate(classifier, embed(encoder, [r["title"] for r in eval_set]), [r["tags"] for r in eval_set]))
 
     out.mkdir(parents=True, exist_ok=True)
@@ -103,8 +105,8 @@ def main(out: Path):
                       dynamo=False, opset_version=17, input_names=names[:3], output_names=names[3:],
                       dynamic_axes={n: {0: "batch", 1: "seq"} for n in names})
     model = float16.convert_float_to_float16(onnx.load(out / "model_fp32.onnx"), keep_io_types=True)
-    onnx.save(model, out / "bge-small-en-v1.5-news-ft1.onnx")
+    onnx.save(model, out / "bge-small-en-v1.5-news-ft2.onnx")
 
 
 if __name__ == "__main__":
-    main(Path(sys.argv[1]))
+    main(Path(sys.argv[1]), Path(sys.argv[2]))

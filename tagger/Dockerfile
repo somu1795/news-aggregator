@@ -19,10 +19,10 @@ RUN mkdir /tmp/npu-driver && tar xzf /tmp/npu-driver.tar.gz -C /tmp/npu-driver &
     apt-get install -y --no-install-recommends /tmp/npu-driver/intel-level-zero-npu_*.deb /tmp/npu-driver/intel-driver-compiler-npu_*.deb && \
     rm -rf /tmp/npu-driver* /var/lib/apt/lists/*
 
-# bge-small-en-v1.5 (MIT), fine-tuned on data/seed.json by finetune.py (fp16 ONNX);
-# its tokenizer is the original's, from a pinned revision
-ADD --checksum=sha256:2b5a19a34489c1b17d2a6769409f903ab496d3a4f59ea847ec218a9c7731b569 \
-    https://github.com/somu1795/news-aggregator/releases/download/tagger-model-v1/bge-small-en-v1.5-news-ft1.onnx \
+# bge-small-en-v1.5 (MIT), fine-tuned by finetune.py on the release's training.json (data/seed.json
+# and 56,051 feed-labelled headlines; fp16 ONNX); its tokenizer is the original's, from a pinned revision
+ADD --checksum=sha256:63bf217aa38cc1ba5504bf604fc8698cc6e1a2724ff5c7225dcb4580dade4cf6 \
+    https://github.com/somu1795/news-aggregator/releases/download/tagger-model-v2/bge-small-en-v1.5-news-ft2.onnx \
     /models/bge-small-en-v1.5/model.onnx
 ADD --checksum=sha256:d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66 \
     https://huggingface.co/Xenova/bge-small-en-v1.5/resolve/ea104dacec62c0de699686887e3f920caeb4f3e3/tokenizer.json \
