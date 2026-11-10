@@ -206,10 +206,11 @@
     }
 
     // --- Rendering (always of the current view) ---
-    // Order of the list. "mix" is the server's: each feed's own ranking, interleaved by weight.
-    var SORTS = ["mix", "newest", "oldest", "random"];
-    var sortMode = SORTS.indexOf(read("retroSort")) >= 0 ? read("retroSort") : "mix";
-    var shuffleKeys = Object.create(null);  // Link -> random number; kept while "random" stays selected, so refreshes don't reshuffle
+    // Order of the list. "mix" is the server's: each feed's own ranking, interleaved by weight;
+    // its top changes slowly, so the default is "random": other headlines each time the page is opened.
+    var SORTS = ["random", "mix", "newest", "oldest"];
+    var sortMode = SORTS.indexOf(read("retroSort")) >= 0 ? read("retroSort") : SORTS[0];
+    var shuffleKeys = Object.create(null);  // Link -> random number; kept while the page is open, so refreshes don't reshuffle
 
     function sorted(items) {
         var copy = items.slice();
@@ -232,7 +233,7 @@
 
     function renderSort() {
         document.getElementById("sort-mode").textContent = sortMode;
-        sortBtn.classList.toggle("on", sortMode !== "mix");
+        sortBtn.classList.toggle("on", sortMode !== SORTS[0]);
     }
 
     // --- Advanced: reset, install, site icons ---
@@ -606,7 +607,7 @@
         ["retroRegion", "retroTopic", "retroSort", "retroTheme", "bypassService", "retroSiteIcons", "retroAutoRefresh", "retroBackAction"].forEach(forget);  // bypassService: shared with the old classic page
         openSummaries = Object.create(null);
         openRelated = Object.create(null);
-        sortMode = "mix";
+        sortMode = SORTS[0];
         shuffleKeys = Object.create(null);
         siteIcons = true;
         autoRefresh = AUTO_REFRESH[0];
