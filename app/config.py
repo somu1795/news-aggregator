@@ -34,6 +34,9 @@ class Settings(BaseSettings):
 
     # --- Rate Limiting ---
     API_RATE_LIMIT: str = "100/minute"
+    # A page shows one site icon per website (up to ~100), and the CDN keeps them a week
+    ICON_RATE_LIMIT: str = "1000/minute"
+    ADMIN_RATE_LIMIT: str = "10/minute"  # Guessing the admin key
 
     # --- Page ---
     DEFAULT_THEME: Literal["light", "dark"] = "light"  # Until a visitor toggles it with "d"
@@ -129,6 +132,9 @@ class Settings(BaseSettings):
     # --- Archive (every published headline, kept; see services/archive.py) ---
     ARCHIVE_PATH: str = ""  # A SQLite file, written by the refresher, searched by the app; empty disables the archive
     ARCHIVE_SNAPSHOT_SECONDS: int = 3600  # How often each view's order is recorded
+    # How often the search index is rebuilt: it reads the whole archive (4 s at 150,000 headlines),
+    # and a headline is on the page, found by its own search, long after it is archived
+    ARCHIVE_INDEX_SECONDS: int = 900
     SEARCH_TYPO_FALLBACK: bool = True  # Searching older headlines: a word nothing starts with is searched as the closest known word
 
     # --- The site's own files: regions, topics, sources, name, prompts (see catalog.py, site_config.py) ---

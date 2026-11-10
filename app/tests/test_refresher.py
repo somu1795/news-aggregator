@@ -463,3 +463,26 @@ async def test_topic_feeds_reach_the_stream_when_the_topic_phase_fails(mock_redi
 
 async def raising_topic_views(*args):
     raise RuntimeError("no tagger")
+
+
+async def test_the_search_index_is_rebuilt_only_every_so_often(tmp_path, monkeypatch):
+    import os
+    import refresher
+    from services import archive, archive_index
+    monkeypatch.setattr(settings, "ARCHIVE_PATH", str(tmp_path / "archive.db"))
+    monkeypatch.setattr(refresher, "_index_written", float("-inf"))
+    archive.archive({"all": [{"title": "Bridge plan approved", "link": "https://pub.example/1", "source": "Pub", "published": 1.0}]}, 1000.0)
+    await refresher.write_search_index()
+    first = os.stat(archive_index.index_path()).st_ino
+    await refresher.write_search_index()  # The next cycle: too soon
+    assert os.stat(archive_index.index_path()).st_ino == first
+    monkeypatch.setattr(settings, "ARCHIVE_INDEX_SECONDS", 0)
+    await refresher.write_search_index()
+    assert os.stat(archive_index.index_path()).st_ino != first
+
+
+def test_cycles_start_an_interval_apart_however_long_one_takes(monkeypatch):
+    from refresher import until_next_cycle
+    monkeypatch.setattr(settings, "REFRESH_INTERVAL_SECONDS", 300)
+    assert until_next_cycle(started=1000.0, now=1025.0) == 275.0
+    assert until_next_cycle(started=1000.0, now=1400.0) == 1.0  # A cycle that overran: the next one at once

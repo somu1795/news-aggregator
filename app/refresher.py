@@ -42,6 +42,7 @@ from services.stats_stream import publish_new
 from services.views.main_views import get_fresh_views
 from services.views.topic_views import get_topic_views
 from services.redis_client import create_redis_client
+from services.safe_fetch import public_client
 from services.site_icons import cache_icons
 from services.story_groups import group_stories
 
@@ -167,14 +168,20 @@ async def refresh_topics(
 
 
 STORY_SYNC_BATCH = 2000  # Headlines per request to the tagger
+_index_written = float("-inf")  # time.monotonic() of the last search index written
 
 
 async def write_search_index() -> None:
-    """Writes the archive's search index for the app's workers (services/archive_index.py); a failure keeps the previous one."""
-    if not settings.ARCHIVE_PATH:
+    """
+    Writes the archive's search index for the app's workers (services/archive_index.py), every
+    ARCHIVE_INDEX_SECONDS; a failure keeps the previous one and is retried next cycle.
+    """
+    global _index_written
+    if not settings.ARCHIVE_PATH or time.monotonic() - _index_written < settings.ARCHIVE_INDEX_SECONDS:
         return
     try:
         logger.info("Wrote the archive's search index", **await asyncio.to_thread(archive_index.write))
+        _index_written = time.monotonic()
     except Exception as e:
         logger.warning("Archive search index not written", error=str(e) or type(e).__name__)
 
@@ -229,15 +236,20 @@ async def refresh_site_icons(http_client: httpx.AsyncClient, redis_client: aiore
         logger.warning("Site icons not refreshed", error=str(e) or type(e).__name__)
 
 
-async def wait_for_next_cycle(redis_client: aioredis.Redis) -> None:
-    """Sleeps until the next cycle, waking early if an admin requested a refresh."""
+def until_next_cycle(started: float, now: float) -> float:
+    """Seconds from `now` until the cycle after the one that started at `started` (time.monotonic())."""
+    return max(1.0, settings.REFRESH_INTERVAL_SECONDS - (now - started))
+
+
+async def wait_for_next_cycle(redis_client: aioredis.Redis, seconds: float) -> None:
+    """Sleeps `seconds`, until the next cycle, waking early if an admin requested a refresh."""
     try:
-        if await redis_client.blpop([settings.REFRESH_REQUEST_KEY], timeout=settings.REFRESH_INTERVAL_SECONDS):
+        if await redis_client.blpop([settings.REFRESH_REQUEST_KEY], timeout=seconds):
             logger.info("Refresh requested by admin")
             await redis_client.delete(settings.REFRESH_REQUEST_KEY)  # Collapse duplicate requests
     except aioredis.RedisError as e:
         logger.warning("Redis unavailable while waiting, sleeping instead", error=str(e))
-        await asyncio.sleep(settings.REFRESH_INTERVAL_SECONDS)
+        await asyncio.sleep(seconds)
 
 
 async def run() -> None:
@@ -248,7 +260,8 @@ async def run() -> None:
     # Socket timeout must outlast the BLPOP wait in wait_for_next_cycle()
     redis_client = create_redis_client(socket_timeout=settings.REFRESH_INTERVAL_SECONDS + 10, retries=3)
     limits = httpx.Limits(max_connections=50, max_keepalive_connections=20)
-    async with httpx.AsyncClient(http2=True, timeout=settings.REQUEST_TIMEOUT, limits=limits) as http_client:
+    # Feeds, publishers and icons are other people's servers: public addresses only, but for the tagger
+    async with public_client([settings.TAGGER_URL], limits=limits, timeout=settings.REQUEST_TIMEOUT) as http_client:
         logger.info("Refresher started", interval=settings.REFRESH_INTERVAL_SECONDS)
         poller = FeedPoller()  # What it remembers about each feed and host, for the refresher's whole life
         while True:
@@ -264,7 +277,8 @@ async def run() -> None:
                 REFRESHES.labels(result="error").inc()
                 logger.error("Refresh failed, keeping previous snapshot", error=str(e), exc_info=True)
             REFRESH_DURATION.observe(time.monotonic() - started)
-            await wait_for_next_cycle(redis_client)
+            # From the cycle's start: snapshots say they expire REFRESH_INTERVAL_SECONDS after they're made
+            await wait_for_next_cycle(redis_client, until_next_cycle(started, time.monotonic()))
 
 
 if __name__ == "__main__":
