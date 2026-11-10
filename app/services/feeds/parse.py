@@ -46,6 +46,8 @@ def parse(content: bytes, source_name: str) -> List[Dict]:
         raise ValueError(f"Feed parse error for {source_name}: {feed.bozo_exception}")
     headlines = []
     for entry in feed.entries:
+        if not entry.get("title") or not entry.get("link"):
+            continue  # One broken item mustn't cost the whole feed
         headlines.append({
             "title": entry.title,
             "link": entry.link,
