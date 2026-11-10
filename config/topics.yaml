@@ -17,6 +17,7 @@ topics:
   label: Science
 - id: nature
   label: Nature
+  feed_only: true
 - id: culture
   label: Culture
 - id: sport
