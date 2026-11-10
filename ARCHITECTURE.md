@@ -240,7 +240,7 @@ Fetching:
 `build_views()` in `services/views/main_views.py` builds every view in two stages, using `mix_headlines()` for each list:
 
 - **Stage 1, news lists.** Each region's news from its sources. "World" news is built from the five regional lists, equally. That keeps every region represented and drops a story two regions both carry, and the per-publisher cap applies across regions, so e.g. BBC appears at most 3 times. Science and Hacker News are each mixed on their own.
-- **Stage 2, views.** Each view interleaves its news list (75%) with science (15%) and Hacker News (10%). The lists were already capped, so this stage only interleaves and de-duplicates. News has the largest single weight, so it leads every view (pattern: *news, news, science, news, news, HN, …*; about 19 news, 4 science and 2 HN in the top 25).
+- **Stage 2, views.** Each view interleaves its news list (75%) with science (15%) and Hacker News (10%). The lists were already capped, so this stage only interleaves and de-duplicates. News has the largest single weight, so it leads most views (each cycle starts the turns at a random point, see below; about 19 news, 4 science and 2 HN in the top 25).
 - If a view's news list is empty (all of that region's feeds failed), the view stays empty and keeps its previous snapshot, rather than showing only science and HN.
 
 `mix_headlines()` builds a list from weighted sources like this:
