@@ -105,23 +105,20 @@ async def test_refresh_publishes_every_view(mock_redis, poller):
     assert asia["region"] == "asia" and europe["region"] == "europe" and everything["region"] == ALL_VIEW
     assert everything["expires_at"] == pytest.approx(everything["fetched_at"] + settings.REFRESH_INTERVAL_SECONDS)
 
-    # Every view has the same mix: 80% news (that region's, or all regions equally), 20% HN
+    # Every view has the same mix: 80% news (that region's, or all regions equally), 20% HN; each
+    # cycle's mix starts at a random point (any source can lead), so a count can be one off
     asia_titles = [h["title"] for h in asia["data"]]
     assert len(asia_titles) == 20
-    assert sum(t.startswith("hn.example") for t in asia_titles) == 4
-    assert abs(sum(t.startswith("in ") for t in asia_titles) - 16 * 0.6) <= 1  # Region weights within the news share
-    assert sum(t.startswith(("in ", "asia.example")) for t in asia_titles) == 16
-    assert sum(t.startswith("gb ") for t in (h["title"] for h in europe["data"])) == 16
+    assert abs(sum(t.startswith("hn.example") for t in asia_titles) - 4) <= 1
+    assert abs(sum(t.startswith("in ") for t in asia_titles) - 16 * 0.6) <= 2  # Region weights within the news share
+    assert abs(sum(t.startswith(("in ", "asia.example")) for t in asia_titles) - 16) <= 1
+    assert abs(sum(t.startswith("gb ") for t in (h["title"] for h in europe["data"])) - 16) <= 1
 
     all_titles = [h["title"] for h in everything["data"]]
     assert len(all_titles) == 20
-    assert sum(t.startswith("hn.example") for t in all_titles) == 4
-    assert sum(t.startswith(("in ", "asia.example")) for t in all_titles) == 8
-    assert sum(t.startswith("gb ") for t in all_titles) == 8
-
-    # News leads every view (it has the largest weight)
-    for view in (asia, europe, everything):
-        assert not view["data"][0]["title"].startswith("hn.example")
+    assert abs(sum(t.startswith("hn.example") for t in all_titles) - 4) <= 1
+    assert abs(sum(t.startswith(("in ", "asia.example")) for t in all_titles) - 8) <= 1
+    assert abs(sum(t.startswith("gb ") for t in all_titles) - 8) <= 1
 
     # Google links resolved (in every view), direct links and HN discussion links untouched
     for view in (asia, europe, everything):
@@ -499,3 +496,17 @@ async def test_topic_tabs_keep_at_most_a_few_headlines_about_one_subject(mock_re
     titles = [h["title"] for h in (await read_view(mock_redis, "asia:sport"))["data"]]
     assert titles[:3] == ["sports.example story 0", "sports.example story 1", "sports.example story 4"]
     assert "sports.example story 2" not in titles and "sports.example story 3" not in titles
+
+
+@respx.mock
+async def test_a_tabs_top_headlines_give_their_places_up_after_a_while(mock_redis, poller, monkeypatch):
+    mock_feeds()
+    async with httpx.AsyncClient() as http_client:
+        await refresh_once(http_client, mock_redis, poller)
+        first = [h["link"] for h in (await read_view(mock_redis, "asia"))["data"]]
+        later = time.time() + settings.TOP_DWELL_SECONDS
+        monkeypatch.setattr(refresher.time, "time", lambda: later)
+        await refresh_once(http_client, mock_redis, poller)
+    second = [h["link"] for h in (await read_view(mock_redis, "asia"))["data"]]
+    top = settings.TOP_POSITIONS
+    assert len(second) == len(first) and not set(first[:top]) & set(second[:top])

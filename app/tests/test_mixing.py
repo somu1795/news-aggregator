@@ -114,3 +114,19 @@ def test_empty_and_missing_sources():
     assert mix_headlines(SOURCES, {}, NOW) == []
     only_world = mix_headlines(SOURCES, {WORLD: [google_item("w", i) for i in range(5)]}, NOW)
     assert len(only_world) == 5
+
+
+def test_a_random_start_lets_any_source_lead_and_keeps_the_mix():
+    # Otherwise the first source in the config always leads (the same headline on top for hours)
+    import random
+    from collections import Counter
+    kind = lambda h: WORLD if "/w-" in h["link"] else SCIENCE if "/s-" in h["link"] else HN
+    leaders = Counter()
+    for seed in range(100):
+        mixed = mix_headlines(SOURCES, feeds(), NOW, rng=random.Random(seed))
+        leaders[kind(mixed[0])] += 1
+        counts = Counter(kind(h) for h in mixed[:20])
+        assert abs(counts[WORLD] - 10) <= 2 and abs(counts[SCIENCE] - 6) <= 2 and abs(counts[HN] - 4) <= 2
+        assert [h["link"] for h in mixed if kind(h) == WORLD] == sorted((h["link"] for h in mixed if kind(h) == WORLD),
+                                                                        key=lambda link: int(link.rsplit("-", 1)[1]))
+    assert set(leaders) == {WORLD, SCIENCE, HN} and leaders[WORLD] > leaders[HN]

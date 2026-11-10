@@ -206,11 +206,11 @@
     }
 
     // --- Rendering (always of the current view) ---
-    // Order of the list. "mix" is the server's: each feed's own ranking, interleaved by weight;
-    // its top changes slowly, so the default is "random": other headlines each time the page is opened.
-    var SORTS = ["random", "mix", "newest", "oldest"];
+    // Order of the list. "mix" is the server's: each feed's own ranking, interleaved by weight,
+    // its top headlines giving their places up after a while there.
+    var SORTS = ["mix", "newest", "oldest", "random"];
     var sortMode = SORTS.indexOf(read("retroSort")) >= 0 ? read("retroSort") : SORTS[0];
-    var shuffleKeys = Object.create(null);  // Link -> random number; kept while the page is open, so refreshes don't reshuffle
+    var shuffleKeys = Object.create(null);  // Link -> random number; kept while "random" stays selected, so refreshes don't reshuffle
 
     function sorted(items) {
         var copy = items.slice();

@@ -3,6 +3,7 @@ Mixing several sources' headlines into one view: by weight, de-duplicated,
 capped per publisher and per source (see mix_headlines).
 """
 
+import random
 import re
 from collections import Counter
 from typing import Dict, List, Optional
@@ -46,6 +47,7 @@ def build_limit() -> int:
 def mix_headlines(
     sources: List[NewsSource], results_by_source: Dict[str, List[Dict]], now: float, view: str = "",
     cap_publishers: bool = True, max_age_hours: Optional[int] = None, limit: Optional[int] = None,
+    rng: Optional[random.Random] = None,
 ) -> List[Dict]:
     """
     Builds the final list by interleaving sources according to their weights.
@@ -59,8 +61,10 @@ def mix_headlines(
       already bounded by its weight. `cap_publishers=False` skips the cap, for
       combining lists that were already capped when they were built.
     - Sources are merged with smooth weighted round-robin, so every stretch of the
-      list has roughly the configured mix (e.g. W S W H W S W W H S ... for 0.5/0.3/0.2)
-      and the order is deterministic between refreshes.
+      list has roughly the configured mix (e.g. W S W H W S W W H S ... for 0.5/0.3/0.2).
+      With `rng` (the refresher's, a new one each cycle) the round-robin starts at a random
+      point, so any source can lead, the heaviest most often; without it, the first source
+      in the config always leads and the order is the same every cycle.
     - A source that runs out drops out of the rotation and the others fill its slots.
     - At most `limit` items (default MAX_HEADLINES). Views are built longer (build_limit())
       and cut to MAX_HEADLINES once each story is shown once (services/story_groups.py).
@@ -76,7 +80,8 @@ def mix_headlines(
     single_publisher = {name for name, items in fresh.items() if len({publisher_key(h) for h in items}) == 1}
     weights = {source.name: source.weight for source in sources}
     max_items = {source.name: source.max_items for source in sources if source.max_items is not None}
-    credit = {name: 0.0 for name in weights}
+    total = sum(weights.values())
+    credit = {name: rng.random() * total if rng else 0.0 for name in weights}
     active = [source.name for source in sources]  # Config order breaks ties
 
     seen_links, seen_titles = set(), set()

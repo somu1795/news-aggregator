@@ -12,6 +12,11 @@ def snapshot_key(view: str) -> str:
     return f"{settings.HEADLINES_KEY}:{view}"
 
 
+def top_since_key(view: str) -> str:
+    """Redis hash of a view: when each of its headlines (or stories) first reached its top positions."""
+    return f"top-since:{view}"
+
+
 def summary_key(link: str) -> str:
     """Redis key holding an article's summary (or a failure marker), by its link."""
     return "summary:" + hashlib.sha256(link.encode()).hexdigest()[:32]

@@ -3,8 +3,9 @@ The main views: "all" and each region's, every one with the same mix of the
 region's news and the extras (build_views).
 """
 
+import random
 import time
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import httpx
 import redis.asyncio as aioredis
@@ -18,7 +19,8 @@ from services.views.mixing import build_limit, mix_headlines
 logger = structlog.get_logger(__name__)
 
 
-def build_views(catalog: Catalog, results_by_source: Dict[str, List[Dict]], now: float) -> Dict[str, List[Dict]]:
+def build_views(catalog: Catalog, results_by_source: Dict[str, List[Dict]], now: float,
+                rng: Optional[random.Random] = None) -> Dict[str, List[Dict]]:
     """
     Builds every view with the same mix: news (that region's, or all regions
     equally for "all") plus the extras (science, Hacker News) at their weights.
@@ -31,11 +33,12 @@ def build_views(catalog: Catalog, results_by_source: Dict[str, List[Dict]], now:
        already capped, so this step only interleaves and de-duplicates. News has
        the largest single weight, so it leads every view.
 
-    A view whose news list is empty (all its feeds failed) stays empty, so its
+    `rng`: where each mix starts (mix_headlines), so a cycle's views don't always lead with the
+    same source. A view whose news list is empty (all its feeds failed) stays empty, so its
     previous snapshot is kept rather than replaced by extras alone.
     """
     regional = {
-        region.id: mix_headlines(region.sources, results_by_source, now, view=f"{region.id}/news", limit=build_limit())
+        region.id: mix_headlines(region.sources, results_by_source, now, view=f"{region.id}/news", limit=build_limit(), rng=rng)
         for region in catalog.regions
     }
     world = mix_headlines(
@@ -44,8 +47,9 @@ def build_views(catalog: Catalog, results_by_source: Dict[str, List[Dict]], now:
         now,
         view=f"{ALL_VIEW}/news",
         limit=build_limit(),
+        rng=rng,
     )
-    extras = {source.name: mix_headlines([source], results_by_source, now, view=source.name, limit=build_limit())
+    extras = {source.name: mix_headlines([source], results_by_source, now, view=source.name, limit=build_limit(), rng=rng)
               for source in catalog.extras}
     news_weight = 1 - sum(source.weight for source in catalog.extras)
 
@@ -53,7 +57,7 @@ def build_views(catalog: Catalog, results_by_source: Dict[str, List[Dict]], now:
         if not news:
             return []
         sources = [NewsSource(name="news", url="", weight=news_weight)] + catalog.extras
-        return mix_headlines(sources, {"news": news} | extras, now, view=view, cap_publishers=False, limit=build_limit())
+        return mix_headlines(sources, {"news": news} | extras, now, view=view, cap_publishers=False, limit=build_limit(), rng=rng)
 
     views = {region_id: with_extras(region_id, items) for region_id, items in regional.items()}
     views[ALL_VIEW] = with_extras(ALL_VIEW, world)
@@ -74,7 +78,7 @@ async def get_fresh_views(
     sources = [s for region in catalog.regions for s in region.sources] + catalog.extras
     results_by_source = await poller.fetch_all(client, sources)
 
-    views = build_views(catalog, results_by_source, time.time())
+    views = build_views(catalog, results_by_source, time.time(), random.Random())
     if not any(views.values()):
         logger.error("Failed to fetch any headlines from any source")
         return views, results_by_source

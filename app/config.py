@@ -119,6 +119,8 @@ class Settings(BaseSettings):
     SUMMARIZER_BROWSER_FILTERED_PROXY: str = ""
     SUMMARIZER_BROWSER2_URL: str = ""  # A second browser (Byparr, same API), tried when the first fails
     SUMMARY_BROWSER_TIMEOUT: float = 60.0  # Per page, challenge included
+    TOP_POSITIONS: int = 10  # A headline (or its story) stays in a tab's first TOP_POSITIONS...
+    TOP_DWELL_SECONDS: int = 2 * 3600  # ...this long, then gives its place to the ones after it
     SUBJECT_CAP: int = 4  # At most this many headlines about one subject (an event, product, person) per topic tab
     SUBJECT_BATCH: int = 50  # Headlines whose subject the LLM names per pass (~0.5 s each)
     STORY_JUDGE_BATCH: int = 20  # Unsure story pairs asked for at a time (~0.1 s each on the LLM)

@@ -40,6 +40,7 @@ from services.archive import apply_story_moves, archive, last_story_move, set_st
 from services.feeds.poller import FeedPoller
 from services.stats_stream import publish_new
 from services.views.main_views import get_fresh_views
+from services.views.top_turnover import turn_over
 from services.views.topic_views import get_topic_views
 from services.redis_client import create_redis_client
 from services.safe_fetch import public_client
@@ -135,6 +136,7 @@ async def refresh_once(http_client: httpx.AsyncClient, redis_client: aioredis.Re
         return 0
 
     published = await group_stories(http_client, published)
+    published = await turn_over(redis_client, published, fetched_at)
     await publish(redis_client, published, fetched_at)
 
     empty = sorted(set(views) - set(published))
@@ -161,7 +163,9 @@ async def refresh_topics(
         views = await group_stories(http_client, views, cut=False)
         views, capped = cap_subjects(views, await subjects_of(redis_client, views))
         views = {view: items[:settings.MAX_HEADLINES] for view, items in views.items()}
-        await publish(redis_client, views, time.time(), unlisted=capped)
+        now = time.time()
+        views = await turn_over(redis_client, views, now)
+        await publish(redis_client, views, now, unlisted=capped)
     except Exception as e:
         TOPIC_REFRESHES.labels(result="error").inc()
         logger.warning("Topic views not refreshed, keeping their previous snapshots", error=str(e) or type(e).__name__)

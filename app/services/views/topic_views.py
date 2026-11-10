@@ -3,9 +3,10 @@ The topic views: one per region (and "all") per topic, from the headlines the
 tagger tagged with it and the feeds about it (build_topic_views).
 """
 
+import random
 import time
 from collections import Counter
-from typing import Dict, List, Set
+from typing import Dict, List, Optional, Set
 
 import httpx
 import redis.asyncio as aioredis
@@ -52,6 +53,7 @@ async def tag(client: httpx.AsyncClient, catalog: Catalog, results_by_source: Di
 
 def build_topic_views(
     catalog: Catalog, results_by_source: Dict[str, List[Dict]], tags_by_title: Dict[str, Set[str]], now: float,
+    rng: Optional[random.Random] = None,
 ) -> Dict[str, List[Dict]]:
     """
     Builds one view per region (and "all") per topic, from the items tagged with
@@ -70,7 +72,7 @@ def build_topic_views(
     2. Items the model tagged from other feeds, in the same order, only to
        fill the view, and never for a feed_only topic (topics.yaml).
 
-    Empty views are kept: a region can have no uplifting news right now.
+    `rng`: where each mix starts (mix_headlines). Empty views are kept: a region can have no uplifting news right now.
     """
     shared = catalog.extras + catalog.topic_extras
     item_regions = matcher_for(catalog).item_regions
@@ -84,7 +86,7 @@ def build_topic_views(
         """groups: (sources, their tagged items), in order of preference."""
         def mixed(sources, items):
             return mix_headlines(equal(sources), items, now, view=view, max_age_hours=topic.max_age_hours,
-                                 limit=build_limit())
+                                 limit=build_limit(), rng=rng)
         lists = [mixed([s for s in sources if s.label == topic.id], items) for sources, items in groups]
         if not topic.feed_only:
             lists += [mixed([s for s in sources if s.label != topic.id], items) for sources, items in groups]
@@ -138,7 +140,7 @@ async def get_topic_views(
         return {}
     results = results_by_source | await poller.fetch_topic_feeds(client, catalog)
     tags_by_title = await tag(client, catalog, results)
-    views = build_topic_views(catalog, results, tags_by_title, time.time())
+    views = build_topic_views(catalog, results, tags_by_title, time.time(), random.Random())
     unique = list({id(h): h for items in views.values() for h in items}.values())
     await resolve_links(client, redis_client, unique)
     return views
