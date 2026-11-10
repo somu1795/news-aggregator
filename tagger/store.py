@@ -11,6 +11,9 @@ from typing import Optional
 
 import numpy as np
 
+WAL_LIMIT_BYTES = 64 * 2**20
+
+
 def clean_title(title: str, source: Optional[str] = None) -> str:
     """Drops Google's " - Publisher" suffix and normalizes whitespace (as in the training data)."""
     if source and title.endswith(" - " + source):
@@ -71,6 +74,7 @@ def connect(path: Path) -> sqlite3.Connection:
     db = sqlite3.connect(path)
     db.execute("PRAGMA journal_mode=WAL")
     db.execute("PRAGMA synchronous=NORMAL")
+    db.execute(f"PRAGMA journal_size_limit={WAL_LIMIT_BYTES}")  # Otherwise the log keeps its largest size
     db.executescript(SCHEMA)
     columns = {row[1] for row in db.execute("PRAGMA table_info(headlines)")}
     if "story_embedding" not in columns:

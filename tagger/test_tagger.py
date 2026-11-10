@@ -315,3 +315,22 @@ def test_a_restart_does_not_retrain_again_after_a_rejected_attempt(tagger, monke
     assert len(attempts) == 1
     # A restart now (a new retrain_periodically) waits a full interval from that attempt
     assert tagger_module.retrain_due(tagger) >= attempts[0] + tagger_module.RETRAIN_INTERVAL_HOURS * 3600 - 1
+
+
+def test_headlines_past_the_retention_are_dropped_but_the_seed_stays(tagger, monkeypatch):
+    now = time.time()
+    tagger.tag([Item(title="Old news story"), Item(title="Fresh news story")])
+    tagger.db.execute("UPDATE headlines SET first_seen = ? WHERE title = 'Old news story'", (now - 31 * 86400,))
+    tagger.db.execute("UPDATE headlines SET first_seen = ? WHERE title LIKE 'team wins cup final match%'", (now - 90 * 86400,))
+    tagger.db.commit()
+    monkeypatch.setattr(tagger_module, "RETENTION_DAYS", 30)
+    assert tagger.prune(now) == 1
+    titles = {t for (t,) in tagger.db.execute("SELECT title FROM headlines")}
+    assert "Fresh news story" in titles and "Old news story" not in titles
+    assert sum(t.startswith("team wins cup final match") for t in titles) == 10  # The seed is always kept
+
+
+def test_the_database_caps_its_write_ahead_log(tmp_path):
+    from store import connect
+    db = connect(tmp_path / "t.db")
+    assert db.execute("PRAGMA journal_size_limit").fetchone()[0] == 64 * 2**20

@@ -183,3 +183,8 @@ async def test_an_archive_from_before_stories_gets_them(archive_db):
 
     assert [title for _, title, _ in archive_module.without_story(10)] == ["Old story"]
     assert searchable(archive_db(), '"old"') == ["https://pub.example/1"]  # And it was indexed for search
+
+
+def test_the_archive_caps_its_write_ahead_log(tmp_path):
+    from services.archive import connect
+    assert connect(str(tmp_path / "a.db")).execute("PRAGMA journal_size_limit").fetchone()[0] == 64 * 2**20

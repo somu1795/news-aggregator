@@ -92,6 +92,7 @@ def connect(path: str) -> sqlite3.Connection:
     db = sqlite3.connect(path)
     db.execute("PRAGMA journal_mode=WAL")  # Readers (a future timeline) never block the refresher
     db.execute("PRAGMA synchronous=NORMAL")
+    db.execute("PRAGMA journal_size_limit=67108864")  # 64 MB: otherwise the log keeps its largest size
     indexed = db.execute("SELECT 1 FROM sqlite_master WHERE name = 'items_search'").fetchone()
     columns = {row[1] for row in db.execute("PRAGMA table_info(items)")}
     if columns and "story" not in columns:  # An archive from before stories: the column, before its index

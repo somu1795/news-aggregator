@@ -69,6 +69,10 @@ RETRAIN_INTERVAL_HOURS = float(os.environ.get("RETRAIN_INTERVAL_HOURS", "24"))
 # ~150 MB while it retrains, ~45 s on 8 CPUs. A larger window wasn't shown to help (a small model on
 # 384 numbers; older news can weigh it towards last quarter's), so revisit it with a current eval set.
 TRAIN_MAX_ROWS = int(os.environ.get("TRAIN_MAX_ROWS", "100000"))
+# Headlines first seen longer ago are dropped (but the seed's). Grouping looks back 3 days, verdicts
+# last 30, and training takes the newest 100,000 labelled ones (~18 days); a headline seen again later
+# is stored afresh. Without it the database grows ~25 MB a day (653 MB after 27 days).
+RETENTION_DAYS = float(os.environ.get("RETENTION_DAYS", "35"))
 BUNDLED = Path(__file__).parent / "data"
 
 
@@ -205,6 +209,15 @@ class Tagger(StoryGrouping):
             logger.warning("Kept classifier %s: %s; candidate %s scored %s",
                            current.version, current_score, candidate.version, new_score)
 
+    def prune(self, now: float) -> int:
+        """Drops the headlines first seen more than RETENTION_DAYS ago, but the seed's. Returns how many."""
+        seed = sorted(self.seed_titles)
+        marks = ",".join("?" * len(seed))
+        deleted = self.db.execute(f"DELETE FROM headlines WHERE first_seen < ? AND title NOT IN ({marks})",
+                                  [now - RETENTION_DAYS * 86400, *seed]).rowcount
+        self.db.commit()
+        return deleted
+
     def stats(self) -> dict:
         count = self.db.execute("SELECT COUNT(*) FROM headlines").fetchone()[0]
         story_device = self.story_embedder.device if self.story_embedder else None
@@ -256,6 +269,10 @@ async def retrain_periodically(tagger: Tagger) -> None:
     while True:
         await asyncio.sleep(max(0.0, retrain_due(tagger) - time.time()))
         tagger.model_path.with_name("last_retrain").touch()  # Also after a rejected or failed attempt: wait a full interval
+        try:  # Daily too, and before training: it reads the newest headlines only
+            logger.info("Dropped %d headlines older than %g days", await on_worker(tagger.prune, time.time()), RETENTION_DAYS)
+        except Exception:
+            logger.exception("Old headlines not dropped")
         try:
             await asyncio.to_thread(tagger.retrain)
         except Exception:
