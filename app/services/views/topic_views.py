@@ -80,11 +80,12 @@ def build_topic_views(
 
     1. The feeds about the topic (their items are tagged by their feed, so
        they're precise), mixed equally. In a region's view: first the stories
-       only that region's own feeds have; then the shared feeds' (extras, topic
-       extras: worldwide outlets like Mongabay) stories about that region,
-       i.e. naming one of its places (regions.yaml, services/places.py); then their stories
-       that name no place; then global stories: those in two or more regions'
-       own feeds (e.g. a TechCrunch story in several Google News Technology
+       only that region's own feeds have, taking turns with the shared feeds'
+       (extras, topic extras: worldwide outlets like Mongabay) stories about that
+       region, i.e. naming one of its places (regions.yaml, services/places.py), so a
+       region with one feed of its own doesn't open with a run of it; then the shared
+       feeds' stories that name no place; then global stories: those in two or more
+       regions' own feeds (e.g. a TechCrunch story in several Google News Technology
        editions). A shared feed's story about another region is left out, so
        region views don't all show the same worldwide outlets.
     2. Items the model tagged from other feeds, in the same order, only to
@@ -135,7 +136,7 @@ def build_topic_views(
             about = {name: [h for h in items if region.id in item_regions(h)] for name, items in shared_tagged.items()}
             view = topic_view(region.id, topic.id)
             views[view] = view_for(
-                [(own[region.id], regional), (shared, about), (shared, placeless), (own[region.id], global_)], topic, view,
+                [(own[region.id] + shared, {**regional, **about}), (shared, placeless), (own[region.id], global_)], topic, view,
             )
         view = topic_view(ALL_VIEW, topic.id)
         views[view] = view_for([(everything, tagged)], topic, view)

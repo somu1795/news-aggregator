@@ -340,6 +340,33 @@ def test_region_topic_views_put_their_own_stories_first():
     assert "Global chip launch" in [h["title"] for h in views["all:tech"]]
 
 
+def test_a_regions_own_feed_takes_turns_with_shared_stories_about_the_region():
+    # The Americas have one nature feed of their own (Inside Climate News): it filled the first 7
+    # places before Mongabay's or the Guardian's stories about the Americas
+    from services.views.topic_views import build_topic_views
+    catalog = Catalog(
+        regions=[{"id": "asia", "label": "Asia", "sources": [{"name": "asia news", "url": "https://asia.example/rss", "weight": 1.0}],
+                  "topic_sources": [{"name": "asia nature", "url": "https://asia.example/nature", "label": "nature"}],
+                  "places": ["Singapore"]}],
+        extras=[],
+        topics=[{"id": "nature", "label": "Nature", "feed_only": True}],
+        topic_extras=[{"name": "Shared nature", "url": "https://shared.example/rss", "label": "nature"}],
+    )
+    now = time.time()
+
+    def story(title, host):
+        return {"title": title, "link": f"https://{host}/{title.replace(' ', '-')}", "source": host, "published": now}
+
+    results = {
+        "asia nature": [story(f"Own story {i}", "own.example") for i in range(3)],
+        "Shared nature": [story(f"Singapore wildlife story {i}", "shared.example") for i in range(2)],
+    }
+    tags = {h["title"]: {"nature"} for items in results.values() for h in items}
+    views = build_topic_views(catalog, results, tags, now)
+    assert [h["title"] for h in views["asia:nature"]] == [
+        "Own story 0", "Singapore wildlife story 0", "Own story 1", "Singapore wildlife story 1", "Own story 2"]
+
+
 def test_a_topic_can_keep_older_stories():
     from services.views.topic_views import build_topic_views
     catalog = Catalog(
