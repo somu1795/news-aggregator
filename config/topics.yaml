@@ -25,3 +25,4 @@ topics:
   label: Culture
 - id: sport
   label: Sport
+  min_feed_score: 0.02

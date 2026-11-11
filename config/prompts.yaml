@@ -32,3 +32,6 @@ topic_checks:
     telecoms, cybersecurity, video games, or technology companies? Science, health, space, cars and
     business news are not technology unless that is what the headline is about. Answer with one word:
     yes or no.
+  sport: >-
+    Is this news headline about sport: a sport, athletes, teams, coaches, matches, competitions, or the
+    business and governance of sport? Answer with one word: yes or no.
