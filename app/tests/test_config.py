@@ -33,28 +33,6 @@ def test_compose_writes_no_second_default_for_a_setting():
             assert not (match and match.group(1) in fields), f"{service}: {entry} repeats a default of config.py"
 
 
-def test_sources_must_name_exactly_the_regions(tmp_path):
-    import json
-    import pytest
-    from catalog import load_catalog
-    (tmp_path / "topics.yaml").write_text(json.dumps({"topics": []}))
-    (tmp_path / "regions.yaml").write_text(json.dumps({"regions": [{"id": "asia", "label": "Asia"}]}))
-    (tmp_path / "sources.yaml").write_text(json.dumps({
-        "regions": {"asai": {"sources": [{"name": "A", "url": "https://a", "weight": 1.0}]}}, "extras": []}))
-    with pytest.raises(ValueError, match=r"missing \['asia'\], unknown \['asai'\]"):
-        load_catalog(tmp_path)
-
-
-def test_the_starting_tab_comes_from_the_regions_countries(monkeypatch):
-    import catalog as catalog_module
-    from catalog import Catalog
-    from services.geo import region_for_country
-    monkeypatch.setattr(catalog_module, "_catalog", Catalog(regions=[
-        {"id": "south", "label": "South", "countries": "IN LK", "sources": [{"name": "A", "url": "https://a", "weight": 1.0}]},
-    ], extras=[]))
-    assert region_for_country("lk") == "south" and region_for_country("US") == "all" and region_for_country(None) == "all"
-
-
 def test_the_stats_worker_reaches_only_redis_and_with_its_own_user():
     compose = yaml.safe_load(COMPOSE.read_text())
     assert compose["services"]["stats"]["networks"] == ["stats"]

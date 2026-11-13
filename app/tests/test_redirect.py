@@ -13,7 +13,6 @@ from unittest.mock import AsyncMock
 
 import httpx
 import respx
-from fakeredis.aioredis import FakeRedis
 
 from services.links import google_news
 from services.links.google_news import (
@@ -36,16 +35,10 @@ def no_waits_between_retries(monkeypatch):
     monkeypatch.setattr(google_news.asyncio, "sleep", no_wait)
 
 
-@pytest_asyncio.fixture(scope="function")
-async def redis():
-    client = FakeRedis(decode_responses=True)
-    yield client
-    await client.aclose()
-
-
-@pytest.fixture(scope="function")
-def http_client():
-    return httpx.AsyncClient()
+@pytest_asyncio.fixture
+async def http_client():
+    async with httpx.AsyncClient() as client:
+        yield client
 
 
 # --- Test _parse_batch_execute_response -------------------------------------
@@ -76,7 +69,7 @@ def test_parse_batch_execute_missing_index():
 # --- Test resolve_redirect --------------------------------------------------
 
 @respx.mock
-async def test_resolve_standard_redirect(redis, http_client):
+async def test_resolve_standard_redirect(mock_redis, http_client):
     """A Google link that redirects is resolved by following the redirect."""
     google_url = "https://news.google.com/rss/articles/test-123"
     final_url = "https://reuters.com/article/real-news"
@@ -88,30 +81,30 @@ async def test_resolve_standard_redirect(redis, http_client):
         return_value=httpx.Response(200)
     )
 
-    result = await resolve_redirect(http_client, redis, google_url)
+    result = await resolve_redirect(http_client, mock_redis, google_url)
     assert result == final_url
 
     # Verify it was cached in Redis
-    cached = await redis.get(f"{RESOLVED_URL_PREFIX}{google_url}")
+    cached = await mock_redis.get(f"{RESOLVED_URL_PREFIX}{google_url}")
     assert cached == final_url
 
 
 @respx.mock
-async def test_resolve_cached_url(redis, http_client):
+async def test_resolve_cached_url(mock_redis, http_client):
     """Previously resolved URL is served from Redis without HTTP calls."""
     original_url = "https://news.google.com/rss/articles/cached-456"
     cached_url = "https://bbc.com/cached-article"
 
-    await redis.set(f"{RESOLVED_URL_PREFIX}{original_url}", cached_url, ex=RESOLVED_URL_TTL)
+    await mock_redis.set(f"{RESOLVED_URL_PREFIX}{original_url}", cached_url, ex=RESOLVED_URL_TTL)
 
-    result = await resolve_redirect(http_client, redis, original_url)
+    result = await resolve_redirect(http_client, mock_redis, original_url)
     assert result == cached_url
     # No HTTP calls should have been made
     assert not respx.calls
 
 
 @respx.mock
-async def test_resolve_batchexecute(redis, http_client):
+async def test_resolve_batchexecute(mock_redis, http_client):
     """Google News URL that doesn't redirect resolves via batchexecute API."""
     google_url = "https://news.google.com/rss/articles/batch-789"
     landing_url = "https://news.google.com/articles/batch-789"
@@ -139,12 +132,12 @@ async def test_resolve_batchexecute(redis, http_client):
         return_value=httpx.Response(200, text=batch_response_text)
     )
 
-    result = await resolve_redirect(http_client, redis, google_url)
+    result = await resolve_redirect(http_client, mock_redis, google_url)
     assert result == article_url
 
 
 @respx.mock
-async def test_resolve_no_cwiz_element_fallback(redis, http_client):
+async def test_resolve_no_cwiz_element_fallback(mock_redis, http_client):
     """Falls back to Google landing URL when c-wiz element is missing."""
     google_url = "https://news.google.com/rss/articles/nocwiz-101"
     landing_url = "https://news.google.com/articles/nocwiz-101"
@@ -156,13 +149,13 @@ async def test_resolve_no_cwiz_element_fallback(redis, http_client):
         return_value=httpx.Response(200, text="<html><body>No c-wiz here</body></html>")
     )
 
-    result = await resolve_redirect(http_client, redis, google_url)
+    result = await resolve_redirect(http_client, mock_redis, google_url)
     # Should fall back to the Google landing page URL
     assert result == landing_url
 
 
 @respx.mock
-async def test_resolve_batchexecute_parse_failure(redis, http_client):
+async def test_resolve_batchexecute_parse_failure(mock_redis, http_client):
     """Falls back to original URL when batchexecute response can't be parsed."""
     google_url = "https://news.google.com/rss/articles/parsefail-202"
     landing_url = "https://news.google.com/articles/parsefail-202"
@@ -183,13 +176,13 @@ async def test_resolve_batchexecute_parse_failure(redis, http_client):
         return_value=httpx.Response(200, text="garbage response")
     )
 
-    result = await resolve_redirect(http_client, redis, google_url)
+    result = await resolve_redirect(http_client, mock_redis, google_url)
     # Should fall back to original URL since parsing failed
     assert result == google_url
 
 
 @respx.mock
-async def test_resolve_retry_on_transient_error(redis, http_client):
+async def test_resolve_retry_on_transient_error(mock_redis, http_client):
     """Transient HTTP errors trigger retries with eventual success."""
     google_url = "https://news.google.com/rss/articles/retry-303"
     final_url = "https://cnn.com/retried-article"
@@ -203,19 +196,19 @@ async def test_resolve_retry_on_transient_error(redis, http_client):
         return_value=httpx.Response(200)
     )
 
-    result = await resolve_redirect(http_client, redis, google_url)
+    result = await resolve_redirect(http_client, mock_redis, google_url)
     assert result == final_url
     assert len(respx.calls) == 3
 
 
 @respx.mock
-async def test_resolve_all_retries_exhausted(redis, http_client):
+async def test_resolve_all_retries_exhausted(mock_redis, http_client):
     """Falls back to original URL when all retry attempts fail."""
     google_url = "https://news.google.com/rss/articles/allfail-404"
 
     respx.get(google_url).mock(side_effect=httpx.ConnectError("Connection refused"))
 
-    result = await resolve_redirect(http_client, redis, google_url)
+    result = await resolve_redirect(http_client, mock_redis, google_url)
     # Should return the original URL as final fallback
     assert result == google_url
 

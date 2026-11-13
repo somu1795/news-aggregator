@@ -79,7 +79,7 @@ def test_parse_skips_missing_fields():
 
 
 def test_parse_drops_unsafe_links():
-    assert worker.parse_entry(entry(link="javascript:alert(1)")[0], fields(link="javascript:alert(1)")) is None
+    assert worker.parse_entry(*entry(link="javascript:alert(1)")) is None
 
 
 def test_parse_skips_an_empty_title():

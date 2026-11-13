@@ -184,8 +184,7 @@ async def test_an_archive_from_before_stories_gets_them(archive_db):
 
 
 def test_the_archive_caps_its_write_ahead_log(tmp_path):
-    from services.archive import connect
-    assert connect(str(tmp_path / "a.db")).execute("PRAGMA journal_size_limit").fetchone()[0] == 64 * 2**20
+    assert archive_module.connect(str(tmp_path / "a.db")).execute("PRAGMA journal_size_limit").fetchone()[0] == 64 * 2**20
 
 
 async def test_headlines_capped_from_every_tab_are_still_archived(mock_redis, archive_db):

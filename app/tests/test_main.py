@@ -1,4 +1,6 @@
+import asyncio
 import json
+import logging
 import re
 import time
 from pathlib import Path
@@ -8,11 +10,17 @@ import pytest
 import redis.asyncio as aioredis
 from starlette.requests import Request
 
-from deps import get_real_ip, limiter
-from main import app
+import site_config
 from catalog import ALL_VIEW, get_catalog, topic_view
 from config import settings
+from deps import get_real_ip, limiter
 from keys import snapshot_key
+from logging_config import RedactSearches
+from main import app
+from middleware.exception import SmartExceptionMiddleware
+from services import archive
+from services.headlines_cache import HeadlinesCache
+from site_config import Prompts, Site
 
 # Using a fixed time for reproducible tests
 FIXED_TIME_UNIX = 1672531200 # 2023-01-01 00:00:00
@@ -212,7 +220,6 @@ def test_search_index_before_first_refresh(client):
     assert response.status_code == 503 and response.headers["retry-after"] == "10"
 
 def test_older_headlines_are_searched_in_the_archive(client, tmp_path, monkeypatch):
-    from services import archive
     monkeypatch.setattr(settings, "ARCHIVE_PATH", str(tmp_path / "archive.db"))
     archive.archive({"all": [{"title": "Ukraine talks resume", "link": "https://a.example/1", "source": "BBC",
                               "published": FIXED_TIME_UNIX}]}, FIXED_TIME_UNIX + 60)
@@ -240,8 +247,6 @@ def test_archive_search_without_an_archive(client, monkeypatch):
     assert response.status_code == 503 and "retry-after" not in response.headers
 
 def test_searches_are_not_written_to_the_access_log():
-    import logging
-    from logging_config import RedactSearches
     record = logging.LogRecord("uvicorn.access", logging.INFO, "", 0, '%s - "%s %s HTTP/%s" %d', (
         "1.2.3.4:0", "GET", "/api/search?q=private+words", "1.1", 200), None)
     other = logging.LogRecord("uvicorn.access", logging.INFO, "", 0, '%s - "%s %s HTTP/%s" %d', (
@@ -251,8 +256,6 @@ def test_searches_are_not_written_to_the_access_log():
     assert other.getMessage() == '1.2.3.4:0 - "GET /api/headlines?region=asia HTTP/1.1" 200'
 
 async def test_search_index_is_rebuilt_only_when_a_view_changes(mock_redis, monkeypatch):
-    from services.headlines_cache import HeadlinesCache
-
     views = [ALL_VIEW, get_catalog().regions[0].id]
     await publish_view(mock_redis, ALL_VIEW, "https://a.example/1")
     cache = HeadlinesCache(mock_redis, views)
@@ -368,6 +371,13 @@ def test_clear_cache_admin_wrong_key(client):
 
 # --- Test Exception Handling ---
 
+def assert_site_styled_error_page(response):
+    """The site's own stylesheet and nothing else: no fonts or anything from other sites, under a policy."""
+    assert '<link rel="stylesheet" href="/static/retro.css">' in response.text
+    assert "https://" not in response.text and "<style" not in response.text and "<script" not in response.text
+    assert response.headers["content-security-policy"].startswith("default-src 'none'; style-src 'self';")
+    assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
+
 def test_404_error_as_html(client):
     """Tests that a 404 error returns an HTML page for browser clients."""
     response = client.get("/non-existent-page", headers={"Accept": "text/html"})
@@ -375,13 +385,6 @@ def test_404_error_as_html(client):
     assert "text/html" in response.headers['content-type']
     assert "Sorry, the page you are looking for could not be found." in response.text
     assert_site_styled_error_page(response)
-
-def assert_site_styled_error_page(response):
-    """The site's own stylesheet and nothing else: no fonts or anything from other sites, under a policy."""
-    assert '<link rel="stylesheet" href="/static/retro.css">' in response.text
-    assert "https://" not in response.text and "<style" not in response.text and "<script" not in response.text
-    assert response.headers["content-security-policy"].startswith("default-src 'none'; style-src 'self';")
-    assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
 
 def test_404_error_as_json(client):
     """Tests that a 404 error returns a JSON response for API clients."""
@@ -424,9 +427,6 @@ def test_docs_disabled_by_default(client):
 
 async def test_get_headlines_does_not_wait_for_slow_redis(client, mock_redis, monkeypatch):
     """While one request is stuck re-syncing from a hung Redis, others get the current copy at once."""
-    import asyncio
-    from services.headlines_cache import HeadlinesCache
-
     await publish_snapshot(mock_redis, title="Current")
     cache = HeadlinesCache(mock_redis, [ALL_VIEW])
     await cache.get(ALL_VIEW)
@@ -503,8 +503,6 @@ def test_sitemap_lists_the_page(client):
 
 
 def test_the_site_is_named_by_its_config(client, monkeypatch):
-    import site_config
-    from site_config import Prompts, Site
     monkeypatch.setattr(site_config, "_site", Site(name="local.txt", description="News of our town.",
                                                    prompts=Prompts(summary="s", same_story="t", subject="u")))
     page = client.get("/", headers={"Accept": "text/html"}).text
@@ -519,9 +517,6 @@ def test_page_links_to_stats(client):
 
 
 def test_an_unexpected_error_tells_api_clients_nothing_about_the_server():
-    import json
-    from starlette.requests import Request
-    from middleware.exception import SmartExceptionMiddleware
     request = Request({"type": "http", "method": "GET", "path": "/api/headlines", "query_string": b"x=1",
                        "headers": [(b"accept", b"application/json")], "server": ("testserver", 80), "scheme": "http"})
     response = SmartExceptionMiddleware._build_error_response(request, RuntimeError("database password is hunter2"))
@@ -531,3 +526,9 @@ def test_an_unexpected_error_tells_api_clients_nothing_about_the_server():
 
 def test_site_icons_and_the_admin_route_are_rate_limited():
     assert {"routes.site_icons.site_icon", "routes.admin.clear_cache"} <= set(limiter._route_limits)
+
+
+def test_metrics_are_served_for_prometheus(client):
+    response = client.get("/metrics")
+    assert response.status_code == 200 and response.headers["content-type"].startswith("text/plain")
+    assert "# TYPE headlines_refreshes_total counter" in response.text

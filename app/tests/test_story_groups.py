@@ -1,5 +1,7 @@
 """Tests for folding other outlets' headlines about the same story under its first one."""
 
+import json
+
 import httpx
 import respx
 
@@ -14,7 +16,6 @@ def item(title, source="Pub"):
 def tagger_groups(groups_by_title):
     """Mocks the tagger's /group with fixed groups (by title); returns the route."""
     def reply(request):
-        import json
         titles = [i["title"] for i in json.loads(request.content)["items"]]
         return httpx.Response(200, json={"groups": [groups_by_title[t] for t in titles]})
     return respx.post(f"{settings.TAGGER_URL}/group").mock(side_effect=reply)
@@ -38,7 +39,6 @@ async def test_each_story_is_shown_once_with_the_others_under_it():
     assert [i["story"] for i in grouped["all"]] == [0, 1] and [i["story"] for i in grouped["asia"]] == [0, 1]
     assert "related" not in apple2  # Views share item dicts: the originals are untouched
     # Each headline is sent once, top positions of every view first
-    import json
     sent = [i["title"] for i in json.loads(route.calls.last.request.content)["items"]]
     assert sent == [apple1["title"], apple2["title"], other["title"], apple3["title"]]
 

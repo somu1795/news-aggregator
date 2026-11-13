@@ -3,13 +3,22 @@ Tests for website icons: caching them per domain, and serving them from our doma
 """
 
 import base64
+import io
 import json
+import os
+import subprocess
+import sys
+import time
 
 import httpx
 import pytest
 import respx
+from PIL import Image, ImageDraw
 
+import services.safe_fetch as safe_fetch
 from config import settings
+from services import site_icons
+from services.pixel_icons import picture_size, pixel_art, pixelate
 from services.site_icons import cache_icons, icon_host, icon_key
 
 PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=")
@@ -63,8 +72,6 @@ async def test_icons_opened_directly_cannot_run_anything(client, mock_redis):
 @pytest.fixture
 def fake_dns(monkeypatch):
     """Every host is public."""
-    import services.safe_fetch as safe_fetch
-
     async def resolve(host, port):
         return ["93.184.216.34"]
     monkeypatch.setattr(safe_fetch, "_resolve", resolve)
@@ -72,8 +79,6 @@ def fake_dns(monkeypatch):
 
 def picture(size, fill=(200, 30, 30, 255), bar=(255, 255, 255, 255), mode="RGBA"):
     """A PNG: a filled square with a bar across its middle."""
-    import io
-    from PIL import Image, ImageDraw
     im = Image.new(mode, (size, size), fill)
     ImageDraw.Draw(im).rectangle((size // 4, size * 3 // 8, size * 3 // 4, size * 5 // 8), fill=bar)
     out = io.BytesIO()
@@ -121,9 +126,6 @@ async def test_googles_copy_is_used_when_the_site_blocks_us(mock_redis, fake_dns
 
 
 def test_thin_lines_survive_and_only_raster_pictures_are_read():
-    import io
-    from PIL import Image, ImageDraw
-    from services.pixel_icons import picture_size, pixel_art, pixelate
     im = Image.new("RGBA", (192, 192), (0, 0, 0, 0))
     ImageDraw.Draw(im).ellipse((0, 0, 191, 191), outline=(20, 20, 120, 255), width=3)  # A thin ring
     out = io.BytesIO()
@@ -141,9 +143,6 @@ def test_thin_lines_survive_and_only_raster_pictures_are_read():
 
 def test_neither_the_api_nor_the_refresher_loads_the_image_library():
     """Only the separate drawing process does: an image library problem can't stop the site or its refresh."""
-    import os
-    import subprocess
-    import sys
     env = {**os.environ, "ALLOWED_HOSTS": "testserver", "REDIS_URL": "memory://"}
     check = "import sys, main, refresher; assert 'PIL' not in sys.modules, 'Pillow was imported'"
     result = subprocess.run([sys.executable, "-c", check], cwd=os.path.dirname(os.path.dirname(__file__)),
@@ -157,9 +156,6 @@ def test_neither_the_api_nor_the_refresher_loads_the_image_library():
     "x = bytearray(1 << 30)",  # Or wants far too much memory
 ])
 async def test_a_picture_that_breaks_the_drawing_process_costs_only_its_icon(monkeypatch, command):
-    import sys
-    import time
-    from services import site_icons
     monkeypatch.setattr(site_icons, "DRAW_COMMAND", [sys.executable, "-c",
                                                      "import resource; resource.setrlimit(resource.RLIMIT_AS, (256 << 20,) * 2); " + command])
     monkeypatch.setattr(site_icons, "DRAW_TIMEOUT", 0.3)
@@ -169,6 +165,5 @@ async def test_a_picture_that_breaks_the_drawing_process_costs_only_its_icon(mon
 
 
 async def test_the_drawing_process_redraws_the_largest_usable_picture():
-    from services import site_icons
     size, svg = await site_icons._draw([picture(32), picture(3000, mode="RGB"), b"junk", picture(180)])
     assert size == 180 and svg.startswith(b"<svg") and b"#c81e1e" in svg  # 3000 px is over the limit: skipped

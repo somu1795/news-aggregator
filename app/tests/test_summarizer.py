@@ -4,6 +4,7 @@ the refresher adding stored summaries to published items.
 """
 
 import asyncio
+import ipaddress
 import json
 
 import httpx
@@ -11,12 +12,15 @@ import pytest
 import respx
 
 import catalog as catalog_module
+import services.safe_fetch as safe_fetch
+import site_config
 import summarizer
 from services.summaries import reading
 from catalog import Catalog
 from config import settings
-from keys import article_text_key, browser_host_key, feed_text_key, full_page_host_key, snapshot_key, subject_key, summary_key
+from keys import article_text_key, browser_host_key, feed_text_key, full_page_host_key, snapshot_key, subject_key, summary_key, topic_check_key, topic_checks_pending_key
 from refresher import publish
+from site_config import Prompts, Site
 from summarizer import LLMUnavailable, read_ahead, summarize_ready, top_items
 
 CATALOG = Catalog(
@@ -41,9 +45,6 @@ async def put_view(redis, view, numbers):
 @pytest.fixture(autouse=True)
 def fake_dns(monkeypatch):
     """Every host is public, except *.internal.example (a LAN address); IP literals are themselves."""
-    import ipaddress
-    import services.safe_fetch as safe_fetch
-
     async def resolve(host, port):
         try:
             return [str(ipaddress.ip_address(host))]
@@ -165,14 +166,14 @@ async def test_summaries_go_by_the_tabs_order_a_batch_at_a_time(mock_redis, monk
     assert asked == ["Headline: Story 1", "Headline: Story 2", "Headline: Story 3"]
 
 
-def slow_page(active, peak):
-    """An article page that takes a moment, counting how many are being read at once."""
+def slow_page(active, peak, page=lambda: httpx.Response(200, html=ARTICLE)):
+    """A page (an article's, unless given) that takes a moment, counting how many are being read at once."""
     async def respond(request):
         active[0] += 1
         peak[0] = max(peak[0], active[0])
         await asyncio.sleep(0.05)
         active[0] -= 1
-        return httpx.Response(200, html=ARTICLE)
+        return page()
     return respond
 
 
@@ -375,18 +376,6 @@ async def test_refresher_keeps_feed_texts_long_enough_to_summarize(mock_redis):
     assert all("feed_text" not in i for i in published)  # Internal: never sent to readers
 
 
-def test_feed_text_prefers_the_full_content_as_plain_text():
-    import feedparser
-    from services.feeds.parse import feed_text
-    xml = """<rss xmlns:content="http://purl.org/rss/1.0/modules/content/"><channel><item>
-      <title>T</title><link>https://pub.example/1</link><description>Short teaser</description>
-      <content:encoded><![CDATA[<p>First   paragraph.</p><p>Second &amp; last.</p>]]></content:encoded>
-    </item><item><title>U</title><link>https://pub.example/2</link></item></channel></rss>"""
-    entries = feedparser.parse(xml).entries
-    assert feed_text(entries[0]) == "First paragraph.Second & last."
-    assert feed_text(entries[1]) == ""
-
-
 @respx.mock
 async def test_the_second_browser_tries_when_the_first_fails(mock_redis, with_browser, monkeypatch):
     browser2_url = "http://browser2.example:8191"
@@ -466,6 +455,7 @@ async def test_a_site_is_not_remembered_when_the_whole_page_fails_too(mock_redis
     assert json.loads(await mock_redis.get(summary_key("https://pub.example/1")))["via"] == "feed"
     assert not await mock_redis.exists(full_page_host_key("pub.example"))
 
+
 @respx.mock
 async def test_each_browser_reads_one_page_at_a_time(mock_redis, with_browser, monkeypatch):
     monkeypatch.setattr(settings, "SUMMARY_TOP_N", 3)
@@ -474,14 +464,7 @@ async def test_each_browser_reads_one_page_at_a_time(mock_redis, with_browser, m
     for n in range(3):
         await mock_redis.set(browser_host_key(f"site{n}.example"), 1)  # All three need the browser
     active, peak = [0], [0]
-
-    async def page(request):  # A page can take most of the browser's memory
-        active[0] += 1
-        peak[0] = max(peak[0], active[0])
-        await asyncio.sleep(0.05)
-        active[0] -= 1
-        return browser_page()
-    respx.post(f"{BROWSER}/v1").mock(side_effect=page)
+    respx.post(f"{BROWSER}/v1").mock(side_effect=slow_page(active, peak, browser_page))  # A page can take most of the browser's memory
 
     async with httpx.AsyncClient() as client:
         assert await read_ahead(client, mock_redis) == 3
@@ -598,11 +581,8 @@ async def test_an_article_the_llm_keeps_failing_on_is_set_aside(mock_redis):
 
 
 @respx.mock
-async def test_topic_tab_headlines_get_their_subject_named(mock_redis, monkeypatch):
-    monkeypatch.setattr(catalog_module, "_catalog", Catalog(
-        regions=[{"id": "asia", "label": "Asia", "sources": [{"name": "A", "url": "https://a.example/rss", "weight": 1.0}]}],
-        extras=[], topics=[{"id": "tech", "label": "Tech"}]))
-    await put_view(mock_redis, "asia:tech", [1, 2])
+async def test_topic_tab_headlines_get_their_subject_named(mock_redis):
+    await put_view(mock_redis, "asia:sport", [1, 2])
     await put_view(mock_redis, "asia", [3])  # Main tabs aren't capped by subject
     chat = llm_up("GTA VI.")
     async with httpx.AsyncClient() as client:
@@ -615,11 +595,8 @@ async def test_topic_tab_headlines_get_their_subject_named(mock_redis, monkeypat
 
 
 @respx.mock
-async def test_a_rambling_answer_names_no_subject(mock_redis, monkeypatch):
-    monkeypatch.setattr(catalog_module, "_catalog", Catalog(
-        regions=[{"id": "asia", "label": "Asia", "sources": [{"name": "A", "url": "https://a.example/rss", "weight": 1.0}]}],
-        extras=[], topics=[{"id": "tech", "label": "Tech"}]))
-    await put_view(mock_redis, "asia:tech", [1])
+async def test_a_rambling_answer_names_no_subject(mock_redis):
+    await put_view(mock_redis, "asia:sport", [1])
     llm_up("This news is about a new game console that was released by a company today")
     async with httpx.AsyncClient() as client:
         assert await summarizer.name_subjects(client, mock_redis) == 1
@@ -633,9 +610,6 @@ async def test_subjects_are_named_after_summaries_and_before_story_pairs(monkeyp
 
 @respx.mock
 async def test_flagged_feed_items_are_put_to_the_llm_once(mock_redis, monkeypatch):
-    from keys import topic_check_key, topic_checks_pending_key
-    from site_config import Prompts, Site
-    import site_config
     monkeypatch.setattr(site_config, "_site", Site(name="n", description="d", prompts=Prompts(
         summary="s", same_story="t", subject="u", topic_checks={"tech": "Is this about technology? yes or no."})))
     await mock_redis.set(topic_checks_pending_key(), json.dumps([

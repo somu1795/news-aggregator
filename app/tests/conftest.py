@@ -9,6 +9,8 @@ import os
 os.environ["ALLOWED_HOSTS"] = "testserver"
 # Rate limiter storage; the app's own Redis client is replaced by FakeRedis below
 os.environ["REDIS_URL"] = "memory://"
+# The tests are about the site this repo ships (its regions, topics and name), whatever CONFIG_DIR the caller runs
+os.environ["CONFIG_DIR"] = os.path.join(os.path.dirname(__file__), "..", "..", "config")
 
 import pytest
 import pytest_asyncio
@@ -20,6 +22,7 @@ import main
 from main import app
 from config import settings
 from deps import limiter
+from services.feeds.poller import FeedPoller
 
 
 @pytest.fixture(autouse=True)
@@ -36,7 +39,6 @@ def fresh_rate_limits():
 @pytest.fixture
 def poller():
     """A refresher's feed memory, empty: no remembered feeds or paused hosts."""
-    from services.feeds.poller import FeedPoller
     return FeedPoller()
 
 

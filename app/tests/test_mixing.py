@@ -3,6 +3,9 @@ Tests for mix_headlines: weighted interleaving, feed order, freshness,
 de-duplication, per-publisher cap, and redistribution of unused slots.
 """
 
+import random
+from collections import Counter
+
 import pytest
 
 from catalog import NewsSource
@@ -119,8 +122,6 @@ def test_empty_and_missing_sources():
 
 def test_a_random_start_lets_any_source_lead_and_keeps_the_mix():
     # Otherwise the first source in the config always leads (the same headline on top for hours)
-    import random
-    from collections import Counter
     kind = lambda h: WORLD if "/w-" in h["link"] else SCIENCE if "/s-" in h["link"] else HN
     leaders = Counter()
     for seed in range(100):
@@ -131,3 +132,13 @@ def test_a_random_start_lets_any_source_lead_and_keeps_the_mix():
         assert [h["link"] for h in mixed if kind(h) == WORLD] == sorted((h["link"] for h in mixed if kind(h) == WORLD),
                                                                         key=lambda link: int(link.rsplit("-", 1)[1]))
     assert set(leaders) == {WORLD, SCIENCE, HN} and leaders[WORLD] > leaders[HN]
+
+
+def test_a_source_can_be_capped():
+    sources = [NewsSource(name="Busy", url="https://b.example/rss", weight=0.9, max_items=2),
+               NewsSource(name="Quiet", url="https://q.example/rss", weight=0.1)]
+    results = {name: [{"title": f"{name} {i}", "link": f"https://{name}.example/{i}", "source": name, "published": NOW}
+                      for i in range(5)] for name in ("Busy", "Quiet")}
+    titles = [h["title"] for h in mix_headlines(sources, results, NOW)]
+    assert sum(t.startswith("Busy") for t in titles) == 2  # Its weight would have given it most of the list
+    assert sum(t.startswith("Quiet") for t in titles) == 5  # The others fill its share

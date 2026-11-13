@@ -5,6 +5,7 @@ comes back empty.
 """
 
 import json
+import os
 import sqlite3
 import time
 from types import SimpleNamespace
@@ -17,10 +18,10 @@ from prometheus_client import REGISTRY
 import catalog as catalog_module
 from catalog import ALL_VIEW, Catalog
 from config import settings
-from keys import snapshot_key, subject_key
+from keys import snapshot_key, subject_key, topic_check_key, topic_checks_pending_key
 import refresher
-from refresher import refresh_once
-from services import stats_stream
+from refresher import refresh_once, sync_stories, until_next_cycle, write_search_index
+from services import archive, archive_index, stats_stream
 
 CATALOG = Catalog(
     regions=[
@@ -90,13 +91,18 @@ async def read_view(redis, view):
     return json.loads(await redis.get(snapshot_key(view)))
 
 
+async def refresh(redis, poller):
+    """One refresh cycle; returns the number of main views published."""
+    async with httpx.AsyncClient() as http_client:
+        return await refresh_once(http_client, redis, poller)
+
+
 @respx.mock
 async def test_refresh_publishes_every_view(mock_redis, poller):
     mock_feeds()
     successes_before = sample("headlines_refreshes_total", {"result": "success"})
 
-    async with httpx.AsyncClient() as http_client:
-        assert await refresh_once(http_client, mock_redis, poller) == 3  # all, asia, europe
+    assert await refresh(mock_redis, poller) == 3  # all, asia, europe
 
     asia = await read_view(mock_redis, "asia")
     europe = await read_view(mock_redis, "europe")
@@ -131,8 +137,7 @@ async def test_refresh_publishes_every_view(mock_redis, poller):
 async def test_single_outlet_feed_is_not_capped_in_its_region(mock_redis, poller):
     """An outlet's own feed (all items from one publisher) fills its weight; the cap would allow only 3."""
     mock_feeds()
-    async with httpx.AsyncClient() as http_client:
-        await refresh_once(http_client, mock_redis, poller)
+    await refresh(mock_redis, poller)
     asia = await read_view(mock_redis, "asia")
     everything = await read_view(mock_redis, ALL_VIEW)
     assert abs(sum("asia.example" in h["link"] for h in asia["data"]) - 16 * 0.4) <= 1
@@ -147,8 +152,7 @@ async def test_empty_view_keeps_its_previous_snapshot(mock_redis, poller, monkey
     respx.get("https://news.google.com/rss?ceid=GB:en").mock(return_value=httpx.Response(500))
     await mock_redis.set(snapshot_key("europe"), "previous europe")
 
-    async with httpx.AsyncClient() as http_client:
-        assert await refresh_once(http_client, mock_redis, poller) == 2  # all, asia
+    assert await refresh(mock_redis, poller) == 2  # all, asia
 
     assert await mock_redis.get(snapshot_key("europe")) == "previous europe"
     assert (await read_view(mock_redis, "asia"))["data"]
@@ -164,35 +168,11 @@ async def test_refresh_keeps_previous_snapshots_when_everything_fails(mock_redis
     empty_before = sample("headlines_refreshes_total", {"result": "empty"})
     failures_before = sample("feed_fetch_failures_total", {"source": "GN India"})
 
-    async with httpx.AsyncClient() as http_client:
-        assert await refresh_once(http_client, mock_redis, poller) == 0
+    assert await refresh(mock_redis, poller) == 0
 
     assert await mock_redis.get(snapshot_key(ALL_VIEW)) == "previous"
     assert sample("headlines_refreshes_total", {"result": "empty"}) == empty_before + 1
     assert sample("feed_fetch_failures_total", {"source": "GN India"}) == failures_before + 1
-
-
-def test_shipped_catalog_is_valid():
-    """The config folder loads, every region and the "all" view have sources, and every region has topic feeds."""
-    from pathlib import Path
-    from catalog import load_catalog
-    shipped = load_catalog(Path(settings.CONFIG_DIR))
-    assert shipped.view_ids[0] == ALL_VIEW and len(shipped.view_ids) == len(shipped.regions) + 1
-    assert all(region.sources and region.topic_sources for region in shipped.regions)
-    assert len(shipped.topic_view_ids) == len(shipped.view_ids) * len(shipped.topics)
-
-
-def test_source_labels_must_be_topics(tmp_path):
-    from catalog import load_catalog
-    (tmp_path / "topics.yaml").write_text(json.dumps({"topics": [{"id": "sport", "label": "Sport"}]}))
-    (tmp_path / "regions.yaml").write_text(json.dumps({"regions": [{"id": "asia", "label": "Asia"}]}))
-    (tmp_path / "sources.yaml").write_text(json.dumps({  # JSON is YAML too
-        "regions": {"asia": {"sources": [{"name": "A", "url": "https://a", "weight": 1.0}],
-                             "topic_sources": [{"name": "B", "url": "https://b", "label": "gossip"}]}},
-        "extras": [],
-    }))
-    with pytest.raises(ValueError, match="gossip"):
-        load_catalog(tmp_path)
 
 
 @respx.mock
@@ -201,8 +181,7 @@ async def test_moved_feed_is_followed(mock_redis, poller):
     mock_feeds()
     respx.get("https://asia.example/rss").mock(return_value=httpx.Response(301, headers={"Location": "https://asia.example/new-rss"}))
     respx.get("https://asia.example/new-rss").mock(return_value=httpx.Response(200, content=outlet_feed("asia.example", 30)))
-    async with httpx.AsyncClient() as http_client:
-        await refresh_once(http_client, mock_redis, poller)
+    await refresh(mock_redis, poller)
     assert abs(sum("asia.example" in h["link"] for h in (await read_view(mock_redis, "asia"))["data"]) - 16 * 0.4) <= 1
 
 
@@ -242,11 +221,18 @@ def topic_catalog(monkeypatch):
     respx.get("https://sports.example/rss").mock(return_value=httpx.Response(200, content=outlet_feed("sports.example", 5)))
 
 
+@pytest.fixture
+def strict_sport(topic_catalog, monkeypatch):
+    """The topic catalog, with sport leaving out the items of its feeds that the model scores under 0.05."""
+    sport, uplifting = TOPIC_CATALOG.topics
+    monkeypatch.setattr(catalog_module, "_catalog", TOPIC_CATALOG.model_copy(
+        update={"topics": [sport.model_copy(update={"min_feed_score": 0.05}), uplifting]}))
+
+
 @respx.mock
 async def test_topic_views_are_published(mock_redis, poller, topic_catalog):
     tagger = respx.post(TAGGER).mock(side_effect=fake_tagger)
-    async with httpx.AsyncClient() as http_client:
-        assert await refresh_once(http_client, mock_redis, poller) == 3
+    assert await refresh(mock_redis, poller) == 3
 
     asia_sport = await read_view(mock_redis, "asia:sport")
     assert asia_sport["region"] == "asia" and asia_sport["topic"] == "sport"
@@ -279,8 +265,7 @@ async def test_tagger_down_keeps_previous_topic_views(mock_redis, poller, topic_
     await mock_redis.set(snapshot_key("asia:sport"), "previous")
     failures_before = sample("headlines_topic_refreshes_total", {"result": "error"})
 
-    async with httpx.AsyncClient() as http_client:
-        assert await refresh_once(http_client, mock_redis, poller) == 3  # The main views are unaffected
+    assert await refresh(mock_redis, poller) == 3  # The main views are unaffected
 
     assert await mock_redis.get(snapshot_key("asia:sport")) == "previous"
     assert (await read_view(mock_redis, "asia"))["data"]
@@ -298,114 +283,8 @@ async def test_topic_feeds_are_fetched_every_interval(mock_redis, poller, topic_
     assert any(h["title"].startswith("sports.example") for h in (await read_view(mock_redis, "asia:sport"))["data"])
 
 
-def test_comments_link_to_the_article_itself_is_dropped():
-    from services.feeds.parse import discussion_link
-    article = "https://mexiconewsdaily.com/news/story/"
-    assert discussion_link(article, article) is None
-    assert discussion_link(article, article + "#comments") is None
-    assert discussion_link(article, None) is None
-    assert discussion_link("https://hn.example/a", "https://news.ycombinator.com/item?id=1") == "https://news.ycombinator.com/item?id=1"
-
-
-def test_region_topic_views_put_their_own_stories_first():
-    from services.views.topic_views import build_topic_views
-    catalog = Catalog(
-        regions=[
-            {"id": r, "label": r, "sources": [{"name": f"{r} news", "url": f"https://{r}.example/rss", "weight": 1.0}],
-             "topic_sources": [{"name": f"{r} tech", "url": f"https://{r}.example/tech", "label": "tech"}]}
-            for r in ("asia", "europe")
-        ],
-        extras=[],
-        topics=[{"id": "tech", "label": "Tech"}],
-        topic_extras=[{"name": "Shared tech", "url": "https://shared.example/rss", "label": "tech"}],
-    )
-    now = time.time()
-
-    def story(title, host):
-        return {"title": title, "link": f"https://{host}/{title.replace(' ', '-')}", "source": host, "published": now}
-
-    results = {
-        "asia tech": [story("Global chip launch", "techcrunch.com"), story("Singapore startup raises funds", "sg.example")],
-        "europe tech": [story("Global chip launch", "techcrunch.com"), story("UK telecom outage", "uk.example")],
-        "Shared tech": [story("Open source release", "shared.example")],
-    }
-    tags = {h["title"]: {"tech"} for items in results.values() for h in items}
-    views = build_topic_views(catalog, results, tags, now)
-
-    asia = [h["title"] for h in views["asia:tech"]]
-    # The region's own stories first, then the shared feed's, then the story both regions have
-    assert asia == ["Singapore startup raises funds", "Open source release", "Global chip launch"]
-    assert [h["title"] for h in views["europe:tech"]] == ["UK telecom outage", "Open source release", "Global chip launch"]
-    assert "Global chip launch" in [h["title"] for h in views["all:tech"]]
-
-
-def test_a_regions_own_feed_takes_turns_with_shared_stories_about_the_region():
-    # The Americas have one nature feed of their own (Inside Climate News): it filled the first 7
-    # places before Mongabay's or the Guardian's stories about the Americas
-    from services.views.topic_views import build_topic_views
-    catalog = Catalog(
-        regions=[{"id": "asia", "label": "Asia", "sources": [{"name": "asia news", "url": "https://asia.example/rss", "weight": 1.0}],
-                  "topic_sources": [{"name": "asia nature", "url": "https://asia.example/nature", "label": "nature"}],
-                  "places": ["Singapore"]}],
-        extras=[],
-        topics=[{"id": "nature", "label": "Nature", "feed_only": True}],
-        topic_extras=[{"name": "Shared nature", "url": "https://shared.example/rss", "label": "nature"}],
-    )
-    now = time.time()
-
-    def story(title, host):
-        return {"title": title, "link": f"https://{host}/{title.replace(' ', '-')}", "source": host, "published": now}
-
-    results = {
-        "asia nature": [story(f"Own story {i}", "own.example") for i in range(3)],
-        "Shared nature": [story(f"Singapore wildlife story {i}", "shared.example") for i in range(2)],
-    }
-    tags = {h["title"]: {"nature"} for items in results.values() for h in items}
-    views = build_topic_views(catalog, results, tags, now)
-    assert [h["title"] for h in views["asia:nature"]] == [
-        "Own story 0", "Singapore wildlife story 0", "Own story 1", "Singapore wildlife story 1", "Own story 2"]
-
-
-def test_a_topic_can_keep_older_stories():
-    from services.views.topic_views import build_topic_views
-    catalog = Catalog(
-        regions=[{"id": "asia", "label": "Asia", "sources": [{"name": "news", "url": "https://n.example/rss", "weight": 1.0}]}],
-        extras=[],
-        topics=[{"id": "uplifting", "label": "Uplifting", "max_age_hours": 168, "feed_only": True}, {"id": "tech", "label": "Tech"}],
-        topic_extras=[{"name": "Good news", "url": "https://g.example/rss", "label": "uplifting"},
-                      {"name": "Tech news", "url": "https://t.example/rss", "label": "tech"}],
-    )
-    now = time.time()
-
-    def story(title, days_old):
-        return {"title": title, "link": f"https://x.example/{title}", "source": "X", "published": now - days_old * 86400}
-
-    results = {"Good news": [story("good-today", 0), story("good-5-days", 5), story("good-9-days", 9)],
-               "Tech news": [story("tech-today", 0), story("tech-5-days", 5)]}
-    tags = {"good-today": {"uplifting"}, "good-5-days": {"uplifting"}, "good-9-days": {"uplifting"},
-            "tech-today": {"tech"}, "tech-5-days": {"tech"}}
-    views = build_topic_views(catalog, results, tags, now)
-    assert [h["title"] for h in views["asia:uplifting"]] == ["good-today", "good-5-days"]  # 7 days
-    assert [h["title"] for h in views["asia:tech"]] == ["tech-today"]  # The default 48 hours
-
-
-def test_a_source_can_be_capped():
-    from catalog import NewsSource
-    from services.views.mixing import mix_headlines
-    now = time.time()
-    sources = [NewsSource(name="Busy", url="https://b.example/rss", weight=0.9, max_items=2),
-               NewsSource(name="Quiet", url="https://q.example/rss", weight=0.1)]
-    results = {name: [{"title": f"{name} {i}", "link": f"https://{name}.example/{i}", "source": name, "published": now}
-                      for i in range(5)] for name in ("Busy", "Quiet")}
-    titles = [h["title"] for h in mix_headlines(sources, results, now)]
-    assert sum(t.startswith("Busy") for t in titles) == 2  # Its weight would have given it most of the list
-    assert sum(t.startswith("Quiet") for t in titles) == 5  # The others fill its share
-
-
 @respx.mock
 async def test_the_archives_stories_follow_the_tagger(mock_redis, tmp_path, monkeypatch):
-    from refresher import sync_stories
-    from services import archive
     monkeypatch.setattr(settings, "ARCHIVE_PATH", str(tmp_path / "archive.db"))
     monkeypatch.setattr("refresher.STORY_SYNC_BATCH", 2)
     items = [{"title": f"Story {n}", "link": f"https://pub.example/{n}", "source": "Pub", "published": 1.0} for n in range(3)]
@@ -432,8 +311,6 @@ async def test_the_archives_stories_follow_the_tagger(mock_redis, tmp_path, monk
 
 @respx.mock
 async def test_a_tagger_failure_leaves_the_archives_stories_for_the_next_cycle(tmp_path, monkeypatch):
-    from refresher import sync_stories
-    from services import archive
     monkeypatch.setattr(settings, "ARCHIVE_PATH", str(tmp_path / "archive.db"))
     archive.archive({"all": [{"title": "Story", "link": "https://pub.example/1", "source": "Pub", "published": 1.0}]}, 1000.0)
     respx.get(f"{settings.TAGGER_URL}/story-moves").mock(return_value=httpx.Response(503))
@@ -443,8 +320,6 @@ async def test_a_tagger_failure_leaves_the_archives_stories_for_the_next_cycle(t
 
 
 async def test_the_refresher_writes_the_search_index_for_the_app(tmp_path, monkeypatch):
-    from refresher import write_search_index
-    from services import archive, archive_index
     monkeypatch.setattr(settings, "ARCHIVE_PATH", str(tmp_path / "archive.db"))
     archive.archive({"all": [{"title": "Bridge plan approved", "link": "https://pub.example/1", "source": "Pub", "published": 1.0}]}, 1000.0)
     await write_search_index()
@@ -458,8 +333,7 @@ async def test_every_fetched_item_reaches_the_stats_stream(mock_redis, poller, m
     monkeypatch.setattr(settings, "MAX_HEADLINES", 5)  # Far fewer than the feeds carry
     stats_stream._sent.clear()
     mock_feeds()
-    async with httpx.AsyncClient() as http_client:
-        await refresh_once(http_client, mock_redis, poller)
+    await refresh(mock_redis, poller)
     links = {fields["link"] for _, fields in await mock_redis.xrange(stats_stream.STREAM)}
     assert len(links) > len((await read_view(mock_redis, ALL_VIEW))["data"]) == 5
 
@@ -470,8 +344,11 @@ async def test_a_stream_failure_leaves_the_refresh_alone(mock_redis, poller, mon
         raise RuntimeError("no catalog")
     monkeypatch.setattr(stats_stream, "get_catalog", broken)
     mock_feeds()
-    async with httpx.AsyncClient() as http_client:
-        assert await refresh_once(http_client, mock_redis, poller) == 3
+    assert await refresh(mock_redis, poller) == 3
+
+
+async def raising_topic_views(*args):
+    raise RuntimeError("no tagger")
 
 
 async def test_topic_feeds_reach_the_stream_when_the_topic_phase_fails(mock_redis, poller, monkeypatch):
@@ -483,28 +360,20 @@ async def test_topic_feeds_reach_the_stream_when_the_topic_phase_fails(mock_redi
     assert await mock_redis.xlen(stats_stream.STREAM) == 1
 
 
-async def raising_topic_views(*args):
-    raise RuntimeError("no tagger")
-
-
 async def test_the_search_index_is_rebuilt_only_every_so_often(tmp_path, monkeypatch):
-    import os
-    import refresher
-    from services import archive, archive_index
     monkeypatch.setattr(settings, "ARCHIVE_PATH", str(tmp_path / "archive.db"))
     monkeypatch.setattr(refresher, "_index_written", float("-inf"))
     archive.archive({"all": [{"title": "Bridge plan approved", "link": "https://pub.example/1", "source": "Pub", "published": 1.0}]}, 1000.0)
-    await refresher.write_search_index()
+    await write_search_index()
     first = os.stat(archive_index.index_path()).st_ino
-    await refresher.write_search_index()  # The next cycle: too soon
+    await write_search_index()  # The next cycle: too soon
     assert os.stat(archive_index.index_path()).st_ino == first
     monkeypatch.setattr(settings, "ARCHIVE_INDEX_SECONDS", 0)
-    await refresher.write_search_index()
+    await write_search_index()
     assert os.stat(archive_index.index_path()).st_ino != first
 
 
 def test_cycles_start_an_interval_apart_however_long_one_takes(monkeypatch):
-    from refresher import until_next_cycle
     monkeypatch.setattr(settings, "REFRESH_INTERVAL_SECONDS", 300)
     assert until_next_cycle(started=1000.0, now=1025.0) == 275.0
     assert until_next_cycle(started=1000.0, now=1400.0) == 1.0  # A cycle that overran: the next one at once
@@ -516,8 +385,7 @@ async def test_topic_tabs_keep_at_most_a_few_headlines_about_one_subject(mock_re
     respx.post(TAGGER).mock(side_effect=fake_tagger)
     for i in range(4):  # Named by the summarizer, from an earlier cycle's tabs
         await mock_redis.set(subject_key(f"https://sports.example/a/{i}"), json.dumps({"subject": "Big Match"}))
-    async with httpx.AsyncClient() as http_client:
-        await refresh_once(http_client, mock_redis, poller)
+    await refresh(mock_redis, poller)
     titles = [h["title"] for h in (await read_view(mock_redis, "asia:sport"))["data"]]
     assert titles[:3] == ["sports.example story 0", "sports.example story 1", "sports.example story 4"]
     assert "sports.example story 2" not in titles and "sports.example story 3" not in titles
@@ -538,11 +406,8 @@ async def test_a_tabs_top_headlines_give_their_places_up_after_a_while(mock_redi
 
 
 @respx.mock
-async def test_a_topic_can_leave_out_what_its_feeds_misfiled(mock_redis, poller, topic_catalog, monkeypatch, tmp_path):
+async def test_a_topic_can_leave_out_what_its_feeds_misfiled(mock_redis, poller, strict_sport, monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "ARCHIVE_PATH", str(tmp_path / "archive.db"))
-    strict = TOPIC_CATALOG.model_copy(update={"topics": [
-        TOPIC_CATALOG.topics[0].model_copy(update={"min_feed_score": 0.05}), TOPIC_CATALOG.topics[1]]})
-    monkeypatch.setattr(catalog_module, "_catalog", strict)
 
     def tagger(request):  # The model doesn't think sports.example story 1 is sport at all
         response = fake_tagger(request)
@@ -550,8 +415,7 @@ async def test_a_topic_can_leave_out_what_its_feeds_misfiled(mock_redis, poller,
         scores = [(0.01 if i["title"] == "sports.example story 1" else 0.7) if i["label"] == "sport" else None for i in items]
         return httpx.Response(200, json=response.json() | {"scores": scores})
     respx.post(TAGGER).mock(side_effect=tagger)
-    async with httpx.AsyncClient() as http_client:
-        await refresh_once(http_client, mock_redis, poller)
+    await refresh(mock_redis, poller)
     titles = [h["title"] for h in (await read_view(mock_redis, "asia:sport"))["data"]]
     assert "sports.example story 0" in titles and "sports.example story 1" not in titles
     with sqlite3.connect(tmp_path / "archive.db") as db:  # Still searchable
@@ -559,25 +423,17 @@ async def test_a_topic_can_leave_out_what_its_feeds_misfiled(mock_redis, poller,
 
 
 @respx.mock
-async def test_a_tagger_without_scores_leaves_every_feed_item_in(mock_redis, poller, topic_catalog, monkeypatch):
-    strict = TOPIC_CATALOG.model_copy(update={"topics": [
-        TOPIC_CATALOG.topics[0].model_copy(update={"min_feed_score": 0.05}), TOPIC_CATALOG.topics[1]]})
-    monkeypatch.setattr(catalog_module, "_catalog", strict)
+async def test_a_tagger_without_scores_leaves_every_feed_item_in(mock_redis, poller, strict_sport):
     respx.post(TAGGER).mock(side_effect=fake_tagger)
-    async with httpx.AsyncClient() as http_client:
-        await refresh_once(http_client, mock_redis, poller)
+    await refresh(mock_redis, poller)
     titles = [h["title"] for h in (await read_view(mock_redis, "asia:sport"))["data"]]
     assert titles[:5] == [f"sports.example story {i}" for i in range(5)]
 
 
 @respx.mock
-async def test_the_llm_can_bring_a_flagged_feed_item_back(mock_redis, poller, topic_catalog, monkeypatch):
+async def test_the_llm_can_bring_a_flagged_feed_item_back(mock_redis, poller, strict_sport):
     # The tagger's model can miss what a section rightly filed (an AI cybercrime story in Technology);
     # the summarizer's LLM is asked about flagged items, and a yes brings them back
-    from keys import topic_check_key, topic_checks_pending_key
-    strict = TOPIC_CATALOG.model_copy(update={"topics": [
-        TOPIC_CATALOG.topics[0].model_copy(update={"min_feed_score": 0.05}), TOPIC_CATALOG.topics[1]]})
-    monkeypatch.setattr(catalog_module, "_catalog", strict)
     flagged = {"sports.example story 1", "sports.example story 2", "sports.example story 4"}  # Not 3: the model tags it sport
 
     def tagger(request):
@@ -587,8 +443,7 @@ async def test_the_llm_can_bring_a_flagged_feed_item_back(mock_redis, poller, to
     respx.post(TAGGER).mock(side_effect=tagger)
     await mock_redis.set(topic_check_key("sport", "sports.example story 1"), json.dumps({"yes": True}))
     await mock_redis.set(topic_check_key("sport", "sports.example story 2"), json.dumps({"yes": False}))
-    async with httpx.AsyncClient() as http_client:
-        await refresh_once(http_client, mock_redis, poller)
+    await refresh(mock_redis, poller)
     titles = [h["title"] for h in (await read_view(mock_redis, "asia:sport"))["data"]]
     assert "sports.example story 1" in titles  # The LLM said yes
     assert "sports.example story 2" not in titles and "sports.example story 4" not in titles  # No; not judged yet
@@ -607,8 +462,7 @@ async def test_extras_are_spread_over_a_tab_s_first_headlines(mock_redis, poller
     mock_feeds()
     respx.get("https://news.google.com/rss?topic=science").mock(return_value=httpx.Response(200, content=google_feed("sci", 30)))
 
-    async with httpx.AsyncClient() as http_client:
-        await refresh_once(http_client, mock_redis, poller)
+    await refresh(mock_redis, poller)
 
     for view in ("all", "asia", "europe"):
         top = (await read_view(mock_redis, view))["data"][:settings.TOP_POSITIONS]

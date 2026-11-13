@@ -5,7 +5,8 @@ import time
 import pytest
 
 from catalog import Catalog
-from services.places import regions_in
+from services.places import item_regions, regions_in
+from services.views.topic_views import build_topic_views
 
 
 @pytest.mark.parametrize("title, regions", [
@@ -30,7 +31,6 @@ def test_regions_in(title, regions):
 
 
 def test_shared_stories_go_to_the_region_they_name():
-    from services.views.topic_views import build_topic_views
     catalog = Catalog(
         regions=[{"id": r, "label": r, "sources": [{"name": f"{r} news", "url": f"https://{r}.example/rss", "weight": 1.0}],
                   "places": places} for r, places in (("africa", ["Sierra Leone"]), ("asia", ["Iran"]))],
@@ -52,7 +52,6 @@ def test_shared_stories_go_to_the_region_they_name():
 
 
 def test_feed_text_names_the_place_when_the_headline_doesnt():
-    from services.places import item_regions
     item = {"title": "Ministers preparing to slash heat pump subsidies",
             "feed_text": "The UK government is expected to cut grants for heat pumps in England to fund defence."}
     assert item_regions(item) == {"europe"}
