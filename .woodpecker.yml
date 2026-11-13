@@ -10,9 +10,17 @@ labels:
   build-machine: true
 
 steps:
+  # jsdom for the page script's tests (app/tests/test_page_script.py), which the next step runs with Node
+  - name: page-test-deps
+    image: node:22.22.3-slim
+    commands:
+      - cd app/tests/page
+      - npm ci
+
   - name: test
     image: python:3.14.8-slim-trixie
     commands:
+      - apt-get update && apt-get install -y --no-install-recommends nodejs
       - cd app
       - pip install --no-cache-dir -r requirements.txt
       - pip install --no-cache-dir -r requirements-dev.txt

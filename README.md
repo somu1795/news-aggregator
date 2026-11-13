@@ -161,6 +161,10 @@ pip install -r requirements.txt && pip install -r requirements-dev.txt
 python -m pytest
 ```
 
+The page's script (`app/static/retro.js`) is tested in jsdom, on the page the server renders (`app/tests/page/`). Those tests run with the others when Node is installed and `npm ci` was run once in `app/tests/page`; without them that one test is skipped (in CI it fails instead).
+
+The tagger's HTTP interface has one sample, `tagger/data/api_sample.json`: the app's tests check that it sends and reads exactly that, the tagger's that its routes take and answer it.
+
 Dependencies are pinned in `app/requirements.txt`, with the hash of every file, generated from `app/requirements.in`. To change a dependency, edit `requirements.in` and run `pip-compile --generate-hashes --allow-unsafe --strip-extras requirements.in -o requirements.txt`.
 
 The tagger has its own tests (a fake embedder, so no NPU or OpenVINO model needed):

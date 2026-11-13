@@ -1,0 +1,11 @@
+{
+  "name": "page-tests",
+  "private": true,
+  "description": "Tests of the page's script (static/retro.js) in jsdom; run by tests/test_page_script.py",
+  "scripts": {
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "jsdom": "26.1.0"
+  }
+}

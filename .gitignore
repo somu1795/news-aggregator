@@ -50,3 +50,5 @@ build/
 .idea/
 *.swp
 *.swo
+# The page script tests' jsdom (npm ci in app/tests/page)
+app/tests/page/node_modules/
