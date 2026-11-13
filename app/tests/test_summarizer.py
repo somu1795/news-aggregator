@@ -19,8 +19,6 @@ from keys import article_text_key, browser_host_key, feed_text_key, full_page_ho
 from refresher import publish
 from summarizer import LLMUnavailable, read_ahead, summarize_ready, top_items
 
-pytestmark = pytest.mark.asyncio
-
 CATALOG = Catalog(
     regions=[{"id": "asia", "label": "Asia", "sources": [{"name": "A", "url": "https://a.example/rss", "weight": 1.0}]}],
     extras=[],

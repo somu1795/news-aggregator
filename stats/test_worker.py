@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+import zlib
 from pathlib import Path
 
 import fakeredis
@@ -28,7 +29,7 @@ class FakeEmbedder:
     """The same words give the same vector; " again" is dropped first."""
 
     def embed(self, titles):
-        out = np.stack([vector(abs(hash(t.replace(" again", ""))) % 2**32) for t in titles]) if titles else np.zeros((0, 384), np.float32)
+        out = np.stack([vector(zlib.crc32(t.replace(" again", "").encode())) for t in titles]) if titles else np.zeros((0, 384), np.float32)
         return out
 
 

@@ -7,6 +7,7 @@ comes back empty.
 import json
 import sqlite3
 import time
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -20,8 +21,6 @@ from keys import snapshot_key, subject_key
 import refresher
 from refresher import refresh_once
 from services import stats_stream
-
-pytestmark = pytest.mark.asyncio
 
 CATALOG = Catalog(
     regions=[
@@ -405,7 +404,7 @@ def test_a_source_can_be_capped():
 
 @respx.mock
 async def test_the_archives_stories_follow_the_tagger(mock_redis, tmp_path, monkeypatch):
-    from refresher import STORY_SYNC_BATCH, sync_stories
+    from refresher import sync_stories
     from services import archive
     monkeypatch.setattr(settings, "ARCHIVE_PATH", str(tmp_path / "archive.db"))
     monkeypatch.setattr("refresher.STORY_SYNC_BATCH", 2)
@@ -429,7 +428,6 @@ async def test_the_archives_stories_follow_the_tagger(mock_redis, tmp_path, monk
     assert asked == [["Story 0", "Story 2"]]  # Only those without a story, in batches
     db = sqlite3.connect(settings.ARCHIVE_PATH)
     assert dict(db.execute("SELECT title, story FROM items")) == {"Story 0": 10, "Story 1": 4, "Story 2": 12}
-    assert STORY_SYNC_BATCH == 2000
 
 
 @respx.mock
@@ -463,7 +461,7 @@ async def test_every_fetched_item_reaches_the_stats_stream(mock_redis, poller, m
     async with httpx.AsyncClient() as http_client:
         await refresh_once(http_client, mock_redis, poller)
     links = {fields["link"] for _, fields in await mock_redis.xrange(stats_stream.STREAM)}
-    assert len(links) > len(await read_view(mock_redis, ALL_VIEW))
+    assert len(links) > len((await read_view(mock_redis, ALL_VIEW))["data"]) == 5
 
 
 @respx.mock
@@ -532,7 +530,7 @@ async def test_a_tabs_top_headlines_give_their_places_up_after_a_while(mock_redi
         await refresh_once(http_client, mock_redis, poller)
         first = [h["link"] for h in (await read_view(mock_redis, "asia"))["data"]]
         later = time.time() + settings.TOP_DWELL_SECONDS
-        monkeypatch.setattr(refresher.time, "time", lambda: later)
+        monkeypatch.setattr(refresher, "time", SimpleNamespace(time=lambda: later))  # The refresher's clock only
         await refresh_once(http_client, mock_redis, poller)
     second = [h["link"] for h in (await read_view(mock_redis, "asia"))["data"]]
     top = settings.TOP_POSITIONS

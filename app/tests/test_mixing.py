@@ -80,6 +80,7 @@ def test_stale_items_are_dropped():
     data[WORLD] = [google_item("w", i, age_hours=72 if i % 2 else 1) for i in range(60)]
     mixed = mix_headlines(SOURCES, data, NOW)
     assert all(NOW - h["published"] <= 48 * 3600 for h in mixed)
+    assert sum(1 for h in mixed if source_of(h) == WORLD) == 25  # Its fresh half still fills its share
 
 
 def test_duplicates_across_sources_are_dropped():

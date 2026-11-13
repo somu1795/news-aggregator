@@ -9,5 +9,6 @@ venv
 # Ignore tests and dev-only files
 tests/
 requirements-dev.txt
+pytest.ini
 *.bkp
 *.bkp.*

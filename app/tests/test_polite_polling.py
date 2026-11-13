@@ -1,13 +1,14 @@
 """Tests for polite feed polling: conditional requests, per-feed intervals, host backoff."""
 
+import time
+from types import SimpleNamespace
+
 import httpx
 import pytest
 import respx
 
 from config import settings
 from services.feeds import poller as poller_module
-
-pytestmark = pytest.mark.asyncio
 
 FEED = "https://outlet.example/rss"
 
@@ -19,9 +20,9 @@ def rss(*titles):
 
 
 def advance(monkeypatch, seconds):
-    """Moves the refresher's clock forward."""
+    """Moves the poller's clock forward (its own: the event loop's keeps running)."""
     now = poller_module.time.monotonic() + seconds
-    monkeypatch.setattr(poller_module.time, "monotonic", lambda: now)
+    monkeypatch.setattr(poller_module, "time", SimpleNamespace(monotonic=lambda: now, time=time.time))
 
 
 @respx.mock
@@ -78,11 +79,14 @@ async def test_a_429_pauses_every_feed_on_that_host_without_retrying(poller, mon
 @respx.mock
 async def test_without_retry_after_the_pause_doubles(poller, monkeypatch):
     respx.get(FEED).mock(return_value=httpx.Response(503))
+    pauses = []
     async with httpx.AsyncClient() as client:
         for _ in range(3):
             await poller.fetch(client, "Outlet", FEED)
+            pauses.append(poller.backoff["outlet.example"].until - poller_module.time.monotonic())
             advance(monkeypatch, settings.FEED_BACKOFF_MAX_SECONDS + 1)
-    assert poller.backoff["outlet.example"].strikes == 3
+    first = settings.FEED_BACKOFF_SECONDS
+    assert pauses == pytest.approx([first, first * 2, first * 4], abs=1)
 
 
 @respx.mock

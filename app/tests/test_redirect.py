@@ -5,6 +5,7 @@ Covers: standard redirects, batchexecute API resolution, Redis URL caching,
 parse failure fallbacks, and retry logic.
 """
 
+import asyncio
 import json
 import pytest
 import pytest_asyncio
@@ -14,6 +15,7 @@ import httpx
 import respx
 from fakeredis.aioredis import FakeRedis
 
+from services.links import google_news
 from services.links.google_news import (
     resolve_redirect,
     _parse_batch_execute_response,
@@ -21,10 +23,18 @@ from services.links.google_news import (
     RESOLVED_URL_TTL,
 )
 
-pytestmark = pytest.mark.asyncio
-
 
 # --- Fixtures ---------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def no_waits_between_retries(monkeypatch):
+    """A retry waits BACKOFF_BASE ** attempt seconds (1, 2, ...); here it only gives way to other tasks."""
+    sleep = asyncio.sleep
+
+    async def no_wait(seconds):
+        await sleep(0)
+    monkeypatch.setattr(google_news.asyncio, "sleep", no_wait)
+
 
 @pytest_asyncio.fixture(scope="function")
 async def redis():
@@ -67,7 +77,7 @@ def test_parse_batch_execute_missing_index():
 
 @respx.mock
 async def test_resolve_standard_redirect(redis, http_client):
-    """Non-Google URL resolves via standard HTTP redirect following."""
+    """A Google link that redirects is resolved by following the redirect."""
     google_url = "https://news.google.com/rss/articles/test-123"
     final_url = "https://reuters.com/article/real-news"
 

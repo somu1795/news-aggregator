@@ -11,8 +11,6 @@ import pytest_asyncio
 
 from services import safe_fetch
 
-pytestmark = pytest.mark.asyncio
-
 
 @pytest_asyncio.fixture
 async def local_server():

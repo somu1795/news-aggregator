@@ -6,15 +6,12 @@ fallback runs only when the custom resolver's result is still a Google URL.
 import json
 
 import httpx
-import pytest
 import pytest_asyncio
 import respx
 from fakeredis.aioredis import FakeRedis
 from prometheus_client import REGISTRY
 
 from services.links.google_news import RESOLVED_URL_PREFIX, decode_with_signature, resolve_link
-
-pytestmark = pytest.mark.asyncio
 
 ARTICLE_ID = "CBMiTestArticle123"
 GOOGLE_URL = f"https://news.google.com/rss/articles/{ARTICLE_ID}?oc=5"

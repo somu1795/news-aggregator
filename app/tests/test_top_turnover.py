@@ -51,7 +51,6 @@ def test_a_story_keeps_its_time_on_top_when_another_of_its_headlines_leads_it():
     assert titles(ordered) == [1, 2, 3, 0]
 
 
-@pytest.mark.asyncio
 async def test_each_tab_remembers_its_own_top_across_refreshes(mock_redis):
     views = {"all": [item(n) for n in range(5)], "asia": [item(4), item(0)]}
     await turn_over(mock_redis, views, NOW)
@@ -106,7 +105,6 @@ def test_spacing_and_turnover_work_together(top_of_six):
     assert titles(ordered) == [4, 1, 5, 3, 6, 7, 0, 2, 8]
 
 
-@pytest.mark.asyncio
 async def test_a_tab_spaces_the_extras_it_is_told_about(mock_redis, top_of_six):
     items = [extra(0), extra(1), item(2), item(3)]
     result = await turn_over(mock_redis, {"all": items}, NOW, {i["link"] for i in items[:2]})

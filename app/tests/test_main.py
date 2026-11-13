@@ -17,10 +17,6 @@ from keys import snapshot_key
 # Using a fixed time for reproducible tests
 FIXED_TIME_UNIX = 1672531200 # 2023-01-01 00:00:00
 
-# Use pytest-asyncio for all async tests in this module
-pytestmark = pytest.mark.asyncio
-
-
 async def publish_snapshot(redis_client, title="Cached News", fetched_at=None, view=ALL_VIEW):
     """Writes a snapshot to Redis the same way the refresher does."""
     fetched_at = fetched_at or time.time()
@@ -324,14 +320,12 @@ async def test_get_headlines_serves_last_snapshot_when_redis_down(client, mock_r
 
 async def test_rate_limit_enforced_per_client_ip(client, mock_redis, monkeypatch):
     """Requests beyond API_RATE_LIMIT from one IP get 429; other IPs are unaffected."""
-    limiter.reset()
     await publish_snapshot(mock_redis)
     limit = int(settings.API_RATE_LIMIT.split("/")[0])
     statuses = [client.get("/api/headlines", headers={"X-Real-IP": "198.51.100.1"}).status_code for _ in range(limit + 1)]
     assert statuses[:limit] == [200] * limit
     assert statuses[-1] == 429
     assert client.get("/api/headlines", headers={"X-Real-IP": "198.51.100.2"}).status_code == 200
-    limiter.reset()
 
 
 def make_request(headers, client_host="172.18.0.5"):

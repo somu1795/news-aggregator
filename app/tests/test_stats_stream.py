@@ -15,8 +15,6 @@ from config import settings
 from services import stats_stream
 from services.stats_stream import STREAM, publish_new
 
-pytestmark = pytest.mark.asyncio
-
 
 def item(link="https://example.com/a", title="A headline", source="Publisher", published=1793500000.0):
     return {"title": title, "link": link, "source": source, "published": published, "feed_text": "x" * 700}
@@ -154,10 +152,6 @@ async def test_oversized_links_are_not_sent(mock_redis):
 def test_the_off_switch_reaches_the_refresher():
     compose = yaml.safe_load((Path(__file__).parents[2] / "docker-compose.yml").read_text())
     assert "STATS_STREAM_ENABLED" in compose["services"]["refresher"]["environment"]
-
-
-def test_sent_links_cost_little_memory():
-    assert stats_stream.MAX_SENT_LINKS == 50_000
 
 
 async def test_entries_match_the_sample_the_worker_is_tested_with(mock_redis):

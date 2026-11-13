@@ -12,8 +12,6 @@ import respx
 from config import settings
 from services.site_icons import cache_icons, icon_host, icon_key
 
-pytestmark = pytest.mark.asyncio
-
 PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=")
 
 
@@ -154,7 +152,7 @@ def test_neither_the_api_nor_the_refresher_loads_the_image_library():
 
 
 @pytest.mark.parametrize("command", [
-    "import os; os.abort()",  # The image library crashes
+    "import os, signal; os.kill(os.getpid(), signal.SIGKILL)",  # The image library crashes (no core dump: not SIGABRT)
     "import time; time.sleep(60)",  # Or hangs
     "x = bytearray(1 << 30)",  # Or wants far too much memory
 ])
@@ -164,7 +162,7 @@ async def test_a_picture_that_breaks_the_drawing_process_costs_only_its_icon(mon
     from services import site_icons
     monkeypatch.setattr(site_icons, "DRAW_COMMAND", [sys.executable, "-c",
                                                      "import resource; resource.setrlimit(resource.RLIMIT_AS, (256 << 20,) * 2); " + command])
-    monkeypatch.setattr(site_icons, "DRAW_TIMEOUT", 1.0)
+    monkeypatch.setattr(site_icons, "DRAW_TIMEOUT", 0.3)
     started = time.monotonic()
     assert await site_icons._draw([picture(64)]) == (0, None)
     assert time.monotonic() - started < 5  # A hung process is killed at the timeout

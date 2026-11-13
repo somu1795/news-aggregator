@@ -13,8 +13,6 @@ from keys import summary_key
 from refresher import publish
 from services import archive as archive_module
 
-pytestmark = pytest.mark.asyncio
-
 
 def item(n, **extra):
     return {"title": f"Story {n}", "link": f"https://pub.example/{n}", "source": "Pub",

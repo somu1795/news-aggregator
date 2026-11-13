@@ -19,15 +19,18 @@ from fakeredis.aioredis import FakeRedis
 import main
 from main import app
 from config import settings
-
-
-# Use pytest-asyncio for all async tests in this module
-pytestmark = pytest.mark.asyncio
+from deps import limiter
 
 
 @pytest.fixture(autouse=True)
 def no_request_jitter(monkeypatch):
     monkeypatch.setattr(settings, "FEED_JITTER_SECONDS", 0.0)
+
+
+@pytest.fixture(autouse=True)
+def fresh_rate_limits():
+    """Each test starts with no requests counted: the tests all come from one address, within a minute."""
+    limiter.reset()
 
 
 @pytest.fixture

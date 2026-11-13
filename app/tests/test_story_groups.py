@@ -1,13 +1,10 @@
 """Tests for folding other outlets' headlines about the same story under its first one."""
 
 import httpx
-import pytest
 import respx
 
 from config import settings
 from services.story_groups import group_stories
-
-pytestmark = pytest.mark.asyncio
 
 
 def item(title, source="Pub"):

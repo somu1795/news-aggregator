@@ -2,8 +2,6 @@
 
 import json
 
-import pytest
-
 from config import settings
 from keys import subject_key
 from services.subjects import cap_subjects, normalize_subject, subjects_of
@@ -38,7 +36,6 @@ def test_headlines_without_a_subject_are_never_capped(monkeypatch):
     assert views["all:tech"] == items and dropped == []
 
 
-@pytest.mark.asyncio
 async def test_subjects_are_read_from_the_summarizers_store(mock_redis):
     named, unnamed, blank = item(1), item(2), item(3)
     await mock_redis.set(subject_key(named["link"]), json.dumps({"subject": "GTA VI"}))
