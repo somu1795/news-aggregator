@@ -1,0 +1,27 @@
+{
+  "tag": {
+    "request": {"items": [{"title": "big dogs age faster study finds - Paper", "source": "Paper", "link": "https://example.com/1", "label": "other"}]},
+    "response": {"tags": [["science"]], "scores": [null], "model": "20261110T200000Z"}
+  },
+  "group": {
+    "request": {"items": [
+      {"title": "big dogs age faster study finds", "source": "Paper", "link": "https://example.com/1"},
+      {"title": "big dogs age faster scientists say", "source": "Other", "link": "https://example.org/2"}]},
+    "response": {"groups": [1, 2]}
+  },
+  "stories": {
+    "request": {"items": [{"title": "big dogs age faster study finds", "source": "Paper"}]},
+    "response": {"stories": [1]}
+  },
+  "story-candidates": {
+    "response": {"pairs": [{"a": "big dogs age faster scientists say", "b": "big dogs age faster study finds", "similarity": 0.7}]}
+  },
+  "story-verdicts": {
+    "request": {"verdicts": [
+      {"a": "big dogs age faster scientists say", "b": "big dogs age faster study finds", "same": true, "model": "qwen3:8b"}]},
+    "response": {"stored": 1}
+  },
+  "story-moves": {
+    "response": {"moves": [{"id": 1, "old": 2, "new": 1, "title": null}]}
+  }
+}

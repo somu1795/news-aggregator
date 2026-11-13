@@ -6,9 +6,11 @@ Run in the tagger image, or with requirements.txt + pytest installed:
     python -m pytest -q test_tagger.py
 """
 
+import asyncio
 import json
 import time
 import zlib
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -343,3 +345,34 @@ def test_the_database_caps_its_write_ahead_log(tmp_path):
     from store import connect
     db = connect(tmp_path / "t.db")
     assert db.execute("PRAGMA journal_size_limit").fetchone()[0] == 64 * 2**20
+
+
+API = json.loads((Path(__file__).parent / "data/api_sample.json").read_text())  # Also read by the app's tests
+
+
+def fields(value):
+    """The names in a JSON value, whatever their values: of an object, and of the first item of a list."""
+    if isinstance(value, dict):
+        return {name: fields(v) for name, v in value.items()}
+    return fields(value[0]) if isinstance(value, list) and value else None
+
+
+def test_the_routes_take_and_answer_what_the_shared_sample_says(tagger, monkeypatch):
+    async def at_once(fn, *args):  # The routes hand their work to a worker thread; the test's database belongs to this one
+        return fn(*args)
+    monkeypatch.setattr(tagger_module, "on_worker", at_once)
+    monkeypatch.setattr(tagger_module.app.state, "tagger", tagger, raising=False)
+    monkeypatch.setattr(stories_module, "STORY_THRESHOLD", 0.9)  # The sample's two headlines: unsure, so a pair for the judge
+    monkeypatch.setattr(stories_module, "STORY_LEADER_THRESHOLD", 0.9)
+    monkeypatch.setattr(stories_module, "STORY_CANDIDATE_THRESHOLD", 0.6)
+    request = lambda route, model: model(**API[route]["request"])
+    answers = {
+        "tag": asyncio.run(tagger_module.tag(request("tag", tagger_module.TagRequest))),
+        "group": asyncio.run(tagger_module.group(request("group", tagger_module.TagRequest))),
+        "stories": asyncio.run(tagger_module.stories(request("stories", tagger_module.TagRequest))),
+        "story-candidates": asyncio.run(tagger_module.story_candidates()),
+        "story-verdicts": asyncio.run(tagger_module.story_verdicts(request("story-verdicts", tagger_module.VerdictRequest))),
+        "story-moves": asyncio.run(tagger_module.story_moves()),
+    }
+    for route, answer in answers.items():
+        assert fields(answer) == fields(API[route]["response"]), route
