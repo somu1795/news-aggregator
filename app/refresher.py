@@ -136,7 +136,8 @@ async def refresh_once(http_client: httpx.AsyncClient, redis_client: aioredis.Re
         return 0
 
     published = await group_stories(http_client, published)
-    published = await turn_over(redis_client, published, fetched_at)
+    extras = {h["link"] for source in get_catalog().extras for h in results_by_source.get(source.name, [])}
+    published = await turn_over(redis_client, published, fetched_at, extras)
     await publish(redis_client, published, fetched_at)
 
     empty = sorted(set(views) - set(published))

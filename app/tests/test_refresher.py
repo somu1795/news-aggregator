@@ -596,3 +596,25 @@ async def test_the_llm_can_bring_a_flagged_feed_item_back(mock_redis, poller, to
     assert "sports.example story 2" not in titles and "sports.example story 4" not in titles  # No; not judged yet
     pending = json.loads(await mock_redis.get(topic_checks_pending_key()))
     assert [(p["topic"], p["title"]) for p in pending] == [("sport", "sports.example story 4")]
+
+
+@respx.mock
+async def test_extras_are_spread_over_a_tab_s_first_headlines(mock_redis, poller, monkeypatch):
+    """However heavy the extras, news leads each tab and no two extras are side by side in its first headlines."""
+    monkeypatch.setattr(catalog_module, "_catalog", Catalog(
+        regions=CATALOG.model_dump()["regions"],
+        extras=[{"name": "GN Science", "url": "https://news.google.com/rss?topic=science", "weight": 0.4},
+                {"name": "Hacker News", "url": "https://news.ycombinator.com/rss", "weight": 0.3}]))
+    monkeypatch.setattr(settings, "MAX_HEADLINES", 60)  # Enough news in each tab for its first headlines
+    mock_feeds()
+    respx.get("https://news.google.com/rss?topic=science").mock(return_value=httpx.Response(200, content=google_feed("sci", 30)))
+
+    async with httpx.AsyncClient() as http_client:
+        await refresh_once(http_client, mock_redis, poller)
+
+    for view in ("all", "asia", "europe"):
+        top = (await read_view(mock_redis, view))["data"][:settings.TOP_POSITIONS]
+        extra = [h["link"].startswith(("https://publisher.example/sci-", "https://hn.example/")) for h in top]
+        assert not extra[0]
+        assert not any(a and b for a, b in zip(extra, extra[1:]))
+        assert sum(extra) == settings.TOP_MAX_EXTRAS
