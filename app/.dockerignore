@@ -1,6 +1,7 @@
-# Ignore Python cache files
-__pycache__/
-*.pyc
+# Ignore Python and test cache files, at any depth (a bare name matches only at the top)
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
 
 # Ignore virtual environment folders
 .venv
