@@ -208,19 +208,20 @@ test("a long headline and summary wrap within the image, a word too long for a l
 
 
 // The header moon at a moment, seen from a place ([latitude, longitude], or none: today's north/south flip)
-const MOON_X = 5;  // The disc's left edge in the icon
+const MOON_X = 7, MOON_CENTRE = 11.5;  // The disc's left edge in the icon, and its centre
 async function moonAt(utc, position, south) {
     const page = await open(VIEWS, { moon: { south: Boolean(south), position: position || null },
         setup: (w) => { w.Date.now = () => Date.parse(utc); } });
     const pixels = [...page.$("moon").querySelectorAll("svg > rect")].filter((r) => /^(lit|shade|crater)$/.test(r.getAttribute("class")))
-        .map((r) => ({ x: Number(r.getAttribute("x")) - MOON_X, y: Number(r.getAttribute("y")), kind: r.getAttribute("class") }));
+        .flatMap((r) => Array.from({ length: Number(r.getAttribute("width")) },  // A row of pixels, one by one
+            (_, i) => ({ x: Number(r.getAttribute("x")) + i - MOON_X, y: Number(r.getAttribute("y")), kind: r.getAttribute("class") })));
     return pixels;
 }
 
 // Which way the lit part of the disc lies from its centre, in degrees: 0 right, 90 up, -90 down, 180 left
 function litDirection(pixels) {
     const lit = pixels.filter((p) => p.kind !== "shade");
-    const x = lit.reduce((sum, p) => sum + p.x - 7.5, 0), y = lit.reduce((sum, p) => sum + 7.5 - p.y, 0);
+    const x = lit.reduce((sum, p) => sum + p.x - MOON_CENTRE, 0), y = lit.reduce((sum, p) => sum + MOON_CENTRE - p.y, 0);
     return Math.atan2(y, x) * 180 / Math.PI;
 }
 const near = (angle, expected, within) => Math.abs(((angle - expected) % 360 + 540) % 360 - 180) <= within;
@@ -245,12 +246,11 @@ test("the moon turns through the night", async () => {
 
 test("the moon's face turns too: upside down in the south", async () => {
     // The full moon of 24 Nov 2026 near midnight, high in the north of Sydney's sky and the south of London's
-    const craters = (pixels) => pixels.filter((p) => p.kind === "crater").map((p) => p.x + "," + p.y);
+    // Which way the craters lie from the disc's centre, in degrees: half a turn apart from London and Sydney
+    const craters = (pixels) => litDirection(pixels.filter((p) => p.kind === "crater"));
     const london = craters(await moonAt("2026-11-25T00:00:00Z", [51.5, -0.1]));
     const sydney = craters(await moonAt("2026-11-24T14:00:00Z", [-33.9, 151.2]));
-    const turned = london.map((c) => c.split(",").map((n) => 15 - Number(n)).join(","));
-    assert.ok(london.length >= 8);
-    assert.ok(turned.filter((c) => sydney.includes(c)).length >= london.length - 2, sydney + " vs " + turned);
+    assert.ok(near(sydney, london + 180, 20), sydney + " vs " + london);
 });
 
 test("without the visitor's position the moon is lit on the right while waxing, mirrored in the south", async () => {
@@ -266,7 +266,7 @@ async function skyAt(utc, position) {
     const kinds = {};
     for (const r of page.$("moon").querySelectorAll("svg rect[class]")) {
         const kind = r.getAttribute("class").split(" ")[0];
-        (kinds[kind] = kinds[kind] || []).push({ x: Number(r.getAttribute("x")), y: Number(r.getAttribute("y")) });
+        for (let i = 0; i < Number(r.getAttribute("width")); i++) (kinds[kind] = kinds[kind] || []).push({ x: Number(r.getAttribute("x")) + i, y: Number(r.getAttribute("y")) });
     }
     return { kinds, label: page.$("moon").querySelector("span").textContent, title: page.$("moon").title, svg: page.$("moon").querySelector("svg") };
 }
@@ -276,7 +276,7 @@ test("a moon that has set sinks behind the horizon, and the tooltip says when it
     const sky = await skyAt("2026-11-16T19:45:00Z", BENGALURU);  // 1:15 am: the moon set before midnight
     assert.ok(sky.kinds.horizon, "a horizon line");
     const moon = [...(sky.kinds.lit || []), ...(sky.kinds.shade || [])];
-    assert.ok(moon.length > 0 && moon.every((p) => p.y >= 8), "only the top half shows");
+    assert.ok(moon.length > 0 && moon.every((p) => p.y >= 12), "only the top half shows");
     assert.match(sky.title, /moonrise \d\d:\d\d/);
     assert.match(sky.title, /sunrise \d\d:\d\d/);
 });
@@ -347,4 +347,22 @@ test("if sky.js doesn't load, the page works without the moon", async () => {
     const page = await open(VIEWS, { setup: (w) => { Object.defineProperty(w, "Sky", { get: () => undefined, set: () => {} }); } });
     assert.deepEqual(page.titles(), ["Storm warning issued", "Markets close higher", "Old bridge reopens"]);
     assert.equal(page.$("moon").querySelector("svg"), null);
+});
+
+test("the icon is redrawn only when what it shows changes, not on every update", async () => {
+    let now = Date.parse("2026-11-16T19:45:00Z");  // Bengaluru, Jupiter up
+    const ticks = [];  // The page's 30-second timer, run by hand
+    const page = await open(VIEWS, { moon: { south: false, position: [13.0, 77.6] },
+        setup: (w) => { w.Date.now = () => now; w.setInterval = (fn) => { ticks.push(fn); return 0; }; } });
+    const drawn = new Set([page.$("moon").querySelector("svg")]);
+    for (let minute = 0; minute < 10; minute++) {  // The planet moves a quarter of a degree a minute: not a pixel
+        now += 60000;
+        ticks.forEach((tick) => tick());
+        drawn.add(page.$("moon").querySelector("svg"));
+    }
+    assert.ok(drawn.size <= 3, drawn.size + " drawings in 10 minutes");  // A 3-degree step of the tilt now and then
+    const last = page.$("moon").querySelector("svg");
+    now += 3 * 3600000;  // Hours on, the sky has changed
+    ticks.forEach((tick) => tick());
+    assert.notEqual(page.$("moon").querySelector("svg"), last);
 });

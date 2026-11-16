@@ -28,7 +28,7 @@ from skyfield.api import Loader, wgs84
 REPO = Path(__file__).resolve().parent.parent
 SKY_JS = REPO / "app" / "static" / "sky.js"
 REFERENCE = REPO / "app" / "tests" / "page" / "sky-reference.json"
-START, END = (2026, 11, 1), (2037, 1, 1)
+START, END = (2026, 11, 1), (2032, 1, 1)
 EARTH_RADIUS, MOON_RADIUS, SUN_RADIUS, AU = 6378.137, 1737.4, 696000.0, 149597870.7
 STEP = 60  # Seconds between samples while finding an eclipse's start and end
 TOLERANCE = 0.2 / 3600  # Degrees: how far a polynomial may stray from DE421 (0.2")

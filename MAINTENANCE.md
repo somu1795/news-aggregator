@@ -52,7 +52,7 @@ What in this project is written by hand and ages, how often to look at it, and a
 | NPU driver, Ubuntu base, models (topic, story grouping, summarizer) | `tagger/Dockerfile`, `.env` `SUMMARIZER_MODEL` |
 | Smokescreen, Go, Alpine | `smokescreen/Dockerfile` |
 | Tagger Python packages | `tagger/requirements.txt` |
-| The header moon's eclipse table (runs to the end of 2036) | `scripts/sky-data.py`, before 2037: move `END` on and run it (it needs Skyfield and JPL's DE421, outside the app); it rewrites the table in `app/static/sky.js` and the tests' reference values. The planets' elements hold until 2050 |
+| The header moon's eclipse table (runs to the end of 2031) | `scripts/sky-data.py`, before 2032: move `END` on and run it (it needs Skyfield and JPL's DE421, outside the app); it rewrites the table in `app/static/sky.js` and the tests' reference values. The planets' elements hold until 2050 |
 
 ### Only when something breaks
 
