@@ -1,15 +1,17 @@
 // Opens the page in jsdom: the HTML the server renders (the file PAGE_HTML names, written by
-// tests/test_page_script.py) with the repo's retro.js, and the API answered from a test's own views.
+// tests/test_page_script.py) with the repo's sky.js and retro.js, and the API answered from a test's own views.
 const fs = require("fs");
 const path = require("path");
 const { JSDOM } = require("jsdom");
 
-const SCRIPT = fs.readFileSync(path.join(__dirname, "../../static/retro.js"), "utf8");
-const SCRIPT_TAG = /<script src="\/static\/retro\.js[^>]*><\/script>/;
 const HTML = fs.readFileSync(process.env.PAGE_HTML, "utf8");
-if (!SCRIPT_TAG.test(HTML)) throw new Error("The page doesn't load /static/retro.js");
-// The script is deferred: it runs once the page is parsed, so here it goes at the end of the body
-const PAGE = HTML.replace(SCRIPT_TAG, "").split("</body>").join("<script>" + SCRIPT.split("</script").join("<\\/script") + "</script></body>");
+// The scripts are deferred: they run in order once the page is parsed, so here they go at the end of the body
+const PAGE = ["sky.js", "retro.js"].reduce((page, name) => {
+    const tag = new RegExp('<script src="/static/' + name.replace(".", "\\.") + '[^>]*></script>');
+    if (!tag.test(page)) throw new Error("The page doesn't load /static/" + name);
+    const script = fs.readFileSync(path.join(__dirname, "../../static", name), "utf8");
+    return page.replace(tag, "").split("</body>").join("<script>" + script.split("</script").join("<\\/script") + "</script></body>");
+}, HTML);
 
 function data(id) {
     return JSON.parse(HTML.split('<script id="' + id + '" type="application/json">')[1].split("</script>")[0]);

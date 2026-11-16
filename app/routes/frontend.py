@@ -30,7 +30,7 @@ templates = Jinja2Templates(directory="templates")
 
 # The page links to its stylesheet and script by a hash of their content, so browsers and the CDN
 # can keep them for a year: a changed file gets a new URL
-_ASSET_HASHES = {name: hashlib.sha256(Path("static", name).read_bytes()).hexdigest()[:12] for name in ("retro.css", "retro.js")}
+_ASSET_HASHES = {name: hashlib.sha256(Path("static", name).read_bytes()).hexdigest()[:12] for name in ("retro.css", "sky.js", "retro.js")}
 _ASSETS = {name: f"/static/{name}?v={digest}" for name, digest in _ASSET_HASHES.items()}
 
 

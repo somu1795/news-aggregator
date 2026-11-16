@@ -124,7 +124,7 @@ def test_page_has_a_content_security_policy(client):
     assert "unsafe-inline" not in csp and "frame-ancestors 'none'" in csp
     assert client.get("/", headers={"Accept": "text/html"}).headers["content-security-policy"] != csp  # Fresh per response
 
-@pytest.mark.parametrize("name, content_type", [("retro.css", "text/css"), ("retro.js", "text/javascript")])
+@pytest.mark.parametrize("name, content_type", [("retro.css", "text/css"), ("sky.js", "text/javascript"), ("retro.js", "text/javascript")])
 def test_page_assets_are_kept_by_content_hash(client, name, content_type):
     """The page links to its stylesheet and script by content hash, so they can be cached for a year."""
     url = re.search(rf'"(/static/{re.escape(name)}\?v=\w+)"', client.get("/", headers={"Accept": "text/html"}).text).group(1)
@@ -144,7 +144,7 @@ def test_head_requests(client, path):
 def test_paywall_bypass_links(client):
     """archive.today links go straight to the newest snapshot; the defunct 12ft.io is gone."""
     page = client.get("/", headers={"Accept": "text/html"}).text
-    script = client.get(re.search(r'<script src="([^"]+)"', page).group(1)).text
+    script = client.get(re.search(r'<script src="(/static/retro\.js[^"]*)"', page).group(1)).text
     assert "https://archive.ph/newest/" in script
     assert "12ft.io/" not in script
 

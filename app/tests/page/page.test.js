@@ -259,3 +259,92 @@ test("without the visitor's position the moon is lit on the right while waxing, 
     assert.ok(near(north, 0, 5), "north: " + north);
     assert.ok(near(south, 180, 5), "south: " + south);
 });
+
+// The header's sky at a moment, seen from a place: its pixels by kind, its label and its title
+async function skyAt(utc, position) {
+    const page = await open(VIEWS, { moon: { south: position[0] < 0, position: position }, setup: (w) => { w.Date.now = () => Date.parse(utc); } });
+    const kinds = {};
+    for (const r of page.$("moon").querySelectorAll("svg rect[class]")) {
+        const kind = r.getAttribute("class").split(" ")[0];
+        (kinds[kind] = kinds[kind] || []).push({ x: Number(r.getAttribute("x")), y: Number(r.getAttribute("y")) });
+    }
+    return { kinds, label: page.$("moon").querySelector("span").textContent, title: page.$("moon").title, svg: page.$("moon").querySelector("svg") };
+}
+const BENGALURU = [13.0, 77.6], LONDON = [51.5, -0.1], QUITO = [-0.2, -78.5], SYDNEY = [-33.9, 151.2], TROMSO = [69.6, 19.0];
+
+test("a moon that has set sinks behind the horizon, and the tooltip says when it rises", async () => {
+    const sky = await skyAt("2026-11-16T19:45:00Z", BENGALURU);  // 1:15 am: the moon set before midnight
+    assert.ok(sky.kinds.horizon, "a horizon line");
+    const moon = [...(sky.kinds.lit || []), ...(sky.kinds.shade || [])];
+    assert.ok(moon.length > 0 && moon.every((p) => p.y >= 8), "only the top half shows");
+    assert.match(sky.title, /moonrise \d\d:\d\d/);
+    assert.match(sky.title, /sunrise \d\d:\d\d/);
+});
+
+test("by day a small sun shines and the stars are gone; at night the stars are out and the sun isn't", async () => {
+    const day = await skyAt("2026-11-16T19:45:00Z", QUITO);  // 2:45 pm
+    assert.ok(day.kinds.sun && day.kinds.sun.length >= 9);
+    assert.equal(day.kinds.star, undefined);
+    assert.match(day.title, /sunset \d\d:\d\d/);
+    assert.match(day.title, /moonset \d\d:\d\d/);
+    const night = await skyAt("2026-11-16T21:00:00Z", LONDON);
+    assert.equal(night.kinds.star.length, 4);
+    assert.equal(night.kinds.sun, undefined);
+    assert.equal(night.kinds.horizon, undefined);
+});
+
+test("the brightest planet up is a steady pixel, named in the tooltip", async () => {
+    const sky = await skyAt("2026-11-16T19:45:00Z", BENGALURU);
+    assert.equal(sky.kinds.planet.length, 1);
+    assert.match(sky.title, /Jupiter in the east/);
+});
+
+test("a meteor shower's streaks, while it peaks and its radiant is up", async () => {
+    const peak = await skyAt("2026-11-17T22:30:00Z", BENGALURU);
+    assert.ok(peak.svg.querySelector(".meteor rect"));
+    assert.match(peak.title, /Leonids meteor shower/);
+    const after = await skyAt("2026-11-25T22:30:00Z", BENGALURU);
+    assert.equal(after.svg.querySelector(".meteor"), null);
+});
+
+test("a lunar eclipse turns the moon red where it's in Earth's shadow", async () => {
+    const total = await skyAt("2028-12-31T16:50:00Z", BENGALURU);  // Mid-eclipse, the moon high
+    assert.equal(total.label, "total lunar eclipse");
+    assert.ok(total.kinds.blood.length > 150 && !total.kinds.lit, JSON.stringify(Object.keys(total.kinds)));
+    assert.match(total.title, /Total lunar eclipse/);
+    const sydney = await skyAt("2028-12-31T16:50:00Z", [-33.9, 151.2]);  // 3:50 am: the moon still up there too
+    assert.equal(sydney.label, "total lunar eclipse");
+    const quito = await skyAt("2028-12-31T16:50:00Z", QUITO);  // Midday: the moon is down
+    assert.notEqual(quito.label, "total lunar eclipse");
+});
+
+test("a solar eclipse puts the sun in the moon's place with the moon over it", async () => {
+    const sydney = await skyAt("2028-07-22T04:01:00Z", SYDNEY);  // Totality there: 1:59 to 2:03 pm
+    assert.equal(sydney.label, "total solar eclipse");
+    assert.ok(sydney.kinds.eclipsed.length > 100, String(sydney.kinds.eclipsed.length));
+    assert.ok(sydney.kinds.corona.length > 20, "the corona rings the moon in totality");
+    assert.equal(sydney.kinds.lit, undefined);
+    const partial = await skyAt("2028-07-22T03:20:00Z", SYDNEY);
+    assert.match(partial.label, /^partial solar eclipse \d+%$/);
+    assert.ok(partial.kinds["sun-disc"].length > 10 && partial.kinds.eclipsed.length > 10);
+});
+
+test("in polar night the sun doesn't rise, and the tooltip says so", async () => {
+    const sky = await skyAt("2026-12-10T11:00:00Z", TROMSO);
+    assert.match(sky.title, /the sun doesn't rise today/);
+    assert.equal(sky.kinds.sun, undefined);
+});
+
+test("without the visitor's position the header shows the moon alone, as before", async () => {
+    const page = await open(VIEWS, { moon: { south: false, position: null }, setup: (w) => { w.Date.now = () => Date.parse("2026-11-16T19:45:00Z"); } });
+    const svg = page.$("moon").querySelector("svg");
+    assert.equal(svg.querySelectorAll(".star").length, 4);
+    assert.equal(svg.querySelector(".sun, .horizon, .planet, .meteor"), null);
+    assert.doesNotMatch(page.$("moon").title, /rise|set /);
+});
+
+test("if sky.js doesn't load, the page works without the moon", async () => {
+    const page = await open(VIEWS, { setup: (w) => { Object.defineProperty(w, "Sky", { get: () => undefined, set: () => {} }); } });
+    assert.deepEqual(page.titles(), ["Storm warning issued", "Markets close higher", "Old bridge reopens"]);
+    assert.equal(page.$("moon").querySelector("svg"), null);
+});
