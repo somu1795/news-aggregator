@@ -271,7 +271,7 @@
     // A "snap" button under each open summary, which saves the headline and summary as an image (saveSnap)
     var snaps = read("retroSnippet") !== "off";  // On unless turned off (its first name, kept so the choice is)
     function renderSnapSetting() {
-        snapBtn.textContent = "snap button: " + (snaps ? "on" : "off");
+        snapBtn.textContent = "snap: " + (snaps ? "on" : "off");
         snapBtn.classList.toggle("on", snaps);
         snapBtn.setAttribute("aria-pressed", String(snaps));
     }

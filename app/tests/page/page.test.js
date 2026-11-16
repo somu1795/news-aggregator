@@ -182,16 +182,16 @@ test("on a phone, snap opens the share sheet with the image", async () => {
 
 test("the snap button can be turned off in advanced, is remembered, and comes back with reset", async () => {
     const page = await open(SUMMARISED);
-    assert.equal(page.$("snap-toggle").textContent, "snap button: on");
+    assert.equal(page.$("snap-toggle").textContent, "snap: on");
     await page.click(page.$("snap-toggle"));
-    assert.equal(page.$("snap-toggle").textContent, "snap button: off");
+    assert.equal(page.$("snap-toggle").textContent, "snap: off");
     assert.equal(await openSummary(page), null);
     assert.equal(page.window.localStorage.getItem("retroSnippet"), "off");
 
     const again = await open(SUMMARISED, { stored: { retroSnippet: "off" } });
     assert.equal(await openSummary(again), null);
     await again.click(again.$("reset"));
-    assert.equal(again.$("snap-toggle").textContent, "snap button: on");
+    assert.equal(again.$("snap-toggle").textContent, "snap: on");
 });
 
 test("a long headline and summary wrap within the image, a word too long for a line included", async () => {
