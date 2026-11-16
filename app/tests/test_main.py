@@ -552,7 +552,22 @@ def test_page_starts_on_the_visitors_region(client, country, region):
 def test_page_shows_the_moon_as_seen_from_the_visitors_hemisphere(client, country, south):
     headers = {"Accept": "text/html", **({"CF-IPCountry": country} if country else {})}
     page = client.get("/", headers=headers).text
-    assert json.loads(page.split('<script id="moon-data" type="application/json">')[1].split("</script>")[0]) == {"south": south}
+    assert json.loads(page.split('<script id="moon-data" type="application/json">')[1].split("</script>")[0])["south"] == south
+
+
+@pytest.mark.parametrize("latitude, longitude, position", [
+    ("-33.86785", "151.20732", [-33.9, 151.2]),  # Rounded to about 11 km
+    ("13.0827", "80.2707", [13.1, 80.3]),
+    (None, None, None),  # Cloudflare's location headers off
+    ("", "80.27", None), ("north", "80.27", None), ("nan", "80.27", None),
+    ("91", "80.27", None), ("13.08", "-180.5", None),
+])
+def test_page_gets_the_visitors_rough_position_for_the_moons_tilt(client, latitude, longitude, position):
+    headers = {"Accept": "text/html", "CF-IPCountry": "AU"}
+    if latitude is not None:
+        headers.update({"CF-IPLatitude": latitude, "CF-IPLongitude": longitude})
+    page = client.get("/", headers=headers).text
+    assert json.loads(page.split('<script id="moon-data" type="application/json">')[1].split("</script>")[0]) == {"south": True, "position": position}
 
 
 @pytest.mark.parametrize("theme, color", [("light", "#f3efe4"), ("dark", "#120f0a")])

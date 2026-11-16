@@ -1193,7 +1193,9 @@
         else if (/^[1-9]$/.test(event.key) && VIEWS[Number(event.key) - 1]) selectView(VIEWS[Number(event.key) - 1].id, currentTopic, true);
     });
     // --- The moon: its phase now, drawn in 16x16 pixels like the site icons, with its name ---
-    var MOON_SOUTH = JSON.parse(document.getElementById("moon-data").textContent).south;  // Mirrored: lit on the left while waxing
+    var MOON_DATA = JSON.parse(document.getElementById("moon-data").textContent);
+    var MOON_SOUTH = MOON_DATA.south;  // Mirrored: lit on the left while waxing (when the position isn't known)
+    var MOON_POSITION = MOON_DATA.position;  // [latitude, longitude], rounded (Cloudflare's), or null
     var MOON_NAMES = ["new moon", "waxing crescent", "first quarter", "waxing gibbous", "full moon", "waning gibbous", "last quarter", "waning crescent"];
     var MOON_CRATERS = [[5, 4], [6, 4], [4, 5], [5, 5], [9, 6], [10, 6], [10, 7], [6, 10], [7, 10], [11, 11]];
     var MOON_X = 5;  // The moon's left edge in the icon; the stars are either side of it
@@ -1217,6 +1219,34 @@
         return (e % 360 + 360) % 360;
     }
 
+    // How the moon looks tilted from a place at a time, in radians: `limb`, the way to its lit edge
+    // (counterclockwise from straight up), and `face`, how far its north is turned (clockwise from up).
+    // The bright limb's position angle less the parallactic angle (Meeus 48.5 and 14.1), from low-precision
+    // positions of the moon (its main terms, Meeus 47) and the sun: within a degree or two, plenty at 16 pixels.
+    // Below the horizon it's how the moon would look if it were up.
+    function moonView(time, position) {
+        var rad = Math.PI / 180;
+        var days = time / 86400000 - 10957.5, t = days / 36525;  // Since 2000-01-01 12:00 UTC
+        var d = (297.8501921 + 445267.1114034 * t) * rad, m = (357.5291092 + 35999.0502909 * t) * rad;
+        var mm = (134.9633964 + 477198.8675055 * t) * rad, f = (93.2720950 + 483202.0175233 * t) * rad;
+        var moonLon = (218.3164477 + 481267.88123421 * t + 6.289 * Math.sin(mm) + 1.274 * Math.sin(2 * d - mm) + 0.658 * Math.sin(2 * d)
+            + 0.214 * Math.sin(2 * mm) - 0.186 * Math.sin(m) - 0.114 * Math.sin(2 * f)) * rad;
+        var moonLat = (5.128 * Math.sin(f) + 0.2806 * Math.sin(mm + f) + 0.2777 * Math.sin(mm - f) + 0.1732 * Math.sin(2 * d - f)) * rad;
+        var sunLon = (280.46646 + 36000.76983 * t + 1.9146 * Math.sin(m) + 0.02 * Math.sin(2 * m)) * rad;
+        var moon = equatorial(moonLon, moonLat), sun = equatorial(sunLon, 0);
+        var limb = Math.atan2(Math.cos(sun.dec) * Math.sin(sun.ra - moon.ra),
+            Math.sin(sun.dec) * Math.cos(moon.dec) - Math.cos(sun.dec) * Math.sin(moon.dec) * Math.cos(sun.ra - moon.ra));
+        var hour = (280.46061837 + 360.98564736629 * days + position[1]) * rad - moon.ra;  // The moon's hour angle
+        var face = Math.atan2(Math.sin(hour), Math.tan(position[0] * rad) * Math.cos(moon.dec) - Math.sin(moon.dec) * Math.cos(hour));
+        return { limb: limb - face, face: face };
+    }
+
+    function equatorial(lon, lat) {  // Ecliptic to equatorial coordinates (radians)
+        var tilt = 23.439 * Math.PI / 180;
+        return { ra: Math.atan2(Math.sin(lon) * Math.cos(tilt) - Math.tan(lat) * Math.sin(tilt), Math.cos(lon)),
+            dec: Math.asin(Math.sin(lat) * Math.cos(tilt) + Math.cos(lat) * Math.sin(tilt) * Math.sin(lon)) };
+    }
+
     function moonName(e) {
         var quarter = Math.round(e / 90);
         if (Math.abs(e - quarter * 90) < 6) return MOON_NAMES[(quarter % 4) * 2];  // About half a day either side
@@ -1234,12 +1264,16 @@
         return null;
     }
 
-    // The moon (16x16, 5 pixels in) between twinkling stars, with a cloud now and then: 26x16 pixels
-    function moonPixels(e, south) {
+    // The moon (16x16, 5 pixels in) between twinkling stars, with a cloud now and then: 26x16 pixels.
+    // Tilted as `view` says (moonView), or else upright: lit on the right while waxing, mirrored if `south`.
+    function moonPixels(e, south, view) {
         var svg = svgElement("svg", { viewBox: "0 0 26 16", "shape-rendering": "crispEdges", "aria-hidden": "true" });
         MOON_STARS.forEach(function (star, i) { svg.appendChild(pixel(star[0], star[1], 1, "star s" + (i + 1))); });
         var clip = svgElement("clipPath", { id: "moon-disc" });  // The cloud shows only where it crosses the moon
         var cos = Math.cos(e * Math.PI / 180);
+        var limb = view ? view.limb : (e < 180 !== south ? -Math.PI / 2 : Math.PI / 2);  // Right, or left
+        var limbX = -Math.sin(limb), limbY = -Math.cos(limb);  // Toward the lit edge, on screen (y down)
+        var faceCos = Math.cos(view ? view.face : 0), faceSin = Math.sin(view ? view.face : 0);
         var craters = {};
         MOON_CRATERS.forEach(function (p) { craters[p[0] + "," + p[1]] = true; });
         for (var y = 0; y < 16; y++) {
@@ -1252,17 +1286,20 @@
                         var px = (x + (sx + 0.5) / 4 - 8) / 8, py = (y + (sy + 0.5) / 4 - 8) / 8;  // The disc's radius is 1
                         if (px * px + py * py > 1) continue;
                         inside++;
-                        var half = Math.sqrt(1 - py * py);  // Half the disc's width at this height
-                        var side = south ? -px : px;
-                        // The terminator is half an ellipse: lit beyond it, on the right while waxing (seen from the north)
-                        if (e < 180 ? side > half * cos : -side > half * cos) litPoints++;
+                        var along = px * limbX + py * limbY, across = px * limbY - py * limbX;  // Turned to the lit edge
+                        var half = Math.sqrt(Math.max(0, 1 - across * across));  // Half the disc's width there
+                        // The terminator is half an ellipse: lit beyond it, toward the sun
+                        if (along > half * cos) litPoints++;
                     }
                 }
                 if (inside < 8) continue;
                 if (first === null) first = x;
                 last = x;
                 var lit = litPoints * 3 >= inside;  // A third: thin crescents stay unbroken arcs
-                svg.appendChild(pixel(MOON_X + x, y, 1, !lit ? "shade" : craters[(south ? 15 - x : x) + "," + y] ? "crater" : "lit"));
+                // The craters turn with the moon's face (the pixel it shows here, turned back), or mirror without a view
+                var faceX = view ? Math.round((x - 7.5) * faceCos + (y - 7.5) * faceSin + 7.5) : south ? 15 - x : x;
+                var faceY = view ? Math.round((y - 7.5) * faceCos - (x - 7.5) * faceSin + 7.5) : y;
+                svg.appendChild(pixel(MOON_X + x, y, 1, !lit ? "shade" : craters[faceX + "," + faceY] ? "crater" : "lit"));
             }
             if (first !== null) clip.appendChild(pixel(MOON_X + first, y, last - first + 1));
         }
@@ -1293,7 +1330,8 @@
         var percent = Math.round((1 - Math.cos(e * Math.PI / 180)) / 2 * 100);
         var name = percent === 0 ? "new moon" : percent === 100 ? "full moon" : moonName(e);
         var label = name === "new moon" || name === "full moon" ? name : name + " " + percent + "%";
-        var key = label + " " + Math.round(e);
+        var view = MOON_POSITION ? moonView(now, MOON_POSITION) : null;
+        var key = label + " " + Math.round(e) + (view ? " " + Math.round(view.limb * 180 / Math.PI) + " " + Math.round(view.face * 180 / Math.PI) : "");
         if (key === moonShown) return;
         moonShown = key;
         var hours = hoursToNext(now, e);
@@ -1305,7 +1343,7 @@
         var text = document.createElement("span");
         text.textContent = label;
         moonEl.appendChild(text);
-        moonEl.appendChild(moonPixels(e, MOON_SOUTH));
+        moonEl.appendChild(moonPixels(e, MOON_SOUTH, view));
         moonEl.title = title;
         moonEl.setAttribute("aria-label", "Moon: " + title);
     }

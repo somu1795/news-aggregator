@@ -206,3 +206,56 @@ test("a long headline and summary wrap within the image, a word too long for a l
     assert.ok(pieces.every((t) => t.length * 8 <= 640 - 2 * 28 - 14), "every piece fits the summary's width");
 });
 
+
+// The header moon at a moment, seen from a place ([latitude, longitude], or none: today's north/south flip)
+const MOON_X = 5;  // The disc's left edge in the icon
+async function moonAt(utc, position, south) {
+    const page = await open(VIEWS, { moon: { south: Boolean(south), position: position || null },
+        setup: (w) => { w.Date.now = () => Date.parse(utc); } });
+    const pixels = [...page.$("moon").querySelectorAll("svg > rect")].filter((r) => /^(lit|shade|crater)$/.test(r.getAttribute("class")))
+        .map((r) => ({ x: Number(r.getAttribute("x")) - MOON_X, y: Number(r.getAttribute("y")), kind: r.getAttribute("class") }));
+    return pixels;
+}
+
+// Which way the lit part of the disc lies from its centre, in degrees: 0 right, 90 up, -90 down, 180 left
+function litDirection(pixels) {
+    const lit = pixels.filter((p) => p.kind !== "shade");
+    const x = lit.reduce((sum, p) => sum + p.x - 7.5, 0), y = lit.reduce((sum, p) => sum + 7.5 - p.y, 0);
+    return Math.atan2(y, x) * 180 / Math.PI;
+}
+const near = (angle, expected, within) => Math.abs(((angle - expected) % 360 + 540) % 360 - 180) <= within;
+
+test("an evening crescent is tilted as seen from the visitor's latitude", async () => {
+    // 13 Dec 2026, a waxing crescent, about 7 pm local
+    const london = litDirection(await moonAt("2026-12-13T19:00:00Z", [51.5, -0.1]));
+    const quito = litDirection(await moonAt("2026-12-14T00:15:00Z", [-0.2, -78.5]));
+    const sydney = litDirection(await moonAt("2026-12-13T08:55:00Z", [-33.9, 151.2]));
+    assert.ok(near(london, -45, 25), "lit lower right in London: " + london);
+    assert.ok(near(quito, -90, 25), "lit from below near the equator: " + quito);
+    assert.ok(near(sydney, -135, 25), "lit lower left in Sydney: " + sydney);
+});
+
+test("the moon turns through the night", async () => {
+    // A first quarter seen from Chennai on 18 Nov 2026: lit on the right at dusk, from below by midnight
+    const dusk = litDirection(await moonAt("2026-11-18T12:39:00Z", [13.1, 80.3]));
+    const midnight = litDirection(await moonAt("2026-11-18T18:39:00Z", [13.1, 80.3]));
+    assert.ok(near(dusk, 0, 25), "lit on the right at 6 pm: " + dusk);
+    assert.ok(near(midnight, -90, 25), "lit from below at midnight: " + midnight);
+});
+
+test("the moon's face turns too: upside down in the south", async () => {
+    // The full moon of 24 Nov 2026 near midnight, high in the north of Sydney's sky and the south of London's
+    const craters = (pixels) => pixels.filter((p) => p.kind === "crater").map((p) => p.x + "," + p.y);
+    const london = craters(await moonAt("2026-11-25T00:00:00Z", [51.5, -0.1]));
+    const sydney = craters(await moonAt("2026-11-24T14:00:00Z", [-33.9, 151.2]));
+    const turned = london.map((c) => c.split(",").map((n) => 15 - Number(n)).join(","));
+    assert.ok(london.length >= 8);
+    assert.ok(turned.filter((c) => sydney.includes(c)).length >= london.length - 2, sydney + " vs " + turned);
+});
+
+test("without the visitor's position the moon is lit on the right while waxing, mirrored in the south", async () => {
+    const north = litDirection(await moonAt("2026-12-13T19:00:00Z", null, false));
+    const south = litDirection(await moonAt("2026-12-13T19:00:00Z", null, true));
+    assert.ok(near(north, 0, 5), "north: " + north);
+    assert.ok(near(south, 180, 5), "south: " + south);
+});

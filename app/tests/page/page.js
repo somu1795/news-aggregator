@@ -35,11 +35,13 @@ function searchIndex(views) {
 }
 
 // views: {"<region>/<topic>": [items]}; options: { stored: localStorage entries, setup(window) before the page runs,
-// failing: true while the API should answer 503 (page.failing can be changed later) }
+// failing: true while the API should answer 503 (page.failing can be changed later), moon: the moon data the server
+// would send (south, position) in place of the page's }
 async function open(views, options) {
     options = options || {};
     const page = { requests: [], failing: Boolean(options.failing) };
-    const dom = new JSDOM(PAGE, { runScripts: "dangerously", url: "https://testserver/" + (options.query || ""), beforeParse(window) {
+    const html = options.moon ? PAGE.replace(/(<script id="moon-data" type="application\/json">)[^<]*/, (_, tag) => tag + JSON.stringify(options.moon)) : PAGE;
+    const dom = new JSDOM(html, { runScripts: "dangerously", url: "https://testserver/" + (options.query || ""), beforeParse(window) {
         Object.entries(options.stored || {}).forEach(([key, value]) => window.localStorage.setItem(key, value));
         window.matchMedia = () => ({ matches: false, addEventListener() {}, addListener() {} });
         window.scrollTo = () => {};

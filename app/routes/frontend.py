@@ -20,7 +20,7 @@ from fastapi.templating import Jinja2Templates
 from catalog import ALL_VIEW, get_catalog
 from config import settings
 from deps import limiter
-from services.geo import in_southern_hemisphere, region_for_country
+from services.geo import in_southern_hemisphere, region_for_country, rough_position
 from site_config import get_site
 
 router = APIRouter()
@@ -69,8 +69,9 @@ async def root(request: Request):
              "assets": _ASSETS, "site_url": _site_url(request), "default_theme": settings.DEFAULT_THEME,
              # Starting tab for visitors who haven't chosen one (country from Cloudflare)
              "home_region": region_for_country(request.headers.get("cf-ipcountry")),
-             # The header's moon, mirrored for the southern hemisphere
-             "moon": {"south": in_southern_hemisphere(request.headers.get("cf-ipcountry"))}},
+             # The header's moon: mirrored for the southern hemisphere, or tilted as seen from the visitor's rough position
+             "moon": {"south": in_southern_hemisphere(request.headers.get("cf-ipcountry")),
+                      "position": rough_position(request.headers.get("cf-iplatitude"), request.headers.get("cf-iplongitude"))}},
         )
         response.headers["Content-Security-Policy"] = _CSP.format(nonce=nonce)
         response.headers["Vary"] = "Accept"  # The same address answers JSON too: caches must keep both apart
