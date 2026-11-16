@@ -831,7 +831,7 @@
     }
 
     // --- Snippet: a headline and its summary as an image, drawn on a canvas in the page's colours ---
-    var SNIPPET_FOOTER = "news.freestuffsthat.work";
+    var SNIPPET_FOOTER = "news.txt | news.freestuffsthat.work";
     var SNIPPET_WIDTH = 640, SNIPPET_PAD = 28, SNIPPET_SCALE = 2;  // CSS pixels; drawn at twice that, for sharp text
 
     // Lines at most `width` wide from runs of text ({ text, font, color }), broken at spaces (a word

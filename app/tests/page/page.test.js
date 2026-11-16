@@ -161,7 +161,7 @@ test("snippet saves the headline and its summary as an image, without the page's
     assert.equal(seen.download, "news-felix-gallardo-dies-at-80.png");
     const drawn = seen.drawn.join(" ");
     for (const part of ["Félix Gallardo dies at 80", "(pub.example)", "Latin Times · 30m ago", "long illness.",
-                        "machine summary · may contain errors", "news.freestuffsthat.work"]) {
+                        "machine summary · may contain errors", "news.txt | news.freestuffsthat.work"]) {
         assert.ok(drawn.includes(part), part + " in: " + drawn);
     }
     assert.ok(!/snippet|hide summary|discuss/.test(drawn), drawn);
