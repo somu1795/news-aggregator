@@ -133,14 +133,14 @@ test("an empty tab says there are no headlines", async () => {
 });
 
 // A canvas that records what is written on it (jsdom draws nothing), and a download or share sheet that records the file
-function snippetStandIns(window, seen) {
+function snapStandIns(window, seen) {
     seen.drawn = [];
     window.HTMLCanvasElement.prototype.getContext = () => new Proxy({
         measureText: (text) => ({ width: text.length * 8 }),
         fillText: (text) => seen.drawn.push(text),
     }, { get: (target, name) => name in target ? target[name] : () => {}, set: () => true });
     window.HTMLCanvasElement.prototype.toBlob = (done) => done(new window.Blob(["png"], { type: "image/png" }));
-    window.URL.createObjectURL = () => "blob:snippet";
+    window.URL.createObjectURL = () => "blob:snap";
     window.URL.revokeObjectURL = () => {};
     window.HTMLAnchorElement.prototype.click = function () { if (this.download) seen.download = this.download; };
 }
@@ -152,11 +152,11 @@ async function openSummary(page) {
     return page.window.document.querySelector("#list .summary small button");
 }
 
-test("snippet saves the headline and its summary as an image, without the page's buttons", async () => {
+test("snap saves the headline and its summary as an image, without the page's buttons", async () => {
     const seen = {};
-    const page = await open(SUMMARISED, { stored: { retroSiteIcons: "off" }, setup: (w) => snippetStandIns(w, seen) });
+    const page = await open(SUMMARISED, { stored: { retroSiteIcons: "off" }, setup: (w) => snapStandIns(w, seen) });
     const button = await openSummary(page);
-    assert.equal(button.textContent, "snippet");
+    assert.equal(button.textContent, "snap");
     await page.click(button);
     assert.equal(seen.download, "news-felix-gallardo-dies-at-80.png");
     const drawn = seen.drawn.join(" ");
@@ -164,13 +164,13 @@ test("snippet saves the headline and its summary as an image, without the page's
                         "machine summary · may contain errors", "news.txt | news.freestuffsthat.work"]) {
         assert.ok(drawn.includes(part), part + " in: " + drawn);
     }
-    assert.ok(!/snippet|hide summary|discuss/.test(drawn), drawn);
+    assert.ok(!/snap|hide summary|discuss/.test(drawn), drawn);
 });
 
-test("on a phone, snippet opens the share sheet with the image", async () => {
+test("on a phone, snap opens the share sheet with the image", async () => {
     const seen = {};
     const page = await open(SUMMARISED, { stored: { retroSiteIcons: "off" }, setup: (w) => {
-        snippetStandIns(w, seen);
+        snapStandIns(w, seen);
         w.matchMedia = (query) => ({ matches: query === "(pointer: coarse)", addEventListener() {}, addListener() {} });
         w.navigator.canShare = () => true;
         w.navigator.share = (data) => { seen.shared = Array.from(data.files, (f) => f.name + " " + f.type); return Promise.resolve(); };
@@ -180,25 +180,25 @@ test("on a phone, snippet opens the share sheet with the image", async () => {
     assert.equal(seen.download, undefined);
 });
 
-test("the snippet button can be turned off in advanced, is remembered, and comes back with reset", async () => {
+test("the snap button can be turned off in advanced, is remembered, and comes back with reset", async () => {
     const page = await open(SUMMARISED);
-    assert.equal(page.$("snippet-toggle").textContent, "snippet button: on");
-    await page.click(page.$("snippet-toggle"));
-    assert.equal(page.$("snippet-toggle").textContent, "snippet button: off");
+    assert.equal(page.$("snap-toggle").textContent, "snap button: on");
+    await page.click(page.$("snap-toggle"));
+    assert.equal(page.$("snap-toggle").textContent, "snap button: off");
     assert.equal(await openSummary(page), null);
     assert.equal(page.window.localStorage.getItem("retroSnippet"), "off");
 
     const again = await open(SUMMARISED, { stored: { retroSnippet: "off" } });
     assert.equal(await openSummary(again), null);
     await again.click(again.$("reset"));
-    assert.equal(again.$("snippet-toggle").textContent, "snippet button: on");
+    assert.equal(again.$("snap-toggle").textContent, "snap button: on");
 });
 
 test("a long headline and summary wrap within the image, a word too long for a line included", async () => {
     const seen = {};
     const long = "word ".repeat(40) + "x".repeat(120);
     const page = await open({ [ALL + "/" + EVERYTHING]: [item("A headline", 1, { summary: long })] },
-        { stored: { retroSiteIcons: "off" }, setup: (w) => snippetStandIns(w, seen) });
+        { stored: { retroSiteIcons: "off" }, setup: (w) => snapStandIns(w, seen) });
     await page.click(await openSummary(page));
     const pieces = seen.drawn.filter((t) => /^(word|x+)$/.test(t));
     assert.equal(pieces.filter((t) => t === "word").length, 40);

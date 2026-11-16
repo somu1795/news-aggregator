@@ -35,7 +35,7 @@
     var advancedBtn = document.getElementById("advanced-toggle");
     var installBtn = document.getElementById("install");
     var siteIconsBtn = document.getElementById("site-icons");
-    var snippetBtn = document.getElementById("snippet-toggle");
+    var snapBtn = document.getElementById("snap-toggle");
     var autoRefreshBtn = document.getElementById("auto-refresh");
     var backActionBtn = document.getElementById("back-action");
     var searchBtn = document.getElementById("search-toggle");
@@ -268,17 +268,17 @@
         render();
     }
 
-    // A "snippet" button under each open summary, which saves the headline and summary as an image (saveSnippet)
-    var snippets = read("retroSnippet") !== "off";  // On unless turned off
-    function renderSnippetSetting() {
-        snippetBtn.textContent = "snippet button: " + (snippets ? "on" : "off");
-        snippetBtn.classList.toggle("on", snippets);
-        snippetBtn.setAttribute("aria-pressed", String(snippets));
+    // A "snap" button under each open summary, which saves the headline and summary as an image (saveSnap)
+    var snaps = read("retroSnippet") !== "off";  // On unless turned off (its first name, kept so the choice is)
+    function renderSnapSetting() {
+        snapBtn.textContent = "snap button: " + (snaps ? "on" : "off");
+        snapBtn.classList.toggle("on", snaps);
+        snapBtn.setAttribute("aria-pressed", String(snaps));
     }
-    function toggleSnippets() {
-        snippets = !snippets;
-        write("retroSnippet", snippets ? "on" : "off");
-        renderSnippetSetting();
+    function toggleSnaps() {
+        snaps = !snaps;
+        write("retroSnippet", snaps ? "on" : "off");
+        renderSnapSetting();
         render();
     }
 
@@ -626,7 +626,7 @@
         sortMode = SORTS[0];
         shuffleKeys = Object.create(null);
         siteIcons = true;
-        snippets = true;
+        snaps = true;
         autoRefresh = AUTO_REFRESH[0];
         backToLastTab = false;
         bypass = "none";
@@ -634,7 +634,7 @@
         renderBypass();
         renderSort();
         renderSiteIcons();
-        renderSnippetSetting();
+        renderSnapSetting();
         renderAutoRefresh();
         renderBackAction();
         selectView(HOME_VIEW, DEFAULT_TOPIC, true);
@@ -812,14 +812,14 @@
         block.appendChild(highlighted(item.summary, words));
         var note = document.createElement("small");
         note.textContent = "machine summary · may contain errors";
-        if (snippets) {
-            var snippet = document.createElement("button");
-            snippet.type = "button";
-            snippet.textContent = "snippet";
-            snippet.title = "Save this headline and its summary as an image";
-            snippet.addEventListener("click", function () { saveSnippet(item, snippet); });
+        if (snaps) {
+            var snap = document.createElement("button");
+            snap.type = "button";
+            snap.textContent = "snap";
+            snap.title = "Save this headline and its summary as an image";
+            snap.addEventListener("click", function () { saveSnap(item, snap); });
             note.appendChild(document.createTextNode(" · "));
-            note.appendChild(snippet);
+            note.appendChild(snap);
         }
         block.appendChild(note);
         var toggle = document.createElement("button");
@@ -830,9 +830,9 @@
         return { block: block, toggle: toggle };
     }
 
-    // --- Snippet: a headline and its summary as an image, drawn on a canvas in the page's colours ---
-    var SNIPPET_FOOTER = "news.txt | news.freestuffsthat.work";
-    var SNIPPET_WIDTH = 640, SNIPPET_PAD = 28, SNIPPET_SCALE = 2;  // CSS pixels; drawn at twice that, for sharp text
+    // --- Snap: a headline and its summary as an image, drawn on a canvas in the page's colours ---
+    var SNAP_FOOTER = "news.txt | news.freestuffsthat.work";
+    var SNAP_WIDTH = 640, SNAP_PAD = 28, SNAP_SCALE = 2;  // CSS pixels; drawn at twice that, for sharp text
 
     // Lines at most `width` wide from runs of text ({ text, font, color }), broken at spaces (a word
     // longer than a line where it must be), the first starting `indent` in (after an icon): each line
@@ -868,7 +868,7 @@
     }
 
     // The website's icon as an image to draw, if site icons are on and it loads within 1.5 s; else null
-    function snippetIcon(host) {
+    function snapIcon(host) {
         return new Promise(function (resolve) {
             if (!siteIcons || !host) { resolve(null); return; }
             var icon = new Image();
@@ -880,7 +880,7 @@
     }
 
     // The canvas: icon, headline and domain, source and age, the summary with its rule and note, the footer
-    function snippetCanvas(item, host, icon) {
+    function snapCanvas(item, host, icon) {
         var canvas = document.createElement("canvas");
         var ctx = canvas.getContext("2d");
         if (!ctx) return null;
@@ -890,7 +890,7 @@
         function font(px) { return px + "px " + family; }
         var paper = colour("--paper"), ink = colour("--ink"), muted = colour("--muted"), rule = colour("--rule");
 
-        var pad = SNIPPET_PAD, inner = SNIPPET_WIDTH - 2 * pad;
+        var pad = SNAP_PAD, inner = SNAP_WIDTH - 2 * pad;
         // As on the page: the icon inline before the headline (1em, then .6ch), its other lines and the source line flush left
         var iconSize = 17, titleIndent = icon ? iconSize + 6 : 0, summaryX = 14;
         var TITLE = 26, META = 22, SUMMARY = 22, NOTE = 20, FOOTER = 20;  // Line heights
@@ -902,11 +902,11 @@
         var summaryTop = pad + title.length * TITLE + META + 14;
         var ruleY = summaryTop + summary.length * SUMMARY + NOTE + 18;
         var height = ruleY + 12 + FOOTER + pad - 6;
-        canvas.width = SNIPPET_WIDTH * SNIPPET_SCALE;
-        canvas.height = height * SNIPPET_SCALE;
-        ctx.scale(SNIPPET_SCALE, SNIPPET_SCALE);
+        canvas.width = SNAP_WIDTH * SNAP_SCALE;
+        canvas.height = height * SNAP_SCALE;
+        ctx.scale(SNAP_SCALE, SNAP_SCALE);
         ctx.fillStyle = paper;
-        ctx.fillRect(0, 0, SNIPPET_WIDTH, height);
+        ctx.fillRect(0, 0, SNAP_WIDTH, height);
         ctx.textBaseline = "middle";
 
         function text(value, x, y, size, color) { ctx.font = font(size); ctx.fillStyle = color; ctx.fillText(value, x, y); }
@@ -941,21 +941,21 @@
         ctx.setLineDash([3, 3]);
         ctx.beginPath();
         ctx.moveTo(pad, ruleY + 0.5);
-        ctx.lineTo(SNIPPET_WIDTH - pad, ruleY + 0.5);
+        ctx.lineTo(SNAP_WIDTH - pad, ruleY + 0.5);
         ctx.stroke();
-        text(SNIPPET_FOOTER, pad, ruleY + 12 + FOOTER / 2, 12, muted);
+        text(SNAP_FOOTER, pad, ruleY + 12 + FOOTER / 2, 12, muted);
         return canvas;
     }
 
-    // Saves the snippet: the share sheet on phones (save to photos, send to an app), a PNG download elsewhere
-    function saveSnippet(item, button) {
+    // Saves the snap: the share sheet on phones (save to photos, send to an app), a PNG download elsewhere
+    function saveSnap(item, button) {
         var href = safeUrl(item.link), host = href ? hostOf(href) : "";
         var name = "news-" + (normalize(cleanTitle(item.title, item.source)).replace(/[^a-z0-9]+/g, "-")
-            .replace(/^-|-$/g, "").slice(0, 60) || "snippet") + ".png";
+            .replace(/^-|-$/g, "").slice(0, 60) || "snap") + ".png";
         button.disabled = true;
-        snippetIcon(host)
+        snapIcon(host)
             .then(function (icon) {
-                var canvas = snippetCanvas(item, host, icon);
+                var canvas = snapCanvas(item, host, icon);
                 if (!canvas) throw new Error("no canvas");
                 return new Promise(function (resolve) { canvas.toBlob(resolve, "image/png"); });
             })
@@ -977,8 +977,8 @@
                 setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
             })
             .catch(function () {
-                button.textContent = "snippet failed";
-                setTimeout(function () { button.textContent = "snippet"; }, 3000);
+                button.textContent = "snap failed";
+                setTimeout(function () { button.textContent = "snap"; }, 3000);
             })
             .then(function () { button.disabled = false; });
     }
@@ -1155,7 +1155,7 @@
     document.getElementById("reset").addEventListener("click", resetAll);
     installBtn.addEventListener("click", install);
     siteIconsBtn.addEventListener("click", toggleSiteIcons);
-    snippetBtn.addEventListener("click", toggleSnippets);
+    snapBtn.addEventListener("click", toggleSnaps);
     autoRefreshBtn.addEventListener("click", cycleAutoRefresh);
     backActionBtn.addEventListener("click", toggleBackAction);
     searchBtn.addEventListener("click", function () { if (search.active) closeSearch(); else openSearch(); });
@@ -1319,7 +1319,7 @@
     renderBypass();
     renderSort();
     renderSiteIcons();
-    renderSnippetSetting();
+    renderSnapSetting();
     renderAutoRefresh();
     renderBackAction();
     renderInstall();
