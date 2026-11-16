@@ -835,9 +835,10 @@
     var SNIPPET_WIDTH = 640, SNIPPET_PAD = 28, SNIPPET_SCALE = 2;  // CSS pixels; drawn at twice that, for sharp text
 
     // Lines at most `width` wide from runs of text ({ text, font, color }), broken at spaces (a word
-    // longer than a line where it must be): each line a list of { text, font, color, x }
-    function wrapRuns(ctx, runs, width) {
-        var lines = [], line = [], x = 0, space = false;
+    // longer than a line where it must be), the first starting `indent` in (after an icon): each line
+    // a list of { text, font, color, x }
+    function wrapRuns(ctx, runs, width, indent) {
+        var lines = [], line = [], x = indent || 0, space = false;
         function measure(text, font) { ctx.font = font; return ctx.measureText(text).width; }
         function put(text, run) {
             line.push({ text: text, font: run.font, color: run.color, x: x });
@@ -850,7 +851,7 @@
                 if (/^\s+$/.test(word)) { space = line.length > 0; return; }
                 var gap = space ? measure(" ", run.font) : 0;
                 space = false;
-                if (line.length && x + gap + measure(word, run.font) > width) newLine();
+                if ((line.length || x > 0) && x + gap + measure(word, run.font) > width) newLine();
                 else x += gap;
                 while (word.length > 1 && x + measure(word, run.font) > width) {
                     var n = word.length - 1;
@@ -890,11 +891,12 @@
         var paper = colour("--paper"), ink = colour("--ink"), muted = colour("--muted"), rule = colour("--rule");
 
         var pad = SNIPPET_PAD, inner = SNIPPET_WIDTH - 2 * pad;
-        var iconSize = 16, titleX = icon ? iconSize + 10 : 0, summaryX = 14;
+        // As on the page: the icon inline before the headline (1em, then .6ch), its other lines and the source line flush left
+        var iconSize = 17, titleIndent = icon ? iconSize + 6 : 0, summaryX = 14;
         var TITLE = 26, META = 22, SUMMARY = 22, NOTE = 20, FOOTER = 20;  // Line heights
         var titleRuns = [{ text: cleanTitle(item.title, item.source), font: font(17), color: ink }];
         if (host) titleRuns.push({ text: " (" + host + ")", font: font(15), color: muted });
-        var title = wrapRuns(ctx, titleRuns, inner - titleX);
+        var title = wrapRuns(ctx, titleRuns, inner, titleIndent);
         var summary = wrapRuns(ctx, [{ text: item.summary || "", font: font(14), color: ink }], inner - summaryX);
 
         var summaryTop = pad + title.length * TITLE + META + 14;
@@ -917,9 +919,19 @@
                 });
             });
         }
-        if (icon) ctx.drawImage(icon, pad, pad + (TITLE - iconSize) / 2, iconSize, iconSize);
-        lines(title, pad + titleX, pad, TITLE);
-        text(item.source + " \u00b7 " + ago(item.published), pad + titleX, pad + title.length * TITLE + META / 2, 13, muted);
+        if (icon) {
+            var iconTop = pad + (TITLE - iconSize) / 2;
+            ctx.save();
+            if (ctx.roundRect) {  // Rounded corners, as on the page
+                ctx.beginPath();
+                ctx.roundRect(pad, iconTop, iconSize, iconSize, 2);
+                ctx.clip();
+            }
+            ctx.drawImage(icon, pad, iconTop, iconSize, iconSize);
+            ctx.restore();
+        }
+        lines(title, pad, pad, TITLE);
+        text(item.source + " \u00b7 " + ago(item.published), pad, pad + title.length * TITLE + META / 2, 13, muted);
         ctx.fillStyle = muted;
         ctx.fillRect(pad, summaryTop, 1, summary.length * SUMMARY + NOTE);  // The summary's rule, as on the page
         lines(summary, pad + summaryX, summaryTop, SUMMARY);
