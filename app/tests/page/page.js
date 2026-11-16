@@ -34,7 +34,7 @@ function searchIndex(views) {
     return { items: [...items.values()], fetched_at: NOW, expires_at: NOW + 300 };
 }
 
-// views: {"<region>/<topic>": [items]}; options: { stored: localStorage entries, country region the server guessed,
+// views: {"<region>/<topic>": [items]}; options: { stored: localStorage entries, setup(window) before the page runs,
 // failing: true while the API should answer 503 (page.failing can be changed later) }
 async function open(views, options) {
     options = options || {};
@@ -53,6 +53,7 @@ async function open(views, options) {
             const key = (asked.searchParams.get("region") || REGIONS[0]) + "/" + (asked.searchParams.get("topic") || TOPICS[0]);
             return answer(200, { fetched_at: NOW, data: views[key] || [] });
         };
+        if (options.setup) options.setup(window);  // Last, so a test's stand-ins (a canvas, a phone) win
     } });
     const window = dom.window, document = window.document;
     page.window = window;

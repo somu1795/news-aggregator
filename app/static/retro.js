@@ -35,6 +35,7 @@
     var advancedBtn = document.getElementById("advanced-toggle");
     var installBtn = document.getElementById("install");
     var siteIconsBtn = document.getElementById("site-icons");
+    var snippetBtn = document.getElementById("snippet-toggle");
     var autoRefreshBtn = document.getElementById("auto-refresh");
     var backActionBtn = document.getElementById("back-action");
     var searchBtn = document.getElementById("search-toggle");
@@ -264,6 +265,20 @@
         siteIcons = !siteIcons;
         write("retroSiteIcons", siteIcons ? "on" : "off");
         renderSiteIcons();
+        render();
+    }
+
+    // A "snippet" button under each open summary, which saves the headline and summary as an image (saveSnippet)
+    var snippets = read("retroSnippet") !== "off";  // On unless turned off
+    function renderSnippetSetting() {
+        snippetBtn.textContent = "snippet button: " + (snippets ? "on" : "off");
+        snippetBtn.classList.toggle("on", snippets);
+        snippetBtn.setAttribute("aria-pressed", String(snippets));
+    }
+    function toggleSnippets() {
+        snippets = !snippets;
+        write("retroSnippet", snippets ? "on" : "off");
+        renderSnippetSetting();
         render();
     }
 
@@ -540,7 +555,7 @@
         older.result = null;
         older.loading = false;
     }
-    function titleKey(item) { return normalize(cleanTitle(item.title, item.source)).replace(/[^a-z0-9]+/g, " ").trim(); }
+    function titleKey(item) { return cleanTitle(item.title, item.source).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(); }
     // The older stories to list: one the tabs' search found (searchResults(), `found`), or one listed
     // already (from an earlier page), gets the archive's headlines of it under it instead; else none
     // of the headlines the tabs' search found, each headline once
@@ -605,12 +620,13 @@
     });
 
     function resetAll() {
-        ["retroRegion", "retroTopic", "retroSort", "retroTheme", "bypassService", "retroSiteIcons", "retroAutoRefresh", "retroBackAction"].forEach(forget);  // bypassService: shared with the old classic page
+        ["retroRegion", "retroTopic", "retroSort", "retroTheme", "bypassService", "retroSiteIcons", "retroSnippet", "retroAutoRefresh", "retroBackAction"].forEach(forget);  // bypassService: shared with the old classic page
         openSummaries = Object.create(null);
         openRelated = Object.create(null);
         sortMode = SORTS[0];
         shuffleKeys = Object.create(null);
         siteIcons = true;
+        snippets = true;
         autoRefresh = AUTO_REFRESH[0];
         backToLastTab = false;
         bypass = "none";
@@ -618,6 +634,7 @@
         renderBypass();
         renderSort();
         renderSiteIcons();
+        renderSnippetSetting();
         renderAutoRefresh();
         renderBackAction();
         selectView(HOME_VIEW, DEFAULT_TOPIC, true);
@@ -795,6 +812,15 @@
         block.appendChild(highlighted(item.summary, words));
         var note = document.createElement("small");
         note.textContent = "machine summary · may contain errors";
+        if (snippets) {
+            var snippet = document.createElement("button");
+            snippet.type = "button";
+            snippet.textContent = "snippet";
+            snippet.title = "Save this headline and its summary as an image";
+            snippet.addEventListener("click", function () { saveSnippet(item, snippet); });
+            note.appendChild(document.createTextNode(" · "));
+            note.appendChild(snippet);
+        }
         block.appendChild(note);
         var toggle = document.createElement("button");
         toggle.type = "button";
@@ -802,6 +828,147 @@
         setSummaryOpen(block, toggle, item.link, !!openSummaries[item.link]);
         toggle.addEventListener("click", function () { setSummaryOpen(block, toggle, item.link, block.hidden); });
         return { block: block, toggle: toggle };
+    }
+
+    // --- Snippet: a headline and its summary as an image, drawn on a canvas in the page's colours ---
+    var SNIPPET_FOOTER = "news.freestuffsthat.work";
+    var SNIPPET_WIDTH = 640, SNIPPET_PAD = 28, SNIPPET_SCALE = 2;  // CSS pixels; drawn at twice that, for sharp text
+
+    // Lines at most `width` wide from runs of text ({ text, font, color }), broken at spaces (a word
+    // longer than a line where it must be): each line a list of { text, font, color, x }
+    function wrapRuns(ctx, runs, width) {
+        var lines = [], line = [], x = 0, space = false;
+        function measure(text, font) { ctx.font = font; return ctx.measureText(text).width; }
+        function put(text, run) {
+            line.push({ text: text, font: run.font, color: run.color, x: x });
+            x += measure(text, run.font);
+        }
+        function newLine() { lines.push(line); line = []; x = 0; }
+        runs.forEach(function (run) {
+            run.text.split(/(\s+)/).forEach(function (word) {
+                if (!word) return;
+                if (/^\s+$/.test(word)) { space = line.length > 0; return; }
+                var gap = space ? measure(" ", run.font) : 0;
+                space = false;
+                if (line.length && x + gap + measure(word, run.font) > width) newLine();
+                else x += gap;
+                while (word.length > 1 && x + measure(word, run.font) > width) {
+                    var n = word.length - 1;
+                    while (n > 1 && x + measure(word.slice(0, n), run.font) > width) n--;
+                    put(word.slice(0, n), run);
+                    word = word.slice(n);
+                    newLine();
+                }
+                put(word, run);
+            });
+        });
+        if (line.length) lines.push(line);
+        return lines;
+    }
+
+    // The website's icon as an image to draw, if site icons are on and it loads within 1.5 s; else null
+    function snippetIcon(host) {
+        return new Promise(function (resolve) {
+            if (!siteIcons || !host) { resolve(null); return; }
+            var icon = new Image();
+            var timer = setTimeout(function () { resolve(null); }, 1500);
+            icon.onload = function () { clearTimeout(timer); resolve(icon); };
+            icon.onerror = function () { clearTimeout(timer); resolve(null); };
+            icon.src = "/site-icon/" + encodeURIComponent(host);
+        });
+    }
+
+    // The canvas: icon, headline and domain, source and age, the summary with its rule and note, the footer
+    function snippetCanvas(item, host, icon) {
+        var canvas = document.createElement("canvas");
+        var ctx = canvas.getContext("2d");
+        if (!ctx) return null;
+        var css = getComputedStyle(document.documentElement);
+        function colour(name) { return css.getPropertyValue(name).trim(); }
+        var family = getComputedStyle(document.body).fontFamily;
+        function font(px) { return px + "px " + family; }
+        var paper = colour("--paper"), ink = colour("--ink"), muted = colour("--muted"), rule = colour("--rule");
+
+        var pad = SNIPPET_PAD, inner = SNIPPET_WIDTH - 2 * pad;
+        var iconSize = 16, titleX = icon ? iconSize + 10 : 0, summaryX = 14;
+        var TITLE = 26, META = 22, SUMMARY = 22, NOTE = 20, FOOTER = 20;  // Line heights
+        var titleRuns = [{ text: cleanTitle(item.title, item.source), font: font(17), color: ink }];
+        if (host) titleRuns.push({ text: " (" + host + ")", font: font(15), color: muted });
+        var title = wrapRuns(ctx, titleRuns, inner - titleX);
+        var summary = wrapRuns(ctx, [{ text: item.summary || "", font: font(14), color: ink }], inner - summaryX);
+
+        var summaryTop = pad + title.length * TITLE + META + 14;
+        var ruleY = summaryTop + summary.length * SUMMARY + NOTE + 18;
+        var height = ruleY + 12 + FOOTER + pad - 6;
+        canvas.width = SNIPPET_WIDTH * SNIPPET_SCALE;
+        canvas.height = height * SNIPPET_SCALE;
+        ctx.scale(SNIPPET_SCALE, SNIPPET_SCALE);
+        ctx.fillStyle = paper;
+        ctx.fillRect(0, 0, SNIPPET_WIDTH, height);
+        ctx.textBaseline = "middle";
+
+        function text(value, x, y, size, color) { ctx.font = font(size); ctx.fillStyle = color; ctx.fillText(value, x, y); }
+        function lines(list, x, top, lineHeight) {
+            list.forEach(function (line, i) {
+                line.forEach(function (part) {
+                    ctx.font = part.font;
+                    ctx.fillStyle = part.color;
+                    ctx.fillText(part.text, x + part.x, top + i * lineHeight + lineHeight / 2);
+                });
+            });
+        }
+        if (icon) ctx.drawImage(icon, pad, pad + (TITLE - iconSize) / 2, iconSize, iconSize);
+        lines(title, pad + titleX, pad, TITLE);
+        text(item.source + " \u00b7 " + ago(item.published), pad + titleX, pad + title.length * TITLE + META / 2, 13, muted);
+        ctx.fillStyle = muted;
+        ctx.fillRect(pad, summaryTop, 1, summary.length * SUMMARY + NOTE);  // The summary's rule, as on the page
+        lines(summary, pad + summaryX, summaryTop, SUMMARY);
+        text("machine summary \u00b7 may contain errors", pad + summaryX, summaryTop + summary.length * SUMMARY + NOTE / 2, 12, muted);
+        ctx.strokeStyle = rule;
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(pad, ruleY + 0.5);
+        ctx.lineTo(SNIPPET_WIDTH - pad, ruleY + 0.5);
+        ctx.stroke();
+        text(SNIPPET_FOOTER, pad, ruleY + 12 + FOOTER / 2, 12, muted);
+        return canvas;
+    }
+
+    // Saves the snippet: the share sheet on phones (save to photos, send to an app), a PNG download elsewhere
+    function saveSnippet(item, button) {
+        var href = safeUrl(item.link), host = href ? hostOf(href) : "";
+        var name = "news-" + (normalize(cleanTitle(item.title, item.source)).replace(/[^a-z0-9]+/g, "-")
+            .replace(/^-|-$/g, "").slice(0, 60) || "snippet") + ".png";
+        button.disabled = true;
+        snippetIcon(host)
+            .then(function (icon) {
+                var canvas = snippetCanvas(item, host, icon);
+                if (!canvas) throw new Error("no canvas");
+                return new Promise(function (resolve) { canvas.toBlob(resolve, "image/png"); });
+            })
+            .then(function (blob) {
+                if (!blob) throw new Error("no image");
+                var file = new File([blob], name, { type: "image/png" });
+                var phone = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
+                if (phone && navigator.canShare && navigator.canShare({ files: [file] })) {
+                    return navigator.share({ files: [file], title: cleanTitle(item.title, item.source) })
+                        .catch(function (error) { if (error.name !== "AbortError") throw error; });  // Closing the sheet isn't a failure
+                }
+                var url = URL.createObjectURL(blob);
+                var a = document.createElement("a");
+                a.href = url;
+                a.download = name;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
+            })
+            .catch(function () {
+                button.textContent = "snippet failed";
+                setTimeout(function () { button.textContent = "snippet"; }, 3000);
+            })
+            .then(function () { button.disabled = false; });
     }
 
     // Other outlets' headlines about the same story (folded under this one by the server) and the
@@ -976,6 +1143,7 @@
     document.getElementById("reset").addEventListener("click", resetAll);
     installBtn.addEventListener("click", install);
     siteIconsBtn.addEventListener("click", toggleSiteIcons);
+    snippetBtn.addEventListener("click", toggleSnippets);
     autoRefreshBtn.addEventListener("click", cycleAutoRefresh);
     backActionBtn.addEventListener("click", toggleBackAction);
     searchBtn.addEventListener("click", function () { if (search.active) closeSearch(); else openSearch(); });
@@ -1139,6 +1307,7 @@
     renderBypass();
     renderSort();
     renderSiteIcons();
+    renderSnippetSetting();
     renderAutoRefresh();
     renderBackAction();
     renderInstall();

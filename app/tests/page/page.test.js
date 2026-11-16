@@ -131,3 +131,78 @@ test("an empty tab says there are no headlines", async () => {
     assert.equal(page.$("notice").hidden, false);
     assert.match(page.$("notice").textContent, /no headlines for /);
 });
+
+// A canvas that records what is written on it (jsdom draws nothing), and a download or share sheet that records the file
+function snippetStandIns(window, seen) {
+    seen.drawn = [];
+    window.HTMLCanvasElement.prototype.getContext = () => new Proxy({
+        measureText: (text) => ({ width: text.length * 8 }),
+        fillText: (text) => seen.drawn.push(text),
+    }, { get: (target, name) => name in target ? target[name] : () => {}, set: () => true });
+    window.HTMLCanvasElement.prototype.toBlob = (done) => done(new window.Blob(["png"], { type: "image/png" }));
+    window.URL.createObjectURL = () => "blob:snippet";
+    window.URL.revokeObjectURL = () => {};
+    window.HTMLAnchorElement.prototype.click = function () { if (this.download) seen.download = this.download; };
+}
+
+const SUMMARISED = { [ALL + "/" + EVERYTHING]: [item("Félix Gallardo dies at 80", 30, { source: "Latin Times", summary: "The drug lord died in hospital after a long illness." })] };
+
+async function openSummary(page) {
+    await page.click([...page.window.document.querySelectorAll("#list .meta button")].find((b) => b.textContent === "summary"));
+    return page.window.document.querySelector("#list .summary small button");
+}
+
+test("snippet saves the headline and its summary as an image, without the page's buttons", async () => {
+    const seen = {};
+    const page = await open(SUMMARISED, { stored: { retroSiteIcons: "off" }, setup: (w) => snippetStandIns(w, seen) });
+    const button = await openSummary(page);
+    assert.equal(button.textContent, "snippet");
+    await page.click(button);
+    assert.equal(seen.download, "news-felix-gallardo-dies-at-80.png");
+    const drawn = seen.drawn.join(" ");
+    for (const part of ["Félix Gallardo dies at 80", "(pub.example)", "Latin Times · 30m ago", "long illness.",
+                        "machine summary · may contain errors", "news.freestuffsthat.work"]) {
+        assert.ok(drawn.includes(part), part + " in: " + drawn);
+    }
+    assert.ok(!/snippet|hide summary|discuss/.test(drawn), drawn);
+});
+
+test("on a phone, snippet opens the share sheet with the image", async () => {
+    const seen = {};
+    const page = await open(SUMMARISED, { stored: { retroSiteIcons: "off" }, setup: (w) => {
+        snippetStandIns(w, seen);
+        w.matchMedia = (query) => ({ matches: query === "(pointer: coarse)", addEventListener() {}, addListener() {} });
+        w.navigator.canShare = () => true;
+        w.navigator.share = (data) => { seen.shared = Array.from(data.files, (f) => f.name + " " + f.type); return Promise.resolve(); };
+    } });
+    await page.click(await openSummary(page));
+    assert.deepEqual(seen.shared, ["news-felix-gallardo-dies-at-80.png image/png"]);
+    assert.equal(seen.download, undefined);
+});
+
+test("the snippet button can be turned off in advanced, is remembered, and comes back with reset", async () => {
+    const page = await open(SUMMARISED);
+    assert.equal(page.$("snippet-toggle").textContent, "snippet button: on");
+    await page.click(page.$("snippet-toggle"));
+    assert.equal(page.$("snippet-toggle").textContent, "snippet button: off");
+    assert.equal(await openSummary(page), null);
+    assert.equal(page.window.localStorage.getItem("retroSnippet"), "off");
+
+    const again = await open(SUMMARISED, { stored: { retroSnippet: "off" } });
+    assert.equal(await openSummary(again), null);
+    await again.click(again.$("reset"));
+    assert.equal(again.$("snippet-toggle").textContent, "snippet button: on");
+});
+
+test("a long headline and summary wrap within the image, a word too long for a line included", async () => {
+    const seen = {};
+    const long = "word ".repeat(40) + "x".repeat(120);
+    const page = await open({ [ALL + "/" + EVERYTHING]: [item("A headline", 1, { summary: long })] },
+        { stored: { retroSiteIcons: "off" }, setup: (w) => snippetStandIns(w, seen) });
+    await page.click(await openSummary(page));
+    const pieces = seen.drawn.filter((t) => /^(word|x+)$/.test(t));
+    assert.equal(pieces.filter((t) => t === "word").length, 40);
+    assert.equal(pieces.filter((t) => /^x+$/.test(t)).join("").length, 120);  // Broken, not lost
+    assert.ok(pieces.every((t) => t.length * 8 <= 640 - 2 * 28 - 14), "every piece fits the summary's width");
+});
+
