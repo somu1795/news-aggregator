@@ -1206,7 +1206,8 @@
     var MOON_STARS = [[1, 4], [4, 18], [34, 1], [36, 15]];  // At dusk and dawn only the first two
     var MOON_CLOUD = [[2, 0, 3], [7, 0, 3], [0, 1, 12], [0, 2, 12], [2, 3, 8]];  // The cloud's rows of pixels: x, y, width
     var MOON_CLOUD_WIDTH = 12, MOON_CLOUD_Y = 2;  // Across the top: lower down, the craters and a cloud looked like a face
-    var MOON_SUNK = 12;  // How far a set moon sinks: its top half shows above the horizon (the icon's last row)
+    // The row a set moon's horizon is on: the label's baseline, as the icon is centred on the label (its top half shows above)
+    var MOON_HORIZON = 16;
     var SUN = [[2, 2, 3], [2, 3, 3], [2, 4, 3], [3, 0, 1], [3, 6, 1], [0, 3, 1], [6, 3, 1], [1, 1, 1], [5, 1, 1], [1, 5, 1], [5, 5, 1]];  // Disc and rays, 7x7
     var PLANET = { left: [3, 10], right: [33, 9] };  // A steady pixel beside the moon
     var REDRAW_DEGREES = 3;  // The tilt is redrawn when it has turned this far (less hardly moves a pixel)
@@ -1268,11 +1269,13 @@
     // between twinkling stars, with a cloud now and then
     function skyPixels(scene) {
         var svg = svgElement("svg", { viewBox: "0 0 39 24", "shape-rendering": "crispEdges", "aria-hidden": "true" });
-        MOON_STARS.slice(0, scene.stars).forEach(function (star, i) { svg.appendChild(pixel(star[0], star[1], 1, "star s" + (i + 1))); });
+        MOON_STARS.slice(0, scene.stars).forEach(function (star, i) {
+            if (!scene.set || star[1] < MOON_HORIZON) svg.appendChild(pixel(star[0], star[1], 1, "star s" + (i + 1)));  // None in the ground
+        });
         if (scene.planet) svg.appendChild(pixel(PLANET[scene.planet.side][0], PLANET[scene.planet.side][1], 1, "planet"));
         if (scene.sun) SUN.forEach(function (p) { svg.appendChild(pixel((scene.sun === "right" ? 32 : 0) + p[0], p[1], p[2], "sun")); });
         var clip = svgElement("clipPath", { id: "moon-disc" });  // The cloud shows only where it crosses the disc
-        var drop = scene.set ? MOON_SUNK : 0, eclipse = scene.eclipse;
+        var drop = scene.set ? MOON_HORIZON - MOON_SIZE / 2 : 0, bottom = scene.set ? MOON_HORIZON - 1 : MOON_SIZE - 1, eclipse = scene.eclipse;
         var cos = Math.cos(scene.e / DEGREES), limb = scene.limb / DEGREES, face = (scene.face || 0) / DEGREES;
         var limbX = -Math.sin(limb), limbY = -Math.cos(limb);  // Toward the lit edge, on screen (y down)
         var faceCos = Math.cos(face), faceSin = Math.sin(face);
@@ -1297,7 +1300,7 @@
                         if (eclipse && Math.pow(px - eclipse.at[0], 2) + Math.pow(py - eclipse.at[1], 2) < eclipse.size * eclipse.size) covered++;
                     }
                 }
-                if (inside < 8 || y + drop > MOON_SIZE - 1) { run = null; continue; }
+                if (inside < 8 || y + drop > bottom) { run = null; continue; }
                 if (first === null) first = x;
                 last = x;
                 var kind;
@@ -1319,7 +1322,7 @@
             }
             if (first !== null) clip.appendChild(pixel(MOON_X + first, y + drop, last - first + 1));
         }
-        if (scene.set) svg.appendChild(pixel(0, MOON_SIZE - 1, 39, "horizon"));
+        if (scene.set) svg.appendChild(pixel(0, MOON_HORIZON, 39, "horizon"));
         svg.appendChild(clip);
         var cloud = svgElement("g", { "class": "cloud" });  // Starts left of the moon; the CSS animation moves it across
         MOON_CLOUD.forEach(function (run) { cloud.appendChild(pixel(run[0] - MOON_CLOUD_WIDTH, MOON_CLOUD_Y + run[1], run[2])); });

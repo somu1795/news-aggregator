@@ -274,9 +274,12 @@ const BENGALURU = [13.0, 77.6], LONDON = [51.5, -0.1], QUITO = [-0.2, -78.5], SY
 
 test("a moon that has set sinks behind the horizon, and the tooltip says when it rises", async () => {
     const sky = await skyAt("2026-11-16T19:45:00Z", BENGALURU);  // 1:15 am: the moon set before midnight
-    assert.ok(sky.kinds.horizon, "a horizon line");
-    const moon = [...(sky.kinds.lit || []), ...(sky.kinds.shade || [])];
-    assert.ok(moon.length > 0 && moon.every((p) => p.y >= 12), "only the top half shows");
+    // The horizon is on the label's baseline (the icon is centred on the label: its baseline falls 16 px down)
+    assert.ok(sky.kinds.horizon.every((p) => p.y === 16), "a horizon line on row 16");
+    const moon = [...(sky.kinds.lit || []), ...(sky.kinds.shade || []), ...(sky.kinds.crater || [])];
+    assert.equal(Math.min(...moon.map((p) => p.y)), 4, "the moon's top half shows above it");
+    assert.equal(Math.max(...moon.map((p) => p.y)), 15);
+    assert.ok(sky.kinds.star.every((p) => p.y < 16), "no stars below the horizon");
     assert.match(sky.title, /moonrise \d\d:\d\d/);
     assert.match(sky.title, /sunrise \d\d:\d\d/);
 });
