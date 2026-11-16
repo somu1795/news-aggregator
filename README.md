@@ -26,18 +26,18 @@
 - **Containerized & Production-Ready**: Fully containerized with a production-optimized **Docker** build for a small, secure, and fast-starting image.
 - **Orchestrated with Docker Compose**: Services are managed with a single `docker-compose.yml` file for easy setup and deployment.
 - **Secure by Default**: Runs as a non-root user inside the container and uses an internal reverse proxy (**Caddy**) for load balancing.
-- **Monitoring**: Exposes Prometheus metrics, including refresh health and Google News link resolution outcomes (see ARCHITECTURE.md).
+- **Monitoring**: `/health` reports the headlines' age, and each service logs its refreshes, failed feeds and link resolution failures (see ARCHITECTURE.md).
 - **Well-Tested**: Includes a suite of unit tests using `pytest` and `fakeredis`.
 
 ## Architecture Overview
 
 The system is a set of services orchestrated by Docker Compose. An external reverse proxy (like Nginx or Traefik) is expected to handle TLS termination and route traffic to the internal **Caddy** service. Caddy load-balances requests across the **FastAPI/Uvicorn** API workers, which only read the latest headlines snapshot. A separate **refresher** service builds those snapshots every 5 minutes and stores them in **Redis**, which also holds the resolved-link cache and rate-limit counters. A **tagger** service tags headlines by topic for the topic views.
 
-For the full details — diagram, how and when data is refreshed, link resolution and its fallback, rate limits, failure behaviour, metrics and every tunable — see [ARCHITECTURE.md](ARCHITECTURE.md).
+For the full details — diagram, how and when data is refreshed, link resolution and its fallback, rate limits, failure behaviour, logs and every tunable — see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Tech Stack
 
-- **Backend**: FastAPI, Python 3.14.8 (Debian 13 "trixie" slim image)
+- **Backend**: FastAPI, Python 3.14.10 (Debian 13 "trixie" slim image)
 - **Snapshot store, cache & rate limits**: Redis 8.10
 - **Internal Proxy**: Caddy 2.11
 - **Topic tagging**: bge-small-en-v1.5 on OpenVINO (Intel NPU), scikit-learn (CPU), SQLite
@@ -78,7 +78,7 @@ For the full details — diagram, how and when data is refreshed, link resolutio
     ./stop.sh
     ```
 
-On this machine and the LAN the application is at `http://<this host>:7001` (or whichever port you set for `CADDY_HTTP_PORT`), including Prometheus metrics at `/metrics`, which are served only to direct requests from private (LAN) addresses. The public site goes through the Cloudflare Tunnel (below), where `/metrics` is blocked.
+On this machine and the LAN the application is at `http://<this host>:7001` (or whichever port you set for `CADDY_HTTP_PORT`). The public site goes through the Cloudflare Tunnel (below).
 
 ## Cloudflare Tunnel (recommended)
 
@@ -209,7 +209,6 @@ Because requests are served from memory and never fetch upstream, a single app c
 - `GET /site-icon/<domain>`: A website's icon, when the refresher has cached it (404 otherwise).
 - `GET /health`: Health check. Reports `healthy`, `degraded` (Redis down but still serving), or `unhealthy`, plus the headlines' age.
 - `POST /admin/cache/clear`: Triggers an immediate refresh (requires `X-API-Key`; from this machine or the LAN only). Current headlines stay available meanwhile.
-- `GET /metrics`: Prometheus metrics endpoint (blocked at Caddy).
 
 ## Data Credits
 

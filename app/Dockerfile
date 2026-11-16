@@ -1,5 +1,5 @@
 # --- Backend ---
-FROM python:3.14.8-slim-trixie
+FROM python:3.14.10-slim-trixie
 
 # Set environment variables to prevent Python from writing .pyc files and to buffer output
 ENV PYTHONDONTWRITEBYTECODE=1

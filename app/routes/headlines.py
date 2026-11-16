@@ -18,6 +18,9 @@ CDN (CDN-Cache-Control, which Cloudflare honours and browsers ignore) keeps it
 at least EDGE_MIN_SECONDS, so near or past a refresh most requests still don't
 reach the origin; it may then serve a stale copy while it re-fetches, or for a
 day if the origin is unreachable.
+
+A snapshot is sent in the compressed form the client accepts, made once when the
+snapshot arrived (services/headlines_cache.py); Caddy leaves such a response as it is.
 """
 
 import asyncio
@@ -32,7 +35,7 @@ from config import settings
 from deps import limiter
 from models import APIResponse, ArchiveSearch, SearchIndex
 from services import archive_index, archive_search
-from services.headlines_cache import Snapshot
+from services.headlines_cache import Snapshot, accepted_encoding
 
 router = APIRouter()
 
@@ -57,7 +60,7 @@ async def get_headlines(request: Request, region: str = ALL_VIEW, topic: Optiona
         # Only before the refresher's first successful run against an empty Redis (for a
         # topic view: its first successful tagging)
         raise HTTPException(status_code=503, detail=_NOT_YET, headers={"Retry-After": "10"})
-    return _cached(snapshot)
+    return _cached(snapshot, request)
 
 
 @router.api_route("/api/search-index", response_model=SearchIndex, methods=["GET", "HEAD"])
@@ -69,7 +72,7 @@ async def get_search_index(request: Request):
     snapshot = await request.app.state.headlines_cache.search_index(views)
     if snapshot is None:
         raise HTTPException(status_code=503, detail=_NOT_YET, headers={"Retry-After": "10"})
-    return _cached(snapshot)
+    return _cached(snapshot, request)
 
 
 @router.api_route("/api/search", response_model=ArchiveSearch, methods=["GET", "HEAD"])
@@ -91,15 +94,17 @@ async def search_archive(request: Request, q: str = Query(min_length=1, max_leng
     )
 
 
-def _cached(snapshot: Snapshot) -> Response:
-    """The snapshot, cached until it's due to be replaced."""
+def _cached(snapshot: Snapshot, request: Request) -> Response:
+    """The snapshot, cached until it's due to be replaced, compressed if the client takes a copy that's ready."""
     max_age = max(0, int(snapshot.expires_at - time.time()))
-    return Response(
-        content=snapshot.body,
-        media_type="application/json",
-        headers={
-            "Cache-Control": f"public, max-age={max_age}",
-            "CDN-Cache-Control": f"public, max-age={max(max_age, EDGE_MIN_SECONDS)}, "
-                                 "stale-while-revalidate=60, stale-if-error=86400",
-        },
-    )
+    headers = {
+        "Cache-Control": f"public, max-age={max_age}",
+        "CDN-Cache-Control": f"public, max-age={max(max_age, EDGE_MIN_SECONDS)}, "
+                             "stale-while-revalidate=60, stale-if-error=86400",
+        "Vary": "Accept-Encoding",  # Also when sent as it is: a cache must not give that copy to everyone
+    }
+    encoded = dict(snapshot.encoded)  # Copies are added from another thread
+    encoding = accepted_encoding(request.headers.get("accept-encoding", ""), encoded)
+    if encoding:
+        headers["Content-Encoding"] = encoding
+    return Response(content=encoded[encoding] if encoding else snapshot.body, media_type="application/json", headers=headers)

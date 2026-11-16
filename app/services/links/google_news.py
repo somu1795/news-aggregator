@@ -27,7 +27,6 @@ import structlog
 from bs4 import BeautifulSoup
 
 from config import settings
-from metrics import REDIRECT_FALLBACKS, REDIRECT_RESOLUTIONS
 
 logger = structlog.get_logger(__name__)
 
@@ -73,7 +72,6 @@ async def resolve_redirect(
         cached = await redis_client.get(cache_key)
         if cached:
             logger.debug("URL cache hit", url=url)
-            REDIRECT_RESOLUTIONS.labels(outcome="cache_hit").inc()
             return cached
     except Exception as e:
         logger.debug("URL cache lookup failed (non-critical)", url=url, error=str(e))
@@ -93,7 +91,6 @@ async def resolve_redirect(
             if "news.google.com" not in final_url:
                 logger.debug("Resolved via standard redirect", original=url, resolved=final_url)
                 resolved_url = final_url
-                REDIRECT_RESOLUTIONS.labels(outcome="redirect").inc()
                 break
 
             # 3. Parse the HTML landing page for batchexecute data
@@ -102,7 +99,6 @@ async def resolve_redirect(
             if not c_wiz_element:
                 logger.warning("Could not find c-wiz element, falling back", url=url, fallback=final_url)
                 resolved_url = final_url
-                REDIRECT_RESOLUTIONS.labels(outcome="no_cwiz").inc()
                 break
 
             data_p = c_wiz_element.get("data-p")
@@ -127,10 +123,8 @@ async def resolve_redirect(
             if article_url:
                 logger.debug("Resolved via batchexecute", original=url, resolved=article_url)
                 resolved_url = article_url
-                REDIRECT_RESOLUTIONS.labels(outcome="batchexecute").inc()
             else:
                 logger.warning("batchexecute parsing failed, falling back to original", url=url)
-                REDIRECT_RESOLUTIONS.labels(outcome="parse_failed").inc()
             break
 
         except Exception as e:
@@ -140,9 +134,6 @@ async def resolve_redirect(
             )
             if attempt < settings.FETCH_RETRIES - 1:
                 await asyncio.sleep(settings.BACKOFF_BASE ** attempt)
-    else:
-        # No attempt succeeded
-        REDIRECT_RESOLUTIONS.labels(outcome="failed").inc()
 
     # 6. Cache the resolved URL (only if it actually resolved to something different)
     if resolved_url != url:
@@ -230,13 +221,11 @@ async def resolve_link(client: httpx.AsyncClient, redis_client: aioredis.Redis, 
         fallback = None
 
     if fallback is None:
-        REDIRECT_FALLBACKS.labels(outcome="failed").inc()
         logger.warning("Custom and fallback link resolution both failed", url=url)
         return resolved
 
-    REDIRECT_FALLBACKS.labels(outcome="success").inc()
     # Debug, not info: if the custom resolver breaks, this fires for every link every
-    # refresh. Watch redirect_fallbacks_total instead.
+    # refresh. Its own warnings ("falling back") say that it broke.
     logger.debug("Resolved link via fallback", url=url, resolved=fallback)
     try:
         # Overwrites anything the custom resolver cached (e.g. a Google landing URL)

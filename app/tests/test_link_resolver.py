@@ -7,7 +7,6 @@ import json
 
 import httpx
 import respx
-from prometheus_client import REGISTRY
 
 from services.links.google_news import RESOLVED_URL_PREFIX, _is_unresolved, decode_with_signature, resolve_link
 
@@ -26,10 +25,6 @@ def batch_response(url):
     return ")]}'\n\n" + json.dumps([["wrb.fr", "Fbv4je", json.dumps(["garturlres", url, 1]), None, None, None, "generic"]])
 
 
-def fallbacks(outcome):
-    return REGISTRY.get_sample_value("redirect_fallbacks_total", {"outcome": outcome}) or 0
-
-
 @respx.mock
 async def test_custom_resolver_success_skips_fallback(mock_redis):
     """When the custom resolver finds the publisher URL, the fallback never runs."""
@@ -37,13 +32,11 @@ async def test_custom_resolver_success_skips_fallback(mock_redis):
     respx.get(PUBLISHER_URL).mock(return_value=httpx.Response(200))
     fallback_page = respx.get(ARTICLE_PAGE)
     batch = respx.post(BATCH_URL)
-    before = fallbacks("success") + fallbacks("failed")
 
     async with httpx.AsyncClient() as client:
         assert await resolve_link(client, mock_redis, GOOGLE_URL) == PUBLISHER_URL
 
     assert not fallback_page.called and not batch.called
-    assert fallbacks("success") + fallbacks("failed") == before
 
 
 @respx.mock
@@ -52,7 +45,6 @@ async def test_fallback_used_when_custom_resolver_fails(mock_redis, monkeypatch)
     respx.get(GOOGLE_URL).mock(return_value=httpx.Response(200, text=PAGE_WITH_SIGNATURE))
     respx.get(ARTICLE_PAGE).mock(return_value=httpx.Response(200, text=PAGE_WITH_SIGNATURE))
     batch = respx.post(BATCH_URL).mock(return_value=httpx.Response(200, text=batch_response(PUBLISHER_URL)))
-    before = fallbacks("success")
 
     async with httpx.AsyncClient() as client:
         assert await resolve_link(client, mock_redis, GOOGLE_URL) == PUBLISHER_URL
@@ -60,7 +52,6 @@ async def test_fallback_used_when_custom_resolver_fails(mock_redis, monkeypatch)
     sent = batch.calls.last.request.content.decode()
     assert "Fbv4je" in sent and ARTICLE_ID in sent and "SIG" in sent and "1700000000" in sent
     assert await mock_redis.get(f"{RESOLVED_URL_PREFIX}{GOOGLE_URL}") == PUBLISHER_URL
-    assert fallbacks("success") == before + 1
 
 
 @respx.mock
@@ -70,13 +61,11 @@ async def test_both_fail_returns_custom_result(mock_redis, monkeypatch):
     page = '<html><body>nothing useful</body></html>'
     respx.get(GOOGLE_URL).mock(return_value=httpx.Response(200, text=page))
     respx.get(ARTICLE_PAGE).mock(return_value=httpx.Response(200, text=page))
-    before = fallbacks("failed")
 
     async with httpx.AsyncClient() as client:
         result = await resolve_link(client, mock_redis, GOOGLE_URL)
 
     assert "news.google.com" in result
-    assert fallbacks("failed") == before + 1
 
 
 @respx.mock

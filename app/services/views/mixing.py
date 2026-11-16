@@ -118,7 +118,7 @@ def mix_headlines(
         else:
             active.remove(name)  # Exhausted; its share goes to the remaining sources
 
-    logger.info(
+    logger.debug(  # ~170 lines a cycle: at info they were 85% of the refresher's log and cut it to a day and a half
         "Mixed headlines",
         view=view,
         total=len(mixed),

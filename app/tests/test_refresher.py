@@ -13,7 +13,6 @@ from types import SimpleNamespace
 import httpx
 import pytest
 import respx
-from prometheus_client import REGISTRY
 
 import catalog as catalog_module
 from catalog import ALL_VIEW, Catalog
@@ -63,10 +62,6 @@ def outlet_feed(domain, count, comments=False):
     ) + "</channel></rss>"
 
 
-def sample(name, labels=None):
-    return REGISTRY.get_sample_value(name, labels or {}) or 0
-
-
 @pytest.fixture(autouse=True)
 def catalog(monkeypatch):
     monkeypatch.setattr(catalog_module, "_catalog", CATALOG)
@@ -100,7 +95,6 @@ async def refresh(redis, poller):
 @respx.mock
 async def test_refresh_publishes_every_view(mock_redis, poller):
     mock_feeds()
-    successes_before = sample("headlines_refreshes_total", {"result": "success"})
 
     assert await refresh(mock_redis, poller) == 3  # all, asia, europe
 
@@ -130,7 +124,6 @@ async def test_refresh_publishes_every_view(mock_redis, poller):
         assert not any("news.google.com" in h["link"] for h in view["data"])
     hn = [h for h in everything["data"] if h["title"].startswith("hn.example")]
     assert hn[0]["link"].startswith("https://hn.example/") and hn[0]["comments"].startswith("https://news.ycombinator.com/item")
-    assert sample("headlines_refreshes_total", {"result": "success"}) == successes_before + 1
 
 
 @respx.mock
@@ -165,14 +158,10 @@ async def test_refresh_keeps_previous_snapshots_when_everything_fails(mock_redis
                 "https://asia.example/rss", "https://news.ycombinator.com/rss"):
         respx.get(url).mock(return_value=httpx.Response(500))
     await mock_redis.set(snapshot_key(ALL_VIEW), "previous")
-    empty_before = sample("headlines_refreshes_total", {"result": "empty"})
-    failures_before = sample("feed_fetch_failures_total", {"source": "GN India"})
 
     assert await refresh(mock_redis, poller) == 0
 
     assert await mock_redis.get(snapshot_key(ALL_VIEW)) == "previous"
-    assert sample("headlines_refreshes_total", {"result": "empty"}) == empty_before + 1
-    assert sample("feed_fetch_failures_total", {"source": "GN India"}) == failures_before + 1
 
 
 @respx.mock
@@ -263,13 +252,11 @@ async def test_topic_views_are_published(mock_redis, poller, topic_catalog):
 async def test_tagger_down_keeps_previous_topic_views(mock_redis, poller, topic_catalog):
     respx.post(TAGGER).mock(return_value=httpx.Response(503))
     await mock_redis.set(snapshot_key("asia:sport"), "previous")
-    failures_before = sample("headlines_topic_refreshes_total", {"result": "error"})
 
     assert await refresh(mock_redis, poller) == 3  # The main views are unaffected
 
     assert await mock_redis.get(snapshot_key("asia:sport")) == "previous"
     assert (await read_view(mock_redis, "asia"))["data"]
-    assert sample("headlines_topic_refreshes_total", {"result": "error"}) == failures_before + 1
 
 
 @respx.mock

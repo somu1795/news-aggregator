@@ -18,7 +18,7 @@ steps:
       - npm ci
 
   - name: test
-    image: python:3.14.8-slim-trixie
+    image: python:3.14.10-slim-trixie
     commands:
       - apt-get update && apt-get install -y --no-install-recommends nodejs
       - cd app
@@ -34,7 +34,7 @@ steps:
       - python -m pytest -q
 
   - name: test-stats
-    image: python:3.14.8-slim-trixie
+    image: python:3.14.10-slim-trixie
     commands:
       - cd stats
       - pip install --no-cache-dir -r requirements-dev.txt

@@ -7,7 +7,8 @@ This module is responsible only for:
   - Managing the application lifespan (startup/shutdown)
   - Including route modules
 
-Compression is handled by Caddy, and headline fetching by the separate
+Compression is handled by Caddy (the headline snapshots arrive there already
+compressed, see services/headlines_cache.py), and headline fetching by the separate
 refresher process (refresher.py); this process only serves reads.
 """
 
@@ -18,7 +19,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from prometheus_fastapi_instrumentator import Instrumentator
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
@@ -34,9 +34,6 @@ from services.redis_client import create_redis_client
 
 # Configure structured logging before any logger is used
 configure_logging(settings.LOG_LEVEL)
-
-# Import metrics module so Prometheus collectors are registered at import time
-import metrics as _metrics  # noqa: F401
 
 logger = structlog.get_logger(__name__)
 
@@ -133,14 +130,3 @@ app.include_router(site_icons_router)
 app.include_router(frontend_router)
 app.mount("/static", StaticAssets(directory="static"), name="static")
 
-
-# ---------------------------------------------------------------------------
-# Prometheus Instrumentation
-# ---------------------------------------------------------------------------
-
-Instrumentator(
-    should_group_status_codes=True,
-    should_ignore_untemplated=True,
-    should_instrument_requests_inprogress=True,
-    excluded_handlers=[".*admin.*"],
-).instrument(app)

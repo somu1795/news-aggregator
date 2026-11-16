@@ -65,7 +65,6 @@ from typing import List, Optional
 import httpx
 import redis.asyncio as aioredis
 import structlog
-from prometheus_client import Counter, start_http_server
 
 from catalog import get_catalog
 from config import settings
@@ -85,18 +84,6 @@ UNREADABLE = re.compile(r"\s*UNREADABLE\W*$")  # The summary prompt's answer for
 # and retried later: it is first in every pass, so nothing after it would be summarized
 LLM_FAILURES_MAX = 3
 _llm_failures: Tally = Tally()  # By link
-
-ARTICLE_READS = Counter(
-    "summarizer_article_reads_total",
-    "Articles by how their text was read (direct, browser, browser-full, browser2, feed, archive) or failed",
-    ["method"],
-)
-
-STORY_JUDGEMENTS = Counter(
-    "summarizer_story_judgements_total",
-    "Pairs of headlines judged for story grouping, by verdict (same, different)",
-    ["verdict"],
-)
 
 
 async def top_items(redis_client: aioredis.Redis) -> List[dict]:
@@ -193,7 +180,6 @@ async def judge_stories(client: httpx.AsyncClient) -> int:
         for verdict in verdicts:
             label = "same" if verdict["same"] else "different"
             judged[label] += 1
-            STORY_JUDGEMENTS.labels(verdict=label).inc()
     if judged:
         logger.info("Judged story pairs", **judged)
     return sum(judged.values())
@@ -229,12 +215,10 @@ async def read_ahead(client: httpx.AsyncClient, redis_client: aioredis.Redis) ->
                 text, method = await fetch_text(client, redis_client, link)
             except ArticleUnusable as e:
                 reads["failed"] += 1
-                ARTICLE_READS.labels(method="failed").inc()
                 retry = settings.SUMMARY_FAILED_TTL_SECONDS if e.final else settings.SUMMARY_RETRY_SECONDS
                 await redis_client.set(summary_key(link), json.dumps({"failed": str(e)}), ex=retry)
                 return
             reads[method] += 1
-            ARTICLE_READS.labels(method=method).inc()
             await redis_client.set(article_text_key(link), json.dumps({"text": text, "via": method}),
                                    ex=settings.ARTICLE_TEXT_TTL_SECONDS)
 
@@ -322,7 +306,6 @@ async def run() -> None:
         logger.info("SUMMARIZER_LLM_URL is not set, summaries are disabled")
         await asyncio.Event().wait()  # Stay up (restart: unless-stopped) without doing anything
     get_catalog(), get_site()  # A broken config folder stops the summarizer at once, with its error
-    start_http_server(settings.METRICS_PORT)
     redis_client = create_redis_client(socket_timeout=10, retries=3)
     # Articles are other people's servers: public addresses only, but for our own services
     services = [settings.SUMMARIZER_LLM_URL, settings.TAGGER_URL, settings.SUMMARIZER_BROWSER_URL, settings.SUMMARIZER_BROWSER2_URL]

@@ -27,7 +27,6 @@ So request volume costs almost nothing upstream or in Redis, and users keep gett
                                      |    trusted proxies only, sets     |
                                      |    X-Real-IP                      |
                                      |  - compression, load balancing    |
-                                     |  - /metrics for the LAN only       |
                                      +-----------------------------------+
                                                          │
 +--------------------------------------------------------│---------------------------+
@@ -39,7 +38,6 @@ So request volume costs almost nothing upstream or in Redis, and users keep gett
 |                                     |  - in-memory copy of every view,  |          |
 |                                     |    re-synced from Redis every 5s  |          |
 |                                     |  - rate limiting per client IP    |          |
-|                                     |  - /metrics on :8989 (internal)   |          |
 |                                     +-----------------------------------+          |
 |                                                 │ read snapshots                   |
 |                                                 ▼                                  |
@@ -58,7 +56,6 @@ So request volume costs almost nothing upstream or in Redis, and users keep gett
 |                                     |  - mixes each region + "all"      |          |
 |                                     |  - resolves Google News links     |          |
 |                                     |    (custom resolver + fallback)   |          |
-|                                     |  - /metrics on :9100 (internal)   |          |
 |                                     +-----------------------------------+          |
 |                                          │                 │ POST /tag              |
 |                                          │                 ▼                        |
@@ -89,7 +86,7 @@ So request volume costs almost nothing upstream or in Redis, and users keep gett
 - **Role**: Internal reverse proxy and load balancer. TLS is terminated at Cloudflare; the tunnel connector (`cloudflared`) reaches Caddy over the Docker network. Its port is also open to the LAN (e.g. for `/metrics`).
 - **Client IP trust**: `trusted_proxies` lists the peers allowed to tell Caddy the real client IP: private ranges (the Docker network the connector uses, and the LAN). For those peers Caddy reads `CF-Connecting-IP`, `X-Real-IP` or `X-Forwarded-For`; for anyone else it uses the connection's own IP. It then **overwrites** `X-Real-IP` before proxying, so clients can't spoof the IP used for rate limiting.
 - Serves `/stats/` itself: the page's static files from its image, and `heatmap.json` from the volume the stats service writes, so the page needs neither the app nor the worker to load.
-- Compresses responses (zstd/gzip) and health-checks app containers via `/health`. It serves `/metrics` and `/admin/*` only to direct requests from private (LAN) addresses: requests through the tunnel (they carry Cloudflare's `CF-Connecting-IP` header) and from public addresses get 403.
+- Compresses responses (zstd/gzip), except those the app already compressed (the headline snapshots, §5), and health-checks app containers via `/health`. It serves `/admin/*` only to direct requests from private (LAN) addresses: requests through the tunnel (they carry Cloudflare's `CF-Connecting-IP` header) and from public addresses get 403.
 
 ### API (`app` service)
 - **Framework**: FastAPI on Uvicorn (`uvloop`, `httptools`), one worker per CPU (`UVICORN_WORKERS` = `APP_CPUS` = 4).
@@ -160,7 +157,7 @@ So request volume costs almost nothing upstream or in Redis, and users keep gett
 
   Paywalled sites (`paywalled_hosts` in `config/site.yaml`, the same list the page's bypass uses) go direct, archive, then feed: a browser doesn't get past a paywall. Articles none of these can read (or with less than 600 characters of text) are marked and retried after 3 hours; links to non-public addresses are marked for a day and never reach the browser.
 - Measured on the 153 top stories that the direct fetch alone couldn't read: 121 became readable (browser 100, direct after the looser extraction 8, archive 7, feed 2…), and the second browser read 4 of the remaining 32 (phys.org, ESPN). On pages the first browser reads, the second reads 28 of 30, at ~23 s a page instead of ~8 s, so it only runs after the first fails. Still unreadable: sites whose bot checks also stop a real browser (phys.org's own check, Forbes' DataDome, Akamai on Sky and News Corp sites) and paywalled articles without a snapshot. A browser page takes ~10 s (up to ~50 s).
-- Counts per method are logged every pass and exported as `summarizer_article_reads_total{method}` on the summarizer's metrics port (9100, inside the Docker network).
+- Counts per method are logged every pass (`Read articles`).
 - When the LLM server is unreachable (the desktop is off), reading goes on and nothing is summarized: a summary pass first checks the server when something is ready. It retries every minute, logging only when availability changes. When it's back, the articles are already read, so it summarizes them one after another without waiting on pages.
 
 ### Headless browsers (`browser`, `browser2` and `browser-egress` services)
@@ -228,8 +225,7 @@ Fetching:
   - **Host backoff:** a `429` or `503` pauses **every feed on that host** (all Google News feeds together) for its `Retry-After`, or 10 minutes doubling up to 2 hours (`FEED_BACKOFF_SECONDS`, `FEED_BACKOFF_MAX_SECONDS`), with no retries. Meanwhile the feeds' last headlines are reused; with no new Google items there are also no new Google links to resolve.
   - **Jitter:** each request starts after a random delay of up to `FEED_JITTER_SECONDS` (**10s**), so they don't all go out at once.
   - A feed that can't be fetched keeps its last headlines (they still age out after 48 hours) instead of dropping out of its views.
-  - Counted in `feed_fetches_total{result}`: `fetched`, `not_modified`, `not_due`, `backed_off`, `failed`.
-- A feed counts as **failed** after all attempts fail, or if its XML is so malformed that no entries can be parsed. A failed feed contributes nothing and increments `feed_fetch_failures_total{source}`; everything else is unaffected.
+- A feed counts as **failed** after all attempts fail, or if its XML is so malformed that no entries can be parsed. A failed feed contributes nothing and is logged (`Feed fetch exhausted all retries`, with its source); everything else is unaffected.
 - Each entry with a title and a link becomes a headline (one without is skipped, not the whole feed):
   - `title` and `link`;
   - `source`: the publisher named in the entry (its `<source>`: Google News items carry their publisher there), or else the feed's name. A `<source>` that is a photo credit (starting with ©, or pointing at an image) is not a publisher: France 24 Europe puts each photo's credit there ("© Fred Tanneau, AFP"), which made its headlines look like other outlets' (e.g. in the stats page's count of outlets carrying a story);
@@ -256,7 +252,7 @@ Fetching:
 
 **Each cycle starts the turns at a random point** (every source's starting credit is random, up to the total weight), so any source can lead, the heaviest most often, and the mix holds over every stretch as before. Before Nov 10, 2026 the turns always started with the first source in the config, so the "all" tab's first headline was always Asia's, and so Google News India's top story (The Hindu, Telegraph India or NDTV in 51 of 72 hours), then Europe's, the Americas', Africa's and Oceania's.
 
-**Top headlines give their places up** (`services/views/top_turnover.py`, after story grouping): a feed's top story can stay its top story all day, so the "all" tab's first headline stayed first for up to 13 hours (8.5 hours old on average while there), and only 2 of its top 10 changed in 6 hours. Each tab now remembers, in Redis (`top-since:<view>`), when each of its headlines first reached its first `TOP_POSITIONS` (**10**), a story by its id (another of its headlines leading it later doesn't start its time again). After `TOP_DWELL_SECONDS` (**2 hours**) there, it can't be in them again while it stays in the tab: the next ones move up, and it keeps its place among the rest. Replayed on the "all" tab's 72 hourly orders of Nov 8–10: the first headline lasted at most 2 hours instead of 13, and 0.2 of the top 10 were still there 6 hours later instead of 2.1; the new top 10 came from further down the mix (position 12 typically, 45 at most). Topic tabs turn over the same way. In the main tabs the same step spreads the extras (science, Hacker News) over those first positions: the mix starts at a random point and the turnover moves headlines up, so in one hour of six, 3 or 4 of a tab's first 7 headlines were science or tech (Nov 10–13). The first headline is now news, no two extras are side by side, and at most `TOP_MAX_EXTRAS` (**3**) are among the first `TOP_POSITIONS`; an extra that has to wait keeps its place among the rest, and the extras' share of the tab is unchanged. Each view logs a `Mixed headlines` line with counts per source and items dropped as stale, duplicate or over the cap.
+**Top headlines give their places up** (`services/views/top_turnover.py`, after story grouping): a feed's top story can stay its top story all day, so the "all" tab's first headline stayed first for up to 13 hours (8.5 hours old on average while there), and only 2 of its top 10 changed in 6 hours. Each tab now remembers, in Redis (`top-since:<view>`), when each of its headlines first reached its first `TOP_POSITIONS` (**10**), a story by its id (another of its headlines leading it later doesn't start its time again). After `TOP_DWELL_SECONDS` (**2 hours**) there, it can't be in them again while it stays in the tab: the next ones move up, and it keeps its place among the rest. Replayed on the "all" tab's 72 hourly orders of Nov 8–10: the first headline lasted at most 2 hours instead of 13, and 0.2 of the top 10 were still there 6 hours later instead of 2.1; the new top 10 came from further down the mix (position 12 typically, 45 at most). Topic tabs turn over the same way. In the main tabs the same step spreads the extras (science, Hacker News) over those first positions: the mix starts at a random point and the turnover moves headlines up, so in one hour of six, 3 or 4 of a tab's first 7 headlines were science or tech (Nov 10–13). The first headline is now news, no two extras are side by side, and at most `TOP_MAX_EXTRAS` (**3**) are among the first `TOP_POSITIONS`; an extra that has to wait keeps its place among the rest, and the extras' share of the tab is unchanged. With `LOG_LEVEL=DEBUG` on the refresher, each view logs a `Mixed headlines` line with counts per source and items dropped as stale, duplicate or over the cap.
 
 The same story reported by several outlets under different headlines is folded into one item in Step 4.
 
@@ -274,19 +270,19 @@ Google News RSS links point at Google, not at the publisher. Direct links (outle
 
    It makes one attempt, with at most 5 fallback lookups in flight, and caches its result for 24h. If it also fails, the Google link is kept and the next refresh tries again.
 
-Outcomes are counted in `redirect_resolutions_total{outcome}` (custom resolver) and `redirect_fallbacks_total{outcome}` (fallback).
+The custom resolver logs a warning when it gives up on a link (`Could not find c-wiz element, falling back`, `batchexecute parsing failed, falling back to original`, `Redirect resolution attempt failed`), and `Custom and fallback link resolution both failed` when the fallback fails too.
 
 ### Step 4 — Publish
 - **One item per story** (`services/story_groups.py`). Every headline in the views goes to the tagger's `POST /group`, which gives each its story (§6): an id that lasts across views, refreshes and days. In each view, the first-ranked headline of a story stays, with the story's id (`story`), and its other headlines in that view are folded under it (`related`: title, link, source; at most `MAX_RELATED`, **8**), so later stories move up; the view is then cut to 80. If the tagger fails, views are published ungrouped. Measured on one cycle: 8 headlines folded in the main views, 151 in the topic views (tech, science and culture repeat most, e.g. one Apple launch from five outlets).
 - Each view's snapshot (`region`, `data`, `fetched_at`, `expires_at = fetched_at + 5 min`) is validated against the API schema and written to `headlines:<view>` with **no TTL**. All views are written in one pipelined round-trip.
 - **Publishing criteria — a view's previous snapshot is kept when:**
   - that view's news came out empty (e.g. all of a region's feeds failed). The other views are still published, and a warning names the empty views;
-  - every view came out empty (`headlines_refreshes_total{result="empty"}`);
+  - every view came out empty (logged: `Refresh produced no headlines, keeping previous snapshots`);
   - the cycle raised an error (`result="error"`) or exceeded `REFRESH_TIMEOUT_SECONDS` (**270s**, both phases) (`result="timeout"`).
 - A partial view (some feeds down) **is** published, because fresh headlines from part of a region beat none.
 
 ### Step 5 — Topic views
-After the main views are published, the refresher builds the topic views (`get_topic_views()` in `services/views/topic_views.py`). This phase can fail on its own (tagger down, or over `TOPIC_REFRESH_TIMEOUT_SECONDS`, **150s**): the main views are already out, the topic views keep their previous snapshots, and `headlines_topic_refreshes_total{result="error"}` counts it.
+After the main views are published, the refresher builds the topic views (`get_topic_views()` in `services/views/topic_views.py`). This phase can fail on its own (tagger down, or over `TOPIC_REFRESH_TIMEOUT_SECONDS`, **150s**): the main views are already out, the topic views keep their previous snapshots, and the log says `Topic views not refreshed, keeping their previous snapshots`.
 
 1. **Topic feeds.** 55 feeds about one topic each: the Technology, Science, Sports and Entertainment sections of 10 Google News local editions (India and Singapore for Asia; UK; US and Canada; Nigeria, South Africa and Kenya; Australia and New Zealand), plus three Guardian environment feeds and Mongabay (nature) and ten good-news outlets (uplifting: Good News Network, Positive News, Reasons to be Cheerful, Optimist Daily, Upworthy, Good Good Good, DailyGood, Sunny Skyz, Not All News Is Bad, Squirrel News), which belong to no region, and The Better India (uplifting, Asia's). They change slowly and are many, so they're fetched every `TOPIC_FEEDS_INTERVAL_SECONDS` (**30 min**) and reused in between. They appear only in topic views.
 2. **Tagging.** Every fetched headline (news, extras and topic feeds, about 3,500) goes to the tagger with its feed's **label**: the topic of a topic feed (or of Google News Science: `science`), `other` for the Google News national sections, or none. The tagger returns its tags (§6). A headline's tags are the tagger's plus its feed's topic, so a Sports section's items are always `sport`, unless the topic sets `min_feed_score` (in `config/topics.yaml`) and the tagger's model gives the item less than that for its feed's topic (the tagger returns that score for each labelled item): Google's sections misfile some items. Tech sets 0.1: with the v2 embedding model (Fine-tuning, §6), on 1,662 held-out tech-section headlines, 0.1 left out 91, 88 of them misfiled by an LLM's judgement and 3 real tech, which its second opinion (below) brings back; 0.05 left out 63 (1 real tech), 0.2 left out 142 (11). With the v1 model, 0.05 left out 10 of the tech tab's 100, all misfiled (an ESPN cricket feature, a mail-delivery threat, a poppy workshop, a watch launch event, El Niño, a brain cancer forecast); at the same bar, science would have lost real science (a teen piloting a kelp-forest robot, a food-photo study) with its misfits, and culture and sport had none, so only tech sets it. **A second opinion for the doubtful ones:** the v1 model also scored some real tech that low (79 of 1,651 tech-section headlines in two days were under 0.05, about 6 of them real tech: a cyberespionage backdoor, AI-powered cybercrime, language models scheduling MRI scans). So the refresher lists the doubtful items (Redis `topic-check:pending`), and the summarizer asks its LLM the topic's yes/no question about each, once (`topic_checks` in `config/prompts.yaml`; ~60 ms each, before naming subjects); a yes puts the item back in the topic's tabs on the next cycle. Until it's answered (X-PC off), the item stays out. On those 79 the LLM said yes to 7, all tech (the six above but the satellite one, and AI-driven battery-material discovery), and no to the rest, which all looked right (NASA and physics stories, cricket, property, lifestyle). It is only a second opinion: asked about 60 headlines the model was sure of, it said no to 18, among them five video-game stories and an Apple Vision Pro app. A topic with `min_feed_score` but no question leaves its doubtful items out. **Sport** sets 0.02 with its own question: Google's sports sections carry local news, quizzes, crime and property stories (a South African party dispute, a mother abandoning twins, "Morning quiz: In which year did the Fukushima nuclear disaster occur?"). Of 2,739 sport-section headlines in two days (Nov 9–11), 39 scored under 0.02; the LLM said no to 27, about 23 of them misfiled and about 4 real sport (an NBA column, cricket's sandpaper scandal, a racehorse), where leaving out all 39 would have lost about 13. Asking it about all items is no better: on headlines alone it rejected 11 of 60 real nature stories to catch 5 misfiled ones, and about half its rejections of the model's own sport tags were wrong (UFC, basketball stories), so it only ever judges items under a topic's bar. Items left out are still archived, so search finds them.
@@ -303,13 +299,14 @@ After the main views are published, the refresher builds the topic views (`get_t
 ## 5. How Requests Are Served
 
 1. A browser loads `/` and its stylesheet and script from `/static/` (cached after the first visit); the page reads the region and topic lists embedded in it and calls `/api/headlines?region=<view>[&topic=<topic>]`.
-2. Caddy resolves the client IP, sets `X-Real-IP`, compresses and forwards to an app container.
+2. Caddy resolves the client IP, sets `X-Real-IP`, forwards to an app container, and compresses the answer unless the app already did.
 3. The rate limiter checks that client's counter (§7).
 4. The worker returns its **in-memory snapshot** of that view, pre-serialized, with `Cache-Control: public, max-age=<seconds until expires_at>`, and `CDN-Cache-Control` for Cloudflare: at least 60 s, `stale-while-revalidate=60` and `stale-if-error=86400` (an edge copy keeps being served for a day if the origin is unreachable).
 5. **Snapshot sync rules (per worker, per view):**
    - Every worker loads all views at startup.
    - A worker re-reads a view from Redis when its copy is older than `LOCAL_CACHE_SECONDS` (**5s**); only one request per view per worker does the read.
    - Other requests arriving during that read are served the current copy immediately instead of waiting.
+6. **Snapshots are compressed once, not per request** (`services/headlines_cache.py`). When a worker gets a new snapshot (a view's, or the search index it builds from them), it compresses it in a thread, with zstd and gzip at their strongest levels, and `/api/headlines` and `/api/search-index` send the copy the client's `Accept-Encoding` takes (zstd first, as Caddy prefers), with `Vary: Accept-Encoding`. Until the copies are ready (the search index's zstd takes 0.5 s), or if making one fails, the snapshot is sent as it is and Caddy compresses it, so no request waits. Measured Nov 13, 2026: Caddy compressing the same 1.3 MB search index for every request used 4 CPUs to the app's 0.8 and capped it at 194 requests a second; made once, the zstd copy is also smaller (342 KB against Caddy's 431 KB).
    - A view with no snapshot yet is re-checked on every request, so the first snapshot is picked up at once.
    - If Redis can't be read, the worker keeps its copies and retries 5s later.
 
@@ -346,7 +343,6 @@ Consequence: a newly published snapshot reaches users within about 5s, and the A
 | `GET /api/search-index` | Every view's headlines in one response, for the page's search: `items` (each link once: the item as in `/api/headlines`, plus `views`, the views it's in, e.g. `["all", "asia", "asia:tech"]`, in tab order), `fetched_at` (the newest view's), `expires_at` (the soonest any view is due to be refreshed). Cached like `/api/headlines`. **503 with `Retry-After: 10`** only before the first snapshot exists. |
 | `GET /health` | `healthy` / `degraded` / `unhealthy`, plus the "all" view's `headlines.age_seconds` and `headlines.stale` (see §8). |
 | `POST /admin/cache/clear` | Requests an immediate refresh; requires `X-API-Key`. |
-| `GET /metrics` | Prometheus metrics (blocked at Caddy). |
 
 ### Caching: browsers and Cloudflare
 
@@ -465,7 +461,7 @@ A visitor makes 2 requests per page load plus 1 per region viewed, so 100/minute
 | One feed slow or down | Fresh headlines from the remaining feeds in that region (partial views are published). |
 | All of a region's feeds down | That region keeps its previous snapshot; other regions update normally. |
 | All feeds or Google down | The previous headlines in every view. |
-| Custom link resolver broken | Links resolved by the fallback decoder (`redirect_fallbacks_total{outcome="success"}` rises). |
+| Custom link resolver broken | Links resolved by the fallback decoder (the refresher logs the custom resolver's `falling back` warnings). |
 | Both link resolvers broken | Headlines published with Google News links, which still open the article via Google. Retried every refresh. |
 | Tagger down or slow | Main views update normally; topic views keep their previous snapshots until it's back. |
 | NPU unavailable | The tagger runs on the CPU (same results, ~2.5× slower); `GET /health` shows `"device": "CPU"`. |
@@ -483,29 +479,20 @@ A visitor makes 2 requests per page load plus 1 per region viewed, so 100/minute
 
 ## 9. Observability
 
-**Stats** has no metrics. Its log says when Redis is unavailable, entries are skipped, or a whole batch is unusable, and `/stats/heatmap.json` carries `generated_at`, which the page shows as its age.
+There are no metrics: each service says what it does in its log (JSON lines, `docker compose logs <service>`; each keeps its last 30 MB), and `/health` reports the headlines' age.
 
-**API metrics** — `app:8989/metrics`, scraped from inside the Docker network (Caddy blocks it publicly). These are aggregated across all Uvicorn workers via Prometheus multi-process mode: `PROMETHEUS_MULTIPROC_DIR`, cleared on container start by `entrypoint.sh`.
-- `http_requests_total`, `http_request_duration_seconds`, `http_requests_inprogress`, etc.
-- `redis_errors_total{operation}`
+**App** — `GET /health`: `headlines.age_seconds` and `headlines.stale` (older than `STALE_AFTER_SECONDS`), and whether Redis answers.
 
-**Refresher metrics** — `refresher:9100/metrics`:
-- `headlines_refreshes_total{result}`: `success`, `empty`, `timeout`, `error`
-- `headlines_refresh_duration_seconds` (histogram)
-- `headlines_last_refresh_success_timestamp_seconds`
-- `headlines_fetched_count{region}`: items in each published view (topic views as `asia:sport`, …)
-- `headlines_topic_refreshes_total{result}`: topic phase — `success`, `error`
-- `feed_fetch_failures_total{source}`
-- `redirect_resolutions_total{outcome}`: custom resolver — `cache_hit`, `redirect`, `batchexecute`, `no_cwiz`, `parse_failed`, `failed`
-- `redirect_fallbacks_total{outcome}`: fallback — `success`, `failed`
+**Refresher** — one line per event:
+- `Published headline snapshots` and `Published topic snapshots`, with the items in each view: a cycle that worked.
+- `Refresh produced no headlines, keeping previous snapshots`, `Refresh timed out, keeping previous snapshot`, `Refresh failed, keeping previous snapshot` (errors): a cycle that didn't.
+- `Topic views not refreshed, keeping their previous snapshots` (warning): the topic phase failed.
+- `Feed fetch exhausted all retries` (error, with `source`): a feed that failed; `Feed host asked us to slow down, pausing it` (warning).
+- The link resolver's warnings (Step 3): `falling back` when the custom resolver gives up, `Custom and fallback link resolution both failed` when both do.
 
-**Suggested alerts:**
-- No successful refresh in 15 minutes: `time() - headlines_last_refresh_success_timestamp_seconds > 900`.
-- A region running thin: `headlines_fetched_count < 20`.
-- Custom resolver degrading: `rate(redirect_fallbacks_total[30m]) > 0`. Any fallback activity means the primary is failing on some links.
-- Both resolvers failing: `rate(redirect_fallbacks_total{outcome="failed"}[30m]) > 0`.
-- A feed failing repeatedly: `increase(feed_fetch_failures_total[1h]) > 3`.
-- Topic views not updating: `increase(headlines_topic_refreshes_total{result="error"}[30m]) > 3`.
+**Summarizer** — `Read articles` (counts per method, and failed) and `Summarized articles` every pass; `Judged story pairs`.
+
+**Stats** — its log says when Redis is unavailable, entries are skipped, or a whole batch is unusable, and `/stats/heatmap.json` carries `generated_at`, which the page shows as its age.
 
 **Tagger** — `docker compose logs tagger` shows each retrain's scores; `GET /health` (inside the network) the device, classifier version and stored headline count.
 
@@ -587,19 +574,18 @@ Pinned in the Dockerfiles, `docker-compose.yml`, `.woodpecker.yml`, `app/require
 
 | Component | Version |
 | --- | --- |
-| Python base image | `python:3.14.8-slim-trixie` (Debian 13) |
+| Python base image | `python:3.14.10-slim-trixie` (Debian 13) |
 | Caddy | `caddy:2.11.7-alpine` |
 | cloudflared | `latest`, pulled at every `docker compose up` (`pull_policy: always`) |
-| Redis | `redis:8.10.2-alpine` |
+| Redis | `redis:8.10.3-alpine` |
 | CI Docker CLI | `docker:29.9.0-cli` |
 | FastAPI / Starlette / Uvicorn | 0.143.0 / 1.7.0 / 0.54.0 |
 | redis-py | 8.1.0 (explicit retries: API 0, refresher 3, rate limiter 0) |
 | structlog | 26.1.0 |
-| prometheus-fastapi-instrumentator | 8.1.0 |
 | Tagger base image | `ubuntu:24.04` (Python 3.12) |
 | Intel NPU driver (user space) | linux-npu-driver 1.38.0 |
 | OpenVINO / scikit-learn | 2026.4.1 / 1.9.1 |
 | Embedding model | `bge-small-en-v1.5` fine-tuned by `tagger/finetune.py`, release `tagger-model-v2` (checksummed); tokenizer from `Xenova/bge-small-en-v1.5` revision `ea104dac` |
-| Stats base image | `python:3.14.8-slim-trixie` |
+| Stats base image | `python:3.14.10-slim-trixie` |
 | onnxruntime / tokenizers (stats) | 1.31.1 / 0.23.3 |
 | Story grouping model | `multilingual-e5-small` fp16 ONNX and tokenizer from `Xenova/multilingual-e5-small` revision `761b726d` (checksummed) |

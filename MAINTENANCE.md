@@ -59,7 +59,7 @@ What in this project is written by hand and ages, how often to look at it, and a
 
 | What | Where | Sign it broke |
 | --- | --- | --- |
-| Google link resolution | `app/services/links/google_news.py` | `redirect_fallbacks_total` rises, or headlines link to `news.google.com` |
+| Google link resolution | `app/services/links/google_news.py` | The refresher logs `falling back` warnings (`docker compose logs refresher \| grep 'falling back'`), or headlines link to `news.google.com` |
 | archive.ph | `app/services/summaries/reading.py` `ARCHIVE`, the page's bypass option | Archive reads fail, the bypass links stop opening |
 | Site icon service (DuckDuckGo) | `app/config.py` `ICON_SOURCE_URL` | Icons stop appearing |
 | Summary and same-story prompts | `config/prompts.yaml` | Summaries get worse, or the model changes |

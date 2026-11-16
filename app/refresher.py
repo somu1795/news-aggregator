@@ -27,13 +27,11 @@ from typing import Dict, List
 import httpx
 import redis.asyncio as aioredis
 import structlog
-from prometheus_client import Counter, Gauge, Histogram, start_http_server
 
 from catalog import get_catalog
 from config import settings
 from keys import feed_text_key, snapshot_key, summary_key
 from logging_config import configure_logging
-from metrics import REFRESHES
 from models import APIResponse
 from services import archive_index
 from services.archive import apply_story_moves, archive, last_story_move, set_stories, without_story
@@ -49,28 +47,6 @@ from services.story_groups import group_stories
 from services.subjects import cap_subjects, subjects_of
 
 logger = structlog.get_logger(__name__)
-
-# Declared here rather than in metrics.py: unlabeled metrics create a series on
-# import, and the API (which imports metrics.py) must not report them as zeros.
-REFRESH_DURATION = Histogram(
-    "headlines_refresh_duration_seconds",
-    "Time taken by one refresh cycle",
-    buckets=(1, 2, 5, 10, 20, 30, 60, 120),
-)
-LAST_REFRESH_SUCCESS = Gauge(
-    "headlines_last_refresh_success_timestamp_seconds",
-    "Unix time of the last successful refresh",
-)
-HEADLINES_FETCHED = Gauge(
-    "headlines_fetched_count",
-    "Number of headlines in the last published snapshot, per view",
-    ["region"],
-)
-TOPIC_REFRESHES = Counter(
-    "headlines_topic_refreshes_total",
-    "Topic view refreshes (the second phase of a refresh cycle), by result",
-    ["result"],
-)
 
 
 async def add_summaries(redis_client: aioredis.Redis, views: Dict[str, List[Dict]]) -> None:
@@ -112,7 +88,6 @@ async def publish(redis_client: aioredis.Redis, views: Dict[str, List[Dict]], fe
                 expires_at=fetched_at + settings.REFRESH_INTERVAL_SECONDS,
             )
             pipe.set(snapshot_key(view), snapshot.model_dump_json())
-            HEADLINES_FETCHED.labels(region=view).set(len(items))
         await pipe.execute()
     if settings.ARCHIVE_PATH:
         try:
@@ -131,7 +106,6 @@ async def refresh_once(http_client: httpx.AsyncClient, redis_client: aioredis.Re
     fetched_at = time.time()
     published = {view: items for view, items in views.items() if items}
     if not published:
-        REFRESHES.labels(result="empty").inc()
         logger.error("Refresh produced no headlines, keeping previous snapshots")
         return 0
 
@@ -143,8 +117,6 @@ async def refresh_once(http_client: httpx.AsyncClient, redis_client: aioredis.Re
     empty = sorted(set(views) - set(published))
     if empty:
         logger.warning("Some views had no headlines, keeping their previous snapshots", views=empty)
-    REFRESHES.labels(result="success").inc()
-    LAST_REFRESH_SUCCESS.set(fetched_at)
     logger.info("Published headline snapshots", counts={view: len(items) for view, items in published.items()})
     await refresh_topics(http_client, redis_client, poller, results_by_source)
     await sync_stories(http_client)
@@ -169,12 +141,10 @@ async def refresh_topics(
         shown = {item["link"] for items in views.values() for item in items}
         await publish(redis_client, views, now, unlisted=capped + [h for h in misfiled if h["link"] not in shown])
     except Exception as e:
-        TOPIC_REFRESHES.labels(result="error").inc()
         logger.warning("Topic views not refreshed, keeping their previous snapshots", error=str(e) or type(e).__name__)
         return 0
     finally:  # Whether or not the tagger answered
         await publish_new(redis_client, poller.topic_feeds["results"])
-    TOPIC_REFRESHES.labels(result="success").inc()
     logger.info("Published topic snapshots", counts={view: len(items) for view, items in views.items()})
     return len(views)
 
@@ -267,7 +237,6 @@ async def wait_for_next_cycle(redis_client: aioredis.Redis, seconds: float) -> N
 async def run() -> None:
     configure_logging(settings.LOG_LEVEL)
     get_catalog()  # A broken config folder stops the refresher at once, with its error
-    start_http_server(settings.METRICS_PORT)
 
     # Socket timeout must outlast the BLPOP wait in wait_for_next_cycle()
     redis_client = create_redis_client(socket_timeout=settings.REFRESH_INTERVAL_SECONDS + 10, retries=3)
@@ -283,12 +252,9 @@ async def run() -> None:
                     refresh_once(http_client, redis_client, poller), settings.REFRESH_TIMEOUT_SECONDS,
                 )
             except TimeoutError:
-                REFRESHES.labels(result="timeout").inc()
                 logger.error("Refresh timed out, keeping previous snapshot", timeout=settings.REFRESH_TIMEOUT_SECONDS)
             except Exception as e:
-                REFRESHES.labels(result="error").inc()
                 logger.error("Refresh failed, keeping previous snapshot", error=str(e), exc_info=True)
-            REFRESH_DURATION.observe(time.monotonic() - started)
             # From the cycle's start: snapshots say they expire REFRESH_INTERVAL_SECONDS after they're made
             await wait_for_next_cycle(redis_client, until_next_cycle(started, time.monotonic()))
 

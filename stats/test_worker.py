@@ -453,3 +453,7 @@ def test_a_batch_of_only_unusable_entries_is_an_error(state, caplog):
 def test_a_partly_bad_batch_is_only_a_warning(state, caplog):
     worker.process([("1-0", {"title": "x"}), entry()], state)
     assert not any(r.levelname == "ERROR" for r in caplog.records)
+
+
+def test_the_database_caps_its_write_ahead_log(state):
+    assert state.store.db.execute("PRAGMA journal_size_limit").fetchone()[0] == 64 * 2**20

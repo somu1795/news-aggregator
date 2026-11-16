@@ -1,8 +1,11 @@
 import asyncio
+import gzip
 import json
 import logging
 import re
+import threading
 import time
+from compression import zstd
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -19,7 +22,8 @@ from logging_config import RedactSearches
 from main import app
 from middleware.exception import SmartExceptionMiddleware
 from services import archive
-from services.headlines_cache import HeadlinesCache
+from services import headlines_cache
+from services.headlines_cache import HeadlinesCache, accepted_encoding
 from site_config import Prompts, Site
 
 # Using a fixed time for reproducible tests
@@ -254,6 +258,98 @@ def test_searches_are_not_written_to_the_access_log():
     assert RedactSearches().filter(record) and RedactSearches().filter(other)
     assert record.getMessage() == '1.2.3.4:0 - "GET /api/search HTTP/1.1" 200'
     assert other.getMessage() == '1.2.3.4:0 - "GET /api/headlines?region=asia HTTP/1.1" 200'
+
+def raw_response(client, url, accept_encoding, wait_for_encoding=True):
+    """The response as sent (not decoded by the client), once the snapshot's compressed copies are ready."""
+    headers = {"Accept-Encoding": accept_encoding} if accept_encoding is not None else {}
+    deadline = time.time() + 5
+    while True:
+        request = client.build_request("GET", url, headers=headers)
+        if accept_encoding is None:
+            del request.headers["Accept-Encoding"]  # The client's own default
+        response = client.send(request, stream=True)
+        body = b"".join(response.iter_raw())
+        if "content-encoding" in response.headers or not wait_for_encoding or time.time() > deadline:
+            return response, body
+        time.sleep(0.01)
+
+
+async def test_snapshots_are_served_already_compressed(client, mock_redis):
+    """Compressed once per snapshot, not per request: Caddy passes a response that has a Content-Encoding through."""
+    await publish_snapshot(mock_redis)
+    plain = client.get("/api/headlines", headers={"Accept-Encoding": "identity"})
+    assert "content-encoding" not in plain.headers
+
+    response, body = raw_response(client, "/api/headlines", "gzip")
+    assert response.headers["content-encoding"] == "gzip" and gzip.decompress(body) == plain.content
+    assert "Accept-Encoding" in response.headers["vary"]  # Caches keep the copies apart
+    assert response.headers["content-length"] == str(len(body))
+    assert response.headers["cache-control"].startswith("public, max-age=")
+
+    response, body = raw_response(client, "/api/headlines", "zstd")
+    assert response.headers["content-encoding"] == "zstd" and zstd.decompress(body) == plain.content
+    response, body = raw_response(client, "/api/headlines", "gzip, deflate, br, zstd")  # A browser: our preference
+    assert response.headers["content-encoding"] == "zstd"
+
+
+async def test_the_search_index_is_served_already_compressed(client, mock_redis):
+    await publish_view(mock_redis, ALL_VIEW, "https://a.example/1")
+    response, body = raw_response(client, "/api/search-index", "gzip")
+    assert response.headers["content-encoding"] == "gzip"
+    assert json.loads(gzip.decompress(body))["items"][0]["link"] == "https://a.example/1"
+
+
+async def test_a_client_gets_only_an_encoding_it_accepts(client, mock_redis):
+    await publish_snapshot(mock_redis)
+    raw_response(client, "/api/headlines", "gzip")  # The compressed copies are ready
+    for accept_encoding in [None, "", "identity", "br", "gzip;q=0", "gzip;q=0, zstd;q=0.0", "*;q=0"]:
+        response, body = raw_response(client, "/api/headlines", accept_encoding, wait_for_encoding=False)
+        assert "content-encoding" not in response.headers, accept_encoding
+        assert json.loads(body)["data"][0]["title"] == "Cached News"
+        assert "Accept-Encoding" in response.headers["vary"]
+    response, _ = raw_response(client, "/api/headlines", "zstd;q=0, gzip;q=0.5", wait_for_encoding=False)
+    assert response.headers["content-encoding"] == "gzip"
+
+
+@pytest.mark.parametrize("header, expected", [
+    ("gzip", "gzip"), ("zstd", "zstd"), ("gzip, zstd", "zstd"), ("GZIP", "gzip"), (" gzip ; q=0.8 , br", "gzip"),
+    ("*", "zstd"), ("zstd;q=0, *", "gzip"), ("gzip;q=0, *;q=0.1", "zstd"), ("x-gzip", None),
+    ("", None), ("identity", None), ("br", None), ("gzip;q=0", None), ("gzip;q=abc", None), ("gzip;q=", None),
+    ("gzip;level=9;q=0", None), (";;,,", None), ("*;q=0, gzip", "gzip"),
+])
+def test_accept_encoding_is_read_as_the_standard_says(header, expected):
+    assert accepted_encoding(header, ["zstd", "gzip"]) == expected
+
+
+def test_only_a_ready_encoding_is_offered():
+    assert accepted_encoding("gzip, zstd", ["gzip"]) == "gzip"
+    assert accepted_encoding("gzip, zstd", []) is None
+
+
+async def test_a_snapshot_is_served_uncompressed_until_its_copies_are_ready(mock_redis, monkeypatch):
+    """No request waits for the compression: Caddy compresses the uncompressed body, as it did every one before."""
+    gate = threading.Event()
+    monkeypatch.setattr(headlines_cache, "_ENCODERS", {"gzip": lambda body: gate.wait(5) and gzip.compress(body)})
+    await publish_snapshot(mock_redis)
+    cache = HeadlinesCache(mock_redis, [ALL_VIEW])
+    snapshot = await cache.get(ALL_VIEW)
+    assert snapshot.encoded == {}
+    gate.set()
+    await cache.compressed()
+    assert gzip.decompress(snapshot.encoded["gzip"]).decode() == snapshot.body
+    assert (await cache.get(ALL_VIEW)) is snapshot  # Unchanged in Redis: not compressed again
+
+
+async def test_a_failed_compression_leaves_the_snapshot_served_uncompressed(mock_redis, monkeypatch):
+    def broken(body):
+        raise OSError("no memory")
+    monkeypatch.setattr(headlines_cache, "_ENCODERS", {"zstd": broken, "gzip": gzip.compress})
+    await publish_snapshot(mock_redis)
+    cache = HeadlinesCache(mock_redis, [ALL_VIEW])
+    snapshot = await cache.get(ALL_VIEW)
+    await cache.compressed()
+    assert list(snapshot.encoded) == ["gzip"]  # The other encoding is still made
+
 
 async def test_search_index_is_rebuilt_only_when_a_view_changes(mock_redis, monkeypatch):
     views = [ALL_VIEW, get_catalog().regions[0].id]
@@ -526,9 +622,3 @@ def test_an_unexpected_error_tells_api_clients_nothing_about_the_server():
 
 def test_site_icons_and_the_admin_route_are_rate_limited():
     assert {"routes.site_icons.site_icon", "routes.admin.clear_cache"} <= set(limiter._route_limits)
-
-
-def test_metrics_are_served_for_prometheus(client):
-    response = client.get("/metrics")
-    assert response.status_code == 200 and response.headers["content-type"].startswith("text/plain")
-    assert "# TYPE headlines_refreshes_total counter" in response.text

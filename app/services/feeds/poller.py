@@ -20,7 +20,6 @@ import structlog
 
 from catalog import Catalog, NewsSource, TopicSource
 from config import settings
-from metrics import FEED_FETCH_FAILURES, FEED_FETCHES
 from services.feeds.parse import parse
 
 logger = structlog.get_logger(__name__)
@@ -107,10 +106,8 @@ class FeedPoller:
         host = urlparse(url).hostname or ""
         now = time.monotonic()
         if now < self.backoff.get(host, _HostBackoff()).until:
-            FEED_FETCHES.labels(result="backed_off").inc()
             return state.items
         if now < state.next_fetch:
-            FEED_FETCHES.labels(result="not_due").inc()
             return state.items
         await asyncio.sleep(random.uniform(0, settings.FEED_JITTER_SECONDS))
         headers = dict(_FEED_HEADERS)
@@ -124,13 +121,11 @@ class FeedPoller:
                     response = await client.get(url, headers=headers, follow_redirects=True)
                 if response.status_code in (429, 503):
                     seconds = self._back_off(host, response)
-                    FEED_FETCHES.labels(result="backed_off").inc()
                     logger.warning("Feed host asked us to slow down, pausing it", source=source_name, host=host,
                                    status=response.status_code, seconds=round(seconds))
                     return state.items
                 self.backoff.pop(host, None)
                 if response.status_code == 304:
-                    FEED_FETCHES.labels(result="not_modified").inc()
                     _schedule(state, changed=False)
                     return state.items
                 response.raise_for_status()
@@ -149,10 +144,7 @@ class FeedPoller:
                         source=source_name, retries=settings.FETCH_RETRIES,
                         exc_info=True,
                     )
-                    FEED_FETCH_FAILURES.labels(source=source_name).inc()
-                    FEED_FETCHES.labels(result="failed").inc()
                     return state.items
-        FEED_FETCHES.labels(result="fetched").inc()
         known = {h["title"] for h in state.items}  # By title: links are rewritten once resolved (services.links.resolve_links)
         changed = not state.items or any(h["title"] not in known for h in headlines)
         state.items = headlines

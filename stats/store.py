@@ -62,6 +62,7 @@ class Store:
     def __init__(self, path: Path):
         self.db = sqlite3.connect(path)
         self.db.execute("PRAGMA journal_mode=WAL")
+        self.db.execute("PRAGMA journal_size_limit=67108864")  # 64 MB: otherwise the log keeps its largest size
         self.db.executescript(SCHEMA)
 
     def commit(self) -> None:

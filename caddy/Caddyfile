@@ -39,21 +39,9 @@
 		Referrer-Policy strict-origin-when-cross-origin
 	}
 
-	# Prometheus metrics: only for this machine and the LAN, connecting directly. Visitors come
-	# through the Cloudflare Tunnel, whose connector is on the (private) Docker network too, so
-	# they're told apart by the header Cloudflare adds to every request.
-	@metrics_via_cloudflare {
-		path /metrics
-		header Cf-Connecting-IP *
-	}
-	@metrics_from_outside {
-		path /metrics
-		not remote_ip private_ranges
-	}
-	respond @metrics_via_cloudflare "Forbidden" 403
-	respond @metrics_from_outside "Forbidden" 403
-
-	# The admin API (its key still required) the same way: this machine and the LAN only
+	# The admin API (its key still required): only for this machine and the LAN, connecting directly.
+	# Visitors come through the Cloudflare Tunnel, whose connector is on the (private) Docker network
+	# too, so they're told apart by the header Cloudflare adds to every request.
 	@admin_via_cloudflare {
 		path /admin/*
 		header Cf-Connecting-IP *

@@ -33,8 +33,6 @@ services:
       - ENABLE_API_DOCS  # Interactive API docs at /docs
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
       - LOG_LEVEL=INFO
-      # Lets /metrics aggregate all Uvicorn workers (see app/entrypoint.sh)
-      - PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus-metrics
       # The refresher's headline archive, which the search of older headlines reads
       - ARCHIVE_PATH=/archive/archive.db
       - SEARCH_TYPO_FALLBACK
@@ -298,7 +296,7 @@ services:
     image: news-aggregator-caddy
     build: ./caddy
     ports:
-      # Open to this machine and the LAN (e.g. /metrics, which Caddy serves only to direct
+      # Open to this machine and the LAN (e.g. the admin API, which Caddy serves only to direct
       # LAN requests). The public site goes through the Cloudflare Tunnel over the Docker network.
       - "${CADDY_HTTP_PORT:-7001}:7001"
     volumes:
@@ -314,7 +312,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1'
+          cpus: '4'  # It compresses every response: at 1 it was the limit under load, with the app at a third of its own
           memory: 256M
           pids: 256
     restart: unless-stopped
@@ -332,7 +330,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.5'
+          cpus: '4'
           memory: 128M
           pids: 64
     restart: unless-stopped
@@ -340,7 +338,7 @@ services:
       - caddy
 
   redis:
-    image: redis:8.10.2-alpine
+    image: redis:8.10.3-alpine
     <<: *hardened
     # Its entrypoint chowns /data and switches to the redis user
     cap_add: [CHOWN, SETUID, SETGID]

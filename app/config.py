@@ -55,7 +55,6 @@ class Settings(BaseSettings):
     # Topic feeds (40+ Google News sections) change slowly: fetched every 30 minutes
     TOPIC_FEEDS_INTERVAL_SECONDS: int = 1800
     STALE_AFTER_SECONDS: int = 900  # /health reports the snapshot as stale beyond this age
-    METRICS_PORT: int = 9100  # Prometheus port exposed by the refresher process
 
     # --- Feed Fetching & Mixing Settings ---
     MAX_HEADLINES: int = 100  # Per view (each region, and "all")
@@ -73,7 +72,7 @@ class Settings(BaseSettings):
     # that should look like a browser: feeds, articles and the Google link resolver.
     BROWSER_USER_AGENT: str = (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36"
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/158.0.0.0 Safari/537.36"
     )
     FETCH_RETRIES: int = 3
     # Polite polling (services/feeds/poller.py FeedPoller.fetch)

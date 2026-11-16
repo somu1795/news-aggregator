@@ -14,14 +14,6 @@ else
     echo "Dynamically calculated worker count: $WORKERS ($CPU_CORES cores)"
 fi
 
-# --- Prometheus multi-process metrics ---
-# Each worker writes metric files here; /metrics aggregates them. Clear files
-# left by a previous run so counters from dead processes don't linger.
-if [ -n "$PROMETHEUS_MULTIPROC_DIR" ]; then
-    rm -rf "$PROMETHEUS_MULTIPROC_DIR"
-    mkdir -p "$PROMETHEUS_MULTIPROC_DIR"
-fi
-
 # Start the application
 echo "Starting uvicorn..."
 exec uvicorn main:app \
