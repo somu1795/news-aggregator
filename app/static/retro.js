@@ -268,16 +268,19 @@
         render();
     }
 
-    // A "snap" button under each open summary, which saves the headline and summary as an image (saveSnap)
-    var snaps = read("retroSnippet") !== "off";  // On unless turned off (its first name, kept so the choice is)
+    // A "snap" button under each open summary, which saves the headline and summary as an image (saveSnap), and
+    // with it, by mode: nothing more (image), the headline's link (url), or the headline and its link (text): copied,
+    // and given to the share sheet as the caption. Or no snap button (off). Kept under its first name, retroSnippet
+    // ("on", from before the modes, is the default)
+    var SNAP_MODES = ["image", "url", "text", "off"];
+    var snapMode = SNAP_MODES.indexOf(read("retroSnippet")) >= 0 ? read("retroSnippet") : SNAP_MODES[0];
     function renderSnapSetting() {
-        snapBtn.textContent = "snap: " + (snaps ? "on" : "off");
-        snapBtn.classList.toggle("on", snaps);
-        snapBtn.setAttribute("aria-pressed", String(snaps));
+        snapBtn.textContent = "snap: " + snapMode.padEnd(5, " ");  // Same width for every mode, so the row doesn't reflow
+        snapBtn.classList.toggle("on", snapMode !== "off");
     }
-    function toggleSnaps() {
-        snaps = !snaps;
-        write("retroSnippet", snaps ? "on" : "off");
+    function cycleSnapMode() {
+        snapMode = SNAP_MODES[(SNAP_MODES.indexOf(snapMode) + 1) % SNAP_MODES.length];
+        write("retroSnippet", snapMode);
         renderSnapSetting();
         render();
     }
@@ -626,7 +629,7 @@
         sortMode = SORTS[0];
         shuffleKeys = Object.create(null);
         siteIcons = true;
-        snaps = true;
+        snapMode = SNAP_MODES[0];
         autoRefresh = AUTO_REFRESH[0];
         backToLastTab = false;
         bypass = "none";
@@ -812,11 +815,12 @@
         block.appendChild(highlighted(item.summary, words));
         var note = document.createElement("small");
         note.textContent = "machine summary · may contain errors";
-        if (snaps) {
+        if (snapMode !== "off") {
             var snap = document.createElement("button");
             snap.type = "button";
             snap.textContent = "snap";
-            snap.title = "Save this headline and its summary as an image, and copy its link";
+            snap.title = "Save this headline and its summary as an image" + {
+                image: "", url: ", and copy its link", text: ", and copy the headline and its link" }[snapMode];
             snap.addEventListener("click", function () { saveSnap(item, snap); });
             note.appendChild(document.createTextNode(" · "));
             note.appendChild(snap);
@@ -948,13 +952,16 @@
     }
 
     // Saves the snap: the share sheet on phones (save to photos, send to an app), a PNG download elsewhere;
-    // and copies the headline's link, to paste beside it (only on https: browsers have no clipboard API on plain http)
+    // in the url and text modes, also copies the link (or the headline and link), to paste beside it, and gives
+    // it to the share sheet as the caption (only on https: browsers have no clipboard API on plain http)
     function saveSnap(item, button) {
         var href = safeUrl(item.link), host = href ? hostOf(href) : "";
-        var name = "news-" + (normalize(cleanTitle(item.title, item.source)).replace(/[^a-z0-9]+/g, "-")
+        var title = cleanTitle(item.title, item.source);
+        var name = "news-" + (normalize(title).replace(/[^a-z0-9]+/g, "-")
             .replace(/^-|-$/g, "").slice(0, 60) || "snap") + ".png";
-        var copied = href && navigator.clipboard && navigator.clipboard.writeText  // Now, while the click still counts
-            ? navigator.clipboard.writeText(href).then(function () { return true; }, function () { return false; })
+        var caption = !href ? "" : snapMode === "url" ? href : snapMode === "text" ? title + "\n" + href : "";
+        var copied = caption && navigator.clipboard && navigator.clipboard.writeText  // Now, while the click still counts
+            ? navigator.clipboard.writeText(caption).then(function () { return true; }, function () { return false; })
             : Promise.resolve(false);
         button.disabled = true;
         snapIcon(host)
@@ -968,9 +975,10 @@
                 var file = new File([blob], name, { type: "image/png" });
                 var phone = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
                 if (phone && navigator.canShare && navigator.canShare({ files: [file] })) {
-                    // The text is the caption where the app takes one (WhatsApp on Android; on iPhones it may drop it)
-                    var title = cleanTitle(item.title, item.source);
-                    return navigator.share({ files: [file], title: title, text: href ? title + "\n" + href : title })
+                    var data = { files: [file], title: title };
+                    // The caption, where the app takes one (WhatsApp on Android; on iPhones it may drop it)
+                    if (caption) data.text = caption;
+                    return navigator.share(data)
                         .catch(function (error) { if (error.name !== "AbortError") throw error; });  // Closing the sheet isn't a failure
                 }
                 var url = URL.createObjectURL(blob);
@@ -985,7 +993,7 @@
             .then(function () { return copied; })
             .then(function (linkCopied) {
                 if (!linkCopied) return;
-                button.textContent = "link copied";
+                button.textContent = snapMode === "text" ? "text copied" : "link copied";
                 setTimeout(function () { button.textContent = "snap"; }, 3000);
             })
             .catch(function () {
@@ -1167,7 +1175,7 @@
     document.getElementById("reset").addEventListener("click", resetAll);
     installBtn.addEventListener("click", install);
     siteIconsBtn.addEventListener("click", toggleSiteIcons);
-    snapBtn.addEventListener("click", toggleSnaps);
+    snapBtn.addEventListener("click", cycleSnapMode);
     autoRefreshBtn.addEventListener("click", cycleAutoRefresh);
     backActionBtn.addEventListener("click", toggleBackAction);
     searchBtn.addEventListener("click", function () { if (search.active) closeSearch(); else openSearch(); });

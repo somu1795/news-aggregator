@@ -174,64 +174,88 @@ function clipboardStandIn(window, seen) {
         value: { writeText: (text) => new Promise((done) => setTimeout(() => { seen.copied = text; done(); }, 30)) } });
 }
 
-test("snap also copies the headline's link, and says so", async () => {
+const LINK = SUMMARISED[ALL + "/" + EVERYTHING][0].link;
+
+// Snaps on a desktop (a download) or a phone (the share sheet), in a snap mode; what was saved, shared and copied
+async function snapIn(mode, { phone = false, clipboard = true } = {}) {
     const seen = {};
-    const page = await open(SUMMARISED, { stored: { retroSiteIcons: "off" },
-        setup: (w) => { snapStandIns(w, seen); clipboardStandIn(w, seen); } });
+    const page = await open(SUMMARISED, { stored: Object.assign({ retroSiteIcons: "off" }, mode && { retroSnippet: mode }), setup: (w) => {
+        snapStandIns(w, seen);
+        if (clipboard) clipboardStandIn(w, seen);
+        else Object.defineProperty(w.navigator, "clipboard", { configurable: true, value: { writeText: () => Promise.reject(new Error("denied")) } });
+        if (phone) {
+            w.matchMedia = (query) => ({ matches: query === "(pointer: coarse)", addEventListener() {}, addListener() {} });
+            w.navigator.canShare = () => true;
+            w.navigator.share = (data) => {
+                seen.shared = Array.from(data.files, (f) => f.name + " " + f.type);
+                seen.sharedText = data.text;
+                return Promise.resolve();
+            };
+        }
+    } });
     const button = await openSummary(page);
     await page.click(button);
     await page.settle(60);
-    assert.equal(seen.copied, SUMMARISED[ALL + "/" + EVERYTHING][0].link);
+    seen.button = button.textContent;
+    return seen;
+}
+
+test("by default snap saves only the image: nothing copied, nothing shared with it", async () => {
+    const seen = await snapIn(null);
     assert.equal(seen.download, "news-felix-gallardo-dies-at-80.png");
-    assert.equal(button.textContent, "link copied");
+    assert.equal(seen.copied, undefined);
+    assert.equal(seen.button, "snap");
+    const phone = await snapIn(null, { phone: true });
+    assert.deepEqual(phone.shared, ["news-felix-gallardo-dies-at-80.png image/png"]);
+    assert.equal(phone.sharedText, undefined);
+    assert.equal(phone.copied, undefined);
+});
+
+test("snap: url also copies the headline's link, and shares it as the caption", async () => {
+    const seen = await snapIn("url");
+    assert.equal(seen.download, "news-felix-gallardo-dies-at-80.png");
+    assert.equal(seen.copied, LINK);
+    assert.equal(seen.button, "link copied");
+    const phone = await snapIn("url", { phone: true });
+    assert.equal(phone.sharedText, LINK);  // WhatsApp's caption
+    assert.equal(phone.copied, LINK);
+});
+
+test("snap: text copies and shares the headline with its link", async () => {
+    const seen = await snapIn("text");
+    assert.equal(seen.copied, "Félix Gallardo dies at 80\n" + LINK);
+    assert.equal(seen.button, "text copied");
+    const phone = await snapIn("text", { phone: true });
+    assert.equal(phone.sharedText, "Félix Gallardo dies at 80\n" + LINK);
+    assert.equal(phone.download, undefined);
 });
 
 test("snap still saves the image when the link can't be copied", async () => {
-    const seen = {};
-    const page = await open(SUMMARISED, { stored: { retroSiteIcons: "off" }, setup: (w) => {
-        snapStandIns(w, seen);
-        Object.defineProperty(w.navigator, "clipboard", { configurable: true,
-            value: { writeText: () => Promise.reject(new Error("denied")) } });
-    } });
-    const button = await openSummary(page);
-    await page.click(button);
+    const seen = await snapIn("url", { clipboard: false });
     assert.equal(seen.download, "news-felix-gallardo-dies-at-80.png");
-    assert.equal(button.textContent, "snap");
+    assert.equal(seen.button, "snap");
 });
 
-test("on a phone, snap opens the share sheet with the image, the headline and its link as its caption", async () => {
-    const seen = {};
-    const page = await open(SUMMARISED, { stored: { retroSiteIcons: "off" }, setup: (w) => {
-        snapStandIns(w, seen);
-        clipboardStandIn(w, seen);
-        w.matchMedia =(query) => ({ matches: query === "(pointer: coarse)", addEventListener() {}, addListener() {} });
-        w.navigator.canShare = () => true;
-        w.navigator.share = (data) => {
-            seen.shared = Array.from(data.files, (f) => f.name + " " + f.type);
-            seen.sharedText = data.text;
-            return Promise.resolve();
-        };
-    } });
-    await page.click(await openSummary(page));
-    await page.settle(60);
-    assert.deepEqual(seen.shared, ["news-felix-gallardo-dies-at-80.png image/png"]);
-    assert.equal(seen.sharedText, "Félix Gallardo dies at 80\n" + SUMMARISED[ALL + "/" + EVERYTHING][0].link);  // WhatsApp's caption
-    assert.equal(seen.download, undefined);
-    assert.equal(seen.copied, SUMMARISED[ALL + "/" + EVERYTHING][0].link);
-});
-
-test("the snap button can be turned off in advanced, is remembered, and comes back with reset", async () => {
+test("snap in advanced cycles image, url, text and off, is remembered, and goes back to image with reset", async () => {
     const page = await open(SUMMARISED);
-    assert.equal(page.$("snap-toggle").textContent, "snap: on");
-    await page.click(page.$("snap-toggle"));
-    assert.equal(page.$("snap-toggle").textContent, "snap: off");
-    assert.equal(await openSummary(page), null);
-    assert.equal(page.window.localStorage.getItem("retroSnippet"), "off");
+    const toggle = page.$("snap-toggle");
+    const labels = [toggle.textContent];
+    for (let i = 0; i < 4; i++) {
+        await page.click(toggle);
+        labels.push(toggle.textContent);
+    }
+    assert.deepEqual(labels.map((l) => l.trim()), ["snap: image", "snap: url", "snap: text", "snap: off", "snap: image"]);
+    assert.ok(labels.every((l) => l.length === labels[0].length), "the same width, so the row doesn't reflow");
 
-    const again = await open(SUMMARISED, { stored: { retroSnippet: "off" } });
-    assert.equal(await openSummary(again), null);
-    await again.click(again.$("reset"));
-    assert.equal(again.$("snap-toggle").textContent, "snap: on");
+    const off = await open(SUMMARISED, { stored: { retroSnippet: "off" } });
+    assert.equal(await openSummary(off), null);  // No snap button
+    await off.click(off.$("reset"));
+    assert.equal(off.$("snap-toggle").textContent.trim(), "snap: image");
+
+    const text = await open(SUMMARISED, { stored: { retroSnippet: "text" } });
+    assert.equal(text.$("snap-toggle").textContent.trim(), "snap: text");
+    const before = await open(SUMMARISED, { stored: { retroSnippet: "on" } });  // Chosen before the modes: the default
+    assert.equal(before.$("snap-toggle").textContent.trim(), "snap: image");
 });
 
 test("a long headline and summary wrap within the image, a word too long for a line included", async () => {
