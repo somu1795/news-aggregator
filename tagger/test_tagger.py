@@ -286,14 +286,39 @@ def test_verdicts_merge_and_split_stories_and_log_it(tagger, monkeypatch):
     c = "big dogs age faster study finds today"  # Joins a's story
     story_a, story_b, _ = tagger.group([Item(title=a), Item(title=b), Item(title=c)])
     assert story_a != story_b
-    tagger.store_verdicts([tagger_module.Verdict(a=b, b=c, same=True)])  # Not the first headlines: still merges
+    tagger.store_verdicts([tagger_module.Verdict(a=b, b=c, same=True)])  # b, alone in its story, joins c's
     assert tagger.stories([Item(title=a), Item(title=b), Item(title=c)]) == [story_a] * 3
     tagger.store_verdicts([tagger_module.Verdict(a=a, b=b, same=False)])
     rowid_b = tagger.db.execute("SELECT rowid FROM headlines WHERE title = ?", (b,)).fetchone()[0]
     assert tagger.stories([Item(title=a), Item(title=b), Item(title=c)]) == [story_a, rowid_b, story_a]
     moves = tagger.story_moves(0, 10)
-    assert [(m["old"], m["new"], m["title"]) for m in moves] == [(story_b, story_a, None), (story_a, rowid_b, b)]
+    assert [(m["old"], m["new"], m["title"]) for m in moves] == [(story_b, story_a, b), (story_a, rowid_b, b)]
     assert tagger.story_moves(moves[0]["id"], 10) == moves[1:]
+
+
+def test_a_same_verdict_moves_one_headline_not_its_whole_story(tagger, monkeypatch):
+    """Whole-story merges chained matches together through any one pair of their headlines."""
+    monkeypatch.setattr(stories_module, "STORY_THRESHOLD", 0.9)
+    monkeypatch.setattr(stories_module, "STORY_LEADER_THRESHOLD", 0.9)
+    a1, a2 = "fulham newcastle live commentary starting team", "fulham newcastle live commentary starting team news"
+    b1, b2 = "forest city predictions bet builder tips today", "forest city predictions bet builder tips today now"
+    story_a, _, story_b, _ = tagger.group([Item(title=t) for t in (a1, a2, b1, b2)])
+    assert story_a != story_b
+    tagger.store_verdicts([tagger_module.Verdict(a=a2, b=b2, same=True)])
+    assert tagger.stories([Item(title=t) for t in (a1, a2, b1, b2)]) == [story_a, story_a, story_b, story_a]
+    assert [(m["old"], m["new"], m["title"]) for m in tagger.story_moves(0, 10)] == [(story_b, story_a, b2)]
+
+
+def test_a_same_verdict_on_two_first_headlines_merges_their_stories(tagger, monkeypatch):
+    """Moving a story's first headline would leave the rest leaderless: two leaders judged the same news merge."""
+    monkeypatch.setattr(stories_module, "STORY_THRESHOLD", 0.9)
+    monkeypatch.setattr(stories_module, "STORY_LEADER_THRESHOLD", 0.9)
+    a1, a2 = "fulham newcastle live commentary starting team", "fulham newcastle live commentary starting team news"
+    b1, b2 = "forest city predictions bet builder tips today", "forest city predictions bet builder tips today now"
+    story_a, _, story_b, _ = tagger.group([Item(title=t) for t in (a1, a2, b1, b2)])
+    tagger.store_verdicts([tagger_module.Verdict(a=a1, b=b1, same=True)])
+    assert tagger.stories([Item(title=t) for t in (a1, a2, b1, b2)]) == [story_a] * 4
+    assert [(m["old"], m["new"], m["title"]) for m in tagger.story_moves(0, 10)] == [(story_b, story_a, None)]
 
 
 def test_a_same_verdict_merges_stories_only_as_long_as_one_story_may_last(tagger, monkeypatch):

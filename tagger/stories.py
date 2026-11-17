@@ -277,9 +277,11 @@ class StoryGrouping:
 
     def store_verdicts(self, verdicts: List["Verdict"]) -> int:
         """
-        Stores the verdicts and applies them to the stories: "same" merges two stories
-        (into the older) unless together they'd last longer than a story may (STORY_MAX_AGE_SECONDS:
-        merges chained a month of horoscopes into one story), "not" moves one of the two out of their story into one of its own
+        Stores the verdicts and applies them to the stories: "same" moves one of the two
+        headlines into the other's story (the newer story's, into the older), or, when both
+        lead their stories, merges the two; never so a story lasts longer than it may
+        (STORY_MAX_AGE_SECONDS). Merging whole stories on any pair of their headlines chained
+        a month of horoscopes, and different football matches, into single stories. "not" moves one of the two out of their story into one of its own
         (the later, unless it's the story's first headline). Each change is logged
         (story_moves), for copies of the stories (the archive) to follow.
         """
@@ -296,10 +298,19 @@ class StoryGrouping:
             if len(found) < 2:
                 continue  # Not grouped yet: the verdict applies when they are
             (row_a, story_a), (row_b, story_b) = found[a], found[b]
-            if same and story_a != story_b and self._span(story_a, story_b) <= STORY_MAX_AGE_SECONDS:
-                old, new = max(story_a, story_b), min(story_a, story_b)
-                self.db.execute("UPDATE headlines SET story = ? WHERE story = ?", (new, old))
-                self.db.execute("INSERT INTO story_moves (old, new, title, moved) VALUES (?, ?, NULL, ?)", (old, new, now))
+            if same and story_a != story_b:
+                # The headline of the newer story joins the other's, or failing that the other way round
+                for title, (rowid, old), (_, new) in sorted(((a, found[a], found[b]), (b, found[b], found[a])),
+                                                            key=lambda m: -m[1][1]):
+                    if self._movable(rowid, old) and self._span(new, rowid=rowid) <= STORY_MAX_AGE_SECONDS:
+                        self.db.execute("UPDATE headlines SET story = ? WHERE rowid = ?", (new, rowid))
+                        self.db.execute("INSERT INTO story_moves (old, new, title, moved) VALUES (?, ?, ?, ?)", (old, new, title, now))
+                        break
+                else:  # Both lead stories (moving one would leave the rest leaderless): those merge
+                    if row_a == story_a and row_b == story_b and self._span(story_a, story_b) <= STORY_MAX_AGE_SECONDS:
+                        old, new = max(story_a, story_b), min(story_a, story_b)
+                        self.db.execute("UPDATE headlines SET story = ? WHERE story = ?", (new, old))
+                        self.db.execute("INSERT INTO story_moves (old, new, title, moved) VALUES (?, ?, NULL, ?)", (old, new, now))
             elif not same and story_a == story_b:
                 title, rowid = (b, row_b) if row_a == story_a or (row_b != story_b and row_a < row_b) else (a, row_a)
                 self.db.execute("UPDATE headlines SET story = rowid WHERE rowid = ?", (rowid,))
@@ -307,12 +318,17 @@ class StoryGrouping:
         self.db.commit()
         return len(rows)
 
-    def _span(self, *stories: int) -> float:
-        """Seconds from the first headline of these stories to the last."""
+    def _span(self, *stories: int, rowid: int = -1) -> float:
+        """Seconds from the first headline of these stories (and that headline) to the last."""
         first, last = self.db.execute(
-            f"SELECT MIN(first_seen), MAX(first_seen) FROM headlines WHERE story IN ({','.join('?' * len(stories))})",
-            stories).fetchone()
+            f"SELECT MIN(first_seen), MAX(first_seen) FROM headlines WHERE story IN ({','.join('?' * len(stories))}) OR rowid = ?",
+            (*stories, rowid)).fetchone()
         return last - first
+
+    def _movable(self, rowid: int, story: int) -> bool:
+        """Whether a headline can leave its story: it doesn't lead it, or it's the only headline in it."""
+        return rowid != story or self.db.execute(
+            "SELECT COUNT(*) FROM headlines WHERE story = ?", (story,)).fetchone()[0] == 1
 
     def split_long_stories(self) -> int:
         """
