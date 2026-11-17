@@ -145,7 +145,7 @@ class FeedPoller(HostLimits):
         - a 429 or 503 pauses every feed on that host (Retry-After, or a doubling
           backoff), with no retries, and stops those still waiting their turn; network
           errors and other 5xx are retried with backoff (each retry waits its turn too),
-          other 4xx (403, 404: asking again won't help) aren't;
+          other 4xx (403, 404: asking again won't help) and pages that aren't feeds aren't;
         - a feed that can't be fetched is asked less often, like a quiet one.
         When a feed can't be fetched, its last headlines are reused (they still age
         out after MAX_HEADLINE_AGE_HOURS).
@@ -184,7 +184,8 @@ class FeedPoller(HostLimits):
                     "Feed fetch attempt failed",
                     source=source_name, attempt=attempt + 1, error=str(e),
                 )
-                if isinstance(e, httpx.HTTPStatusError) and e.response.status_code < 500:
+                # Other 4xx, or a page that isn't a feed (a bot check's): asking again at once won't help
+                if isinstance(e, ValueError) or isinstance(e, httpx.HTTPStatusError) and e.response.status_code < 500:
                     _schedule(state, changed=False)
                     return state.items
                 if attempt < settings.FETCH_RETRIES - 1:

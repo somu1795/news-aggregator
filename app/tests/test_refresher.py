@@ -366,6 +366,21 @@ def test_cycles_start_an_interval_apart_however_long_one_takes(monkeypatch):
     assert until_next_cycle(started=1000.0, now=1400.0) == 1.0  # A cycle that overran: the next one at once
 
 
+async def test_a_restart_waits_for_the_cycle_the_last_run_had_due(mock_redis, monkeypatch):
+    monkeypatch.setattr(settings, "REFRESH_INTERVAL_SECONDS", 300)
+    assert await refresher.until_first_cycle(mock_redis) == 0  # Never run before: at once
+    await refresher.note_cycle_start(mock_redis, now=1000.0)
+    assert await refresher.until_first_cycle(mock_redis, now=1120.0) == 180.0  # Restarted 2 min into a cycle
+    assert await refresher.until_first_cycle(mock_redis, now=1400.0) == 0  # Its next cycle is past due
+
+
+async def test_a_restart_without_redis_starts_at_once(monkeypatch):
+    class Down:
+        async def get(self, key):
+            raise refresher.aioredis.RedisError("down")
+    assert await refresher.until_first_cycle(Down()) == 0
+
+
 @respx.mock
 async def test_topic_tabs_keep_at_most_a_few_headlines_about_one_subject(mock_redis, poller, topic_catalog, monkeypatch):
     monkeypatch.setattr(settings, "SUBJECT_CAP", 2)

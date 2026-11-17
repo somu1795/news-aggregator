@@ -55,3 +55,8 @@ def browser_host_key(host: str) -> str:
 def full_page_host_key(host: str) -> str:
     """Redis key marking a site whose articles the browser can't read without ads and trackers."""
     return f"full-page-host:{host}"
+
+
+def refresh_started_key() -> str:
+    """Redis key holding when the refresher's latest cycle started (Unix time), for a restart to wait for the next."""
+    return "refresh:started"

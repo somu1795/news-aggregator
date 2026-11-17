@@ -22,7 +22,7 @@ published and the topic views keep their previous snapshots.
 import asyncio
 import json
 import time
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import httpx
 import redis.asyncio as aioredis
@@ -30,7 +30,7 @@ import structlog
 
 from catalog import get_catalog
 from config import settings
-from keys import feed_text_key, snapshot_key, summary_key
+from keys import feed_text_key, refresh_started_key, snapshot_key, summary_key
 from logging_config import configure_logging
 from models import APIResponse
 from services import archive_index
@@ -223,6 +223,29 @@ def until_next_cycle(started: float, now: float) -> float:
     return max(1.0, settings.REFRESH_INTERVAL_SECONDS - (now - started))
 
 
+async def note_cycle_start(redis_client: aioredis.Redis, now: Optional[float] = None) -> None:
+    """Records when this cycle started (Unix time), so a restart can wait for the one after it (until_first_cycle)."""
+    try:
+        await redis_client.set(refresh_started_key(), now or time.time(), ex=2 * settings.REFRESH_INTERVAL_SECONDS)
+    except aioredis.RedisError as e:
+        logger.warning("Cycle start not recorded", error=str(e))
+
+
+async def until_first_cycle(redis_client: aioredis.Redis, now: Optional[float] = None) -> float:
+    """
+    Seconds a restarted refresher waits for its first cycle: until the cycle the last run had due.
+    Starting at once would ask every feed again minutes after the last cycle did (a deploy), and
+    Google answers that with 429s; the published snapshots are served meanwhile.
+    """
+    try:
+        started = await redis_client.get(refresh_started_key())
+    except aioredis.RedisError:
+        return 0
+    if not started:
+        return 0
+    return max(0.0, settings.REFRESH_INTERVAL_SECONDS - ((now or time.time()) - float(started)))
+
+
 async def wait_for_next_cycle(redis_client: aioredis.Redis, seconds: float) -> None:
     """Sleeps `seconds`, until the next cycle, waking early if an admin requested a refresh."""
     try:
@@ -245,8 +268,13 @@ async def run() -> None:
     async with public_client([settings.TAGGER_URL], limits=limits, timeout=settings.REQUEST_TIMEOUT) as http_client:
         logger.info("Refresher started", interval=settings.REFRESH_INTERVAL_SECONDS)
         poller = FeedPoller()  # What it remembers about each feed and host, for the refresher's whole life
+        first = await until_first_cycle(redis_client)
+        if first:
+            logger.info("Waiting for the cycle the last run had due", seconds=round(first))
+            await wait_for_next_cycle(redis_client, first)
         while True:
             started = time.monotonic()
+            await note_cycle_start(redis_client)
             try:
                 await asyncio.wait_for(
                     refresh_once(http_client, redis_client, poller), settings.REFRESH_TIMEOUT_SECONDS,

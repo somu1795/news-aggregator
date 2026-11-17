@@ -152,6 +152,17 @@ async def test_a_refused_feed_is_not_retried_and_is_asked_again_later(poller, mo
 
 
 @respx.mock
+async def test_a_page_that_isnt_a_feed_is_not_retried_and_is_asked_again_later(poller, monkeypatch):
+    monkeypatch.setattr(settings, "FETCH_RETRIES", 3)
+    challenge = b"<html><body><script>if (a && b) document.cookie='x=1'; location.href='/feed?x=1'</script></body></html>"
+    route = respx.get(FEED).mock(return_value=httpx.Response(200, content=challenge))  # A bot check's page
+    async with httpx.AsyncClient() as client:
+        assert await poller.fetch(client, "Outlet", FEED) == []
+    assert route.call_count == 1  # The same page again on the second asking
+    assert poller.feeds[FEED].interval >= 2 * settings.REFRESH_INTERVAL_SECONDS
+
+
+@respx.mock
 async def test_a_feed_that_keeps_failing_is_asked_less_often(poller, monkeypatch):
     monkeypatch.setattr(settings, "FETCH_RETRIES", 1)
     respx.get(FEED).mock(side_effect=httpx.ConnectError("down"))
