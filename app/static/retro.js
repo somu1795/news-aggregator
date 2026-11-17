@@ -816,7 +816,7 @@
             var snap = document.createElement("button");
             snap.type = "button";
             snap.textContent = "snap";
-            snap.title = "Save this headline and its summary as an image";
+            snap.title = "Save this headline and its summary as an image, and copy its link";
             snap.addEventListener("click", function () { saveSnap(item, snap); });
             note.appendChild(document.createTextNode(" · "));
             note.appendChild(snap);
@@ -947,11 +947,15 @@
         return canvas;
     }
 
-    // Saves the snap: the share sheet on phones (save to photos, send to an app), a PNG download elsewhere
+    // Saves the snap: the share sheet on phones (save to photos, send to an app), a PNG download elsewhere;
+    // and copies the headline's link, to paste beside it (only on https: browsers have no clipboard API on plain http)
     function saveSnap(item, button) {
         var href = safeUrl(item.link), host = href ? hostOf(href) : "";
         var name = "news-" + (normalize(cleanTitle(item.title, item.source)).replace(/[^a-z0-9]+/g, "-")
             .replace(/^-|-$/g, "").slice(0, 60) || "snap") + ".png";
+        var copied = href && navigator.clipboard && navigator.clipboard.writeText  // Now, while the click still counts
+            ? navigator.clipboard.writeText(href).then(function () { return true; }, function () { return false; })
+            : Promise.resolve(false);
         button.disabled = true;
         snapIcon(host)
             .then(function (icon) {
@@ -975,6 +979,12 @@
                 a.click();
                 a.remove();
                 setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
+            })
+            .then(function () { return copied; })
+            .then(function (linkCopied) {
+                if (!linkCopied) return;
+                button.textContent = "link copied";
+                setTimeout(function () { button.textContent = "snap"; }, 3000);
             })
             .catch(function () {
                 button.textContent = "snap failed";

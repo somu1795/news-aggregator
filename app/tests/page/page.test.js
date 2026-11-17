@@ -167,17 +167,52 @@ test("snap saves the headline and its summary as an image, without the page's bu
     assert.ok(!/snap|hide summary|discuss/.test(drawn), drawn);
 });
 
+// A clipboard that records what is copied to it (jsdom has none)
+function clipboardStandIn(window, seen) {
+    Object.defineProperty(window.navigator, "clipboard", { configurable: true,
+        // Answering only after the image is saved, as a real clipboard can
+        value: { writeText: (text) => new Promise((done) => setTimeout(() => { seen.copied = text; done(); }, 30)) } });
+}
+
+test("snap also copies the headline's link, and says so", async () => {
+    const seen = {};
+    const page = await open(SUMMARISED, { stored: { retroSiteIcons: "off" },
+        setup: (w) => { snapStandIns(w, seen); clipboardStandIn(w, seen); } });
+    const button = await openSummary(page);
+    await page.click(button);
+    await page.settle(60);
+    assert.equal(seen.copied, SUMMARISED[ALL + "/" + EVERYTHING][0].link);
+    assert.equal(seen.download, "news-felix-gallardo-dies-at-80.png");
+    assert.equal(button.textContent, "link copied");
+});
+
+test("snap still saves the image when the link can't be copied", async () => {
+    const seen = {};
+    const page = await open(SUMMARISED, { stored: { retroSiteIcons: "off" }, setup: (w) => {
+        snapStandIns(w, seen);
+        Object.defineProperty(w.navigator, "clipboard", { configurable: true,
+            value: { writeText: () => Promise.reject(new Error("denied")) } });
+    } });
+    const button = await openSummary(page);
+    await page.click(button);
+    assert.equal(seen.download, "news-felix-gallardo-dies-at-80.png");
+    assert.equal(button.textContent, "snap");
+});
+
 test("on a phone, snap opens the share sheet with the image", async () => {
     const seen = {};
     const page = await open(SUMMARISED, { stored: { retroSiteIcons: "off" }, setup: (w) => {
         snapStandIns(w, seen);
-        w.matchMedia = (query) => ({ matches: query === "(pointer: coarse)", addEventListener() {}, addListener() {} });
+        clipboardStandIn(w, seen);
+        w.matchMedia =(query) => ({ matches: query === "(pointer: coarse)", addEventListener() {}, addListener() {} });
         w.navigator.canShare = () => true;
         w.navigator.share = (data) => { seen.shared = Array.from(data.files, (f) => f.name + " " + f.type); return Promise.resolve(); };
     } });
     await page.click(await openSummary(page));
+    await page.settle(60);
     assert.deepEqual(seen.shared, ["news-felix-gallardo-dies-at-80.png image/png"]);
     assert.equal(seen.download, undefined);
+    assert.equal(seen.copied, SUMMARISED[ALL + "/" + EVERYTHING][0].link);
 });
 
 test("the snap button can be turned off in advanced, is remembered, and comes back with reset", async () => {
