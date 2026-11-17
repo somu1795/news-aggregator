@@ -22,13 +22,16 @@ import main
 from main import app
 from config import settings
 from deps import limiter
-from services.feeds.poller import FeedPoller
+from services.feeds.poller import FeedPoller, HostLimits
+from services.links import google_news
 
 
 @pytest.fixture(autouse=True)
 def no_request_jitter(monkeypatch):
     monkeypatch.setattr(settings, "FEED_JITTER_SECONDS", 0.0)
     monkeypatch.setattr(settings, "FEED_HOST_GAP_SECONDS", 0.0)
+    monkeypatch.setattr(settings, "LINK_RESOLVE_GAP_SECONDS", 0.0)
+    monkeypatch.setattr(google_news, "_GOOGLE", HostLimits())  # Google's pauses don't carry from test to test
 
 
 @pytest.fixture(autouse=True)

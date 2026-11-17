@@ -104,3 +104,54 @@ def test_only_google_news_hosts_count_as_unresolved():
     assert _is_unresolved("https://news.google.com/rss/articles/abc")
     assert not _is_unresolved("https://evil.example/?u=news.google.com")
     assert not _is_unresolved("https://news.google.com.evil.example/a")
+
+
+@respx.mock
+async def test_google_asking_to_slow_down_pauses_resolution_without_retries(mock_redis, monkeypatch):
+    """A 429 isn't retried; the link stays a Google one (and uncached) until a later refresh; nothing more is sent meanwhile."""
+    monkeypatch.setattr("services.links.google_news.settings.FETCH_RETRIES", 3)
+    page = respx.get(GOOGLE_URL).mock(return_value=httpx.Response(429))
+    fallback_page = respx.get(ARTICLE_PAGE)
+    other = "https://news.google.com/rss/articles/CBMiOther?oc=5"
+    other_page = respx.get(other)
+
+    async with httpx.AsyncClient() as client:
+        assert await resolve_link(client, mock_redis, GOOGLE_URL) == GOOGLE_URL
+        assert await resolve_link(client, mock_redis, other) == other
+
+    assert page.call_count == 1 and not fallback_page.called and not other_page.called
+    assert await mock_redis.get(f"{RESOLVED_URL_PREFIX}{GOOGLE_URL}") is None
+
+
+@respx.mock
+async def test_a_publisher_refusing_the_redirect_still_gives_its_url(mock_redis):
+    """Google redirected to the publisher, whose 403 (to a bot) doesn't matter: its URL is the answer."""
+    respx.get(GOOGLE_URL).mock(return_value=httpx.Response(302, headers={"Location": PUBLISHER_URL}))
+    publisher = respx.get(PUBLISHER_URL).mock(return_value=httpx.Response(403))
+    fallback_page = respx.get(ARTICLE_PAGE)
+
+    async with httpx.AsyncClient() as client:
+        assert await resolve_link(client, mock_redis, GOOGLE_URL) == PUBLISHER_URL
+
+    assert publisher.call_count == 1 and not fallback_page.called
+
+
+@respx.mock
+async def test_requests_to_google_are_spaced_out(mock_redis, monkeypatch):
+    import time
+    from services.links import resolve_links
+    monkeypatch.setattr("services.links.google_news.settings.LINK_RESOLVE_GAP_SECONDS", 0.05)
+    started = []
+
+    def answer(request):
+        started.append(time.monotonic())
+        return httpx.Response(302, headers={"Location": f"{PUBLISHER_URL}/{request.url.path.rsplit('/', 1)[-1]}"})
+    respx.get(url__regex=r"https://news\.google\.com/rss/articles/.*").mock(side_effect=answer)
+    respx.get(url__regex=rf"{PUBLISHER_URL}/.*").mock(return_value=httpx.Response(200))
+    headlines = [{"link": f"https://news.google.com/rss/articles/CBMi{i}"} for i in range(4)]
+
+    async with httpx.AsyncClient() as client:
+        await resolve_links(client, mock_redis, headlines)
+
+    assert [h["link"] for h in headlines] == [f"{PUBLISHER_URL}/CBMi{i}" for i in range(4)]
+    assert len(started) == 4 and all(b - a >= 0.045 for a, b in zip(started, started[1:])), started

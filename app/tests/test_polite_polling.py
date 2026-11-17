@@ -9,6 +9,7 @@ import respx
 
 from config import settings
 from services.feeds import poller as poller_module
+from services.feeds.poller import HostLimits
 
 FEED = "https://outlet.example/rss"
 
@@ -137,3 +138,30 @@ async def test_429s_already_on_their_way_count_as_one(poller):
     paused = poller.backoff["outlet.example"]
     assert paused.strikes == 1
     assert paused.until - poller_module.time.monotonic() == pytest.approx(settings.FEED_BACKOFF_SECONDS, abs=1)
+
+
+@respx.mock
+async def test_a_refused_feed_is_not_retried_and_is_asked_again_later(poller, monkeypatch):
+    monkeypatch.setattr(settings, "FETCH_RETRIES", 3)
+    route = respx.get(FEED).mock(return_value=httpx.Response(403))
+    async with httpx.AsyncClient() as client:
+        assert await poller.fetch(client, "Outlet", FEED) == []
+        assert route.call_count == 1  # A 403 won't change on the second asking
+        assert await poller.fetch(client, "Outlet", FEED) == [] and route.call_count == 1  # Not due again yet
+    assert poller.feeds[FEED].interval >= 2 * settings.REFRESH_INTERVAL_SECONDS
+
+
+@respx.mock
+async def test_a_feed_that_keeps_failing_is_asked_less_often(poller, monkeypatch):
+    monkeypatch.setattr(settings, "FETCH_RETRIES", 1)
+    respx.get(FEED).mock(side_effect=httpx.ConnectError("down"))
+    async with httpx.AsyncClient() as client:
+        await poller.fetch(client, "Outlet", FEED)
+    assert poller.feeds[FEED].interval >= 2 * settings.REFRESH_INTERVAL_SECONDS
+
+
+def test_an_answer_to_a_request_sent_before_a_pause_does_not_lift_it():
+    limits = HostLimits()
+    limits.back_off("outlet.example", httpx.Response(429))
+    limits.answered("outlet.example")  # A 200 that was already on its way
+    assert limits.paused("outlet.example") and limits.backoff["outlet.example"].strikes == 1

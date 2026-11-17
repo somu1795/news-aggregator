@@ -13,6 +13,10 @@ the `c-wiz[data-p]` payload, it reads the article's signature and timestamp
 (`data-n-a-sg` / `data-n-a-ts`) from the article page and builds its own
 batchexecute request and response parsing. If Google changes the page in a way
 that breaks one method, the other may still work.
+
+Both are polite to Google like the feeds are (services.feeds.poller.HostLimits): their
+requests start LINK_RESOLVE_GAP_SECONDS apart, and a 429/503 pauses link resolution (not
+retried; the links stay Google's, uncached, until a refresh after the pause).
 """
 
 import asyncio
@@ -27,6 +31,7 @@ import structlog
 from bs4 import BeautifulSoup
 
 from config import settings
+from services.feeds.poller import HostLimits
 
 logger = structlog.get_logger(__name__)
 
@@ -36,6 +41,34 @@ RESOLVED_URL_PREFIX = "resolved_url:"
 RESOLVED_URL_TTL = 86400  # 24 hours
 
 _BROWSER_UA = settings.BROWSER_USER_AGENT
+_GOOGLE_HOST = "news.google.com"
+_GOOGLE = HostLimits()  # Link resolution's own spacing and pause (the refresher is one long-lived process)
+
+
+async def _take_turn() -> bool:
+    """Waits for the next request to Google's turn; False if it asked us to slow down."""
+    if _GOOGLE.paused(_GOOGLE_HOST):
+        return False
+    await _GOOGLE.take_turn(_GOOGLE_HOST, settings.LINK_RESOLVE_GAP_SECONDS)
+    return not _GOOGLE.paused(_GOOGLE_HOST)
+
+
+def _slowed_down(response: httpx.Response) -> bool:
+    """Whether Google answered 429/503, pausing link resolution if so."""
+    if response.url.host != _GOOGLE_HOST:
+        return False
+    if response.status_code in (429, 503):
+        seconds = _GOOGLE.back_off(_GOOGLE_HOST, response)
+        logger.warning("Google asked us to slow down, pausing link resolution", status=response.status_code,
+                       seconds=round(seconds))
+        return True
+    _GOOGLE.answered(_GOOGLE_HOST)
+    return False
+
+
+def _worth_retrying(error: Exception) -> bool:
+    """Network errors and 5xx may pass; another 4xx won't change on asking again."""
+    return not isinstance(error, httpx.HTTPStatusError) or error.response.status_code >= 500
 
 
 def _parse_batch_execute_response(response_text: str) -> Optional[str]:
@@ -80,18 +113,21 @@ async def resolve_redirect(
     resolved_url = url  # Default fallback
 
     for attempt in range(settings.FETCH_RETRIES):
+        if not await _take_turn():
+            break
         try:
             # 2. Initial GET, following redirects
             initial_resp = await client.get(
                 url, headers=headers, follow_redirects=True, timeout=settings.REQUEST_TIMEOUT,
             )
-            initial_resp.raise_for_status()
-
             final_url = str(initial_resp.url)
-            if "news.google.com" not in final_url:
+            if "news.google.com" not in final_url:  # Whatever the publisher answered (a 403 to bots), that's its URL
                 logger.debug("Resolved via standard redirect", original=url, resolved=final_url)
                 resolved_url = final_url
                 break
+            if _slowed_down(initial_resp):
+                break
+            initial_resp.raise_for_status()
 
             # 3. Parse the HTML landing page for batchexecute data
             soup = BeautifulSoup(initial_resp.text, "html.parser")
@@ -113,9 +149,13 @@ async def resolve_redirect(
                 "user-agent": _BROWSER_UA,
             }
             batch_url = "https://news.google.com/_/DotsSplashUi/data/batchexecute"
+            if not await _take_turn():
+                break
             response = await client.post(
                 batch_url, headers=post_headers, data=payload, timeout=settings.REQUEST_TIMEOUT,
             )
+            if _slowed_down(response):
+                break
             response.raise_for_status()
 
             # 5. Extract final URL
@@ -132,6 +172,8 @@ async def resolve_redirect(
                 "Redirect resolution attempt failed",
                 url=url, attempt=attempt + 1, error=str(e),
             )
+            if not _worth_retrying(e):
+                break
             if attempt < settings.FETCH_RETRIES - 1:
                 await asyncio.sleep(settings.BACKOFF_BASE ** attempt)
 
@@ -171,12 +213,16 @@ async def decode_with_signature(client: httpx.AsyncClient, url: str) -> Optional
     article_id = match.group(1)
 
     async with _FALLBACK_SEMAPHORE:
+        if not await _take_turn():
+            return None
         page = await client.get(
             f"https://news.google.com/rss/articles/{article_id}",
             headers={"user-agent": _USER_AGENT},
             follow_redirects=True,
             timeout=settings.REQUEST_TIMEOUT,
         )
+        if _slowed_down(page):
+            return None
         page.raise_for_status()
         element = BeautifulSoup(page.text, "html.parser").select_one("c-wiz > div[jscontroller]")
         signature = element.get("data-n-a-sg") if element else None
@@ -188,12 +234,16 @@ async def decode_with_signature(client: httpx.AsyncClient, url: str) -> Optional
             '["garturlreq",[["X","X",["X","X"],null,null,1,1,"US:en",null,1,null,null,null,null,null,0,1],'
             f'"X","X",1,[1,1,1],1,1,null,0,0,null,0],"{article_id}",{timestamp},"{signature}"]'
         )
+        if not await _take_turn():
+            return None
         response = await client.post(
             _BATCH_URL,
             headers={"content-type": "application/x-www-form-urlencoded;charset=UTF-8", "user-agent": _USER_AGENT},
             content=f"f.req={quote(json.dumps([[['Fbv4je', inner]]]))}",
             timeout=settings.REQUEST_TIMEOUT,
         )
+        if _slowed_down(response):
+            return None
         response.raise_for_status()
 
     try:

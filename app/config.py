@@ -83,6 +83,12 @@ class Settings(BaseSettings):
     # ...and at least this long after the last one to the same host: 58 Google News feeds sent within
     # seconds of each other drew 429s and a two-hour pause most nights
     FEED_HOST_GAP_SECONDS: float = 1.0
+    # Resolving Google News links (services/links/google_news.py) sends Google ~4x the feeds'
+    # requests (5,248 links a day, two requests each), so they're spaced too, and paused on a
+    # 429/503 like the feeds (a pause of their own: Google limits the two separately). A cycle
+    # resolves a median of 7 links but up to ~300 (Nov 17, 2026): at 0.05 s that's ~30 s, ~60 s if
+    # the fallback runs too, inside the topic phase's TOPIC_REFRESH_TIMEOUT_SECONDS
+    LINK_RESOLVE_GAP_SECONDS: float = 0.05
     BACKOFF_BASE: int = 2
 
     # --- Tagger (topic views) ---
