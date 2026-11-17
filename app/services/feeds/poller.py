@@ -181,8 +181,9 @@ class FeedPoller(HostLimits):
         super().__init__("feeds")
         self.redis = redis_client
         self.feeds: Dict[str, _FeedState] = {}  # By feed URL
-        # Last fetch of the topic feeds: {"at": monotonic time, "results": {source name: headlines}}
-        self.topic_feeds: Dict = {"at": float("-inf"), "results": {}}
+        # Last fetch of the topic feeds: {"at": monotonic time, "results": {source name: headlines},
+        # "missed": names of those it left out for a paused host}
+        self.topic_feeds: Dict = {"at": float("-inf"), "results": {}, "missed": set()}
 
     async def fetch(self, client: httpx.AsyncClient, source_name: str, url: str) -> List[Dict]:
         """
@@ -277,9 +278,23 @@ class FeedPoller(HostLimits):
         return results_by_source
 
     async def fetch_topic_feeds(self, client: httpx.AsyncClient, catalog: Catalog) -> Dict[str, List[Dict]]:
-        """Topic feeds change slowly and are many, so they're fetched every TOPIC_FEEDS_INTERVAL_SECONDS."""
+        """
+        Topic feeds change slowly and are many, so they're fetched every TOPIC_FEEDS_INTERVAL_SECONDS.
+        One a batch left out because its host was paused, with no headlines to reuse (after a
+        restart), is asked again every cycle until its host answers, not only at the next batch:
+        otherwise a batch that falls in a Google pause leaves the topic tabs without Google's.
+        """
         if time.monotonic() - self.topic_feeds["at"] >= settings.TOPIC_FEEDS_INTERVAL_SECONDS:
             results = await self.fetch_all(client, catalog.topic_feeds)
             if any(results.values()):  # Otherwise keep the previous fetch and retry next cycle
-                self.topic_feeds.update(at=time.monotonic(), results=results)
+                self.topic_feeds.update(at=time.monotonic(), results=results,
+                                        missed=self._missed(catalog.topic_feeds, results))
+        elif self.topic_feeds["missed"]:
+            sources = [s for s in catalog.topic_feeds if s.name in self.topic_feeds["missed"]]
+            results = await self.fetch_all(client, sources)
+            self.topic_feeds.update(results=self.topic_feeds["results"] | results, missed=self._missed(sources, results))
         return self.topic_feeds["results"]
+
+    def _missed(self, sources: List[NewsSource | TopicSource], results: Dict[str, List[Dict]]) -> set:
+        """The feeds that came back empty because their host is paused."""
+        return {s.name for s in sources if not results[s.name] and self.paused(urlparse(s.url).hostname or "")}

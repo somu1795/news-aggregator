@@ -219,3 +219,38 @@ async def test_without_redis_pauses_are_only_remembered_in_memory(monkeypatch):
     poller.back_off("outlet.example", httpx.Response(429))
     await poller.remember(poller.redis, "outlet.example")
     assert poller.paused("outlet.example")
+
+
+TOPIC_FEEDS = SimpleNamespace(topic_feeds=[SimpleNamespace(name="Paused Sports", url="https://paused.example/rss"),
+                                           SimpleNamespace(name="Outlet Sports", url=FEED)])
+
+
+@respx.mock
+async def test_topic_feeds_skipped_for_a_pause_are_fetched_once_it_ends(poller, monkeypatch):
+    paused = respx.get("https://paused.example/rss").mock(side_effect=[httpx.Response(429),
+                                                                      httpx.Response(200, content=rss("p"))])
+    respx.get(FEED).mock(return_value=httpx.Response(200, content=rss("a")))
+    cycle = settings.REFRESH_INTERVAL_SECONDS
+    async with httpx.AsyncClient() as client:
+        results = await poller.fetch_topic_feeds(client, TOPIC_FEEDS)
+        assert results["Paused Sports"] == [] and results["Outlet Sports"]
+        advance(monkeypatch, cycle)
+        await poller.fetch_topic_feeds(client, TOPIC_FEEDS)  # Still paused: not asked
+        assert paused.call_count == 1
+        advance(monkeypatch, settings.FEED_BACKOFF_SECONDS)  # The pause is over, the batch isn't due yet
+        results = await poller.fetch_topic_feeds(client, TOPIC_FEEDS)
+        assert [h["title"] for h in results["Paused Sports"]] == ["p"] and results["Outlet Sports"]
+        advance(monkeypatch, cycle)
+        await poller.fetch_topic_feeds(client, TOPIC_FEEDS)  # Caught up: it waits for the batch again
+    assert paused.call_count == 2
+
+
+@respx.mock
+async def test_a_topic_feed_that_answered_with_an_error_waits_for_the_next_batch(poller, monkeypatch):
+    gone = respx.get("https://paused.example/rss").mock(return_value=httpx.Response(404))
+    respx.get(FEED).mock(return_value=httpx.Response(200, content=rss("a")))
+    async with httpx.AsyncClient() as client:
+        await poller.fetch_topic_feeds(client, TOPIC_FEEDS)
+        advance(monkeypatch, 2 * settings.REFRESH_INTERVAL_SECONDS)  # Its own interval is over, the batch's isn't
+        await poller.fetch_topic_feeds(client, TOPIC_FEEDS)
+    assert gone.call_count == 1
