@@ -8,6 +8,8 @@
 #   label      optional: "other" for general news, or a topic id for a feed about one topic
 #              (its items are always in that topic, and train the tagger)
 #   max_items  optional: at most this many of its items per tab
+#   views      optional, extras only: the main tabs it's on ("all", region ids), if not every one
+#              (an extra's headlines are the same on each); elsewhere the tab's news takes its share
 #
 #   regions.<id>.sources        that region's news
 #   regions.<id>.topic_sources  feeds about one topic (label required, no weight): only in topic tabs
@@ -213,27 +215,27 @@ regions:
     sources:
     - name: Google News US
       url: https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSkwyMHZNRGxqTjNjd0VnVmxiaTFWVXlnQVAB?hl=en-US&gl=US&ceid=US:en
-      weight: 0.22
+      weight: 0.18
       label: other
     - name: Google News Canada
       url: https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSkwyMHZNR1F3TmpCbkVnVmxiaTFEUVNnQVAB?hl=en-CA&gl=CA&ceid=CA:en
-      weight: 0.14
+      weight: 0.11
       label: other
     - name: BBC Latin America
       url: https://feeds.bbci.co.uk/news/world/latin_america/rss.xml
-      weight: 0.12
+      weight: 0.08
     - name: BBC US & Canada
       url: https://feeds.bbci.co.uk/news/world/us_and_canada/rss.xml
-      weight: 0.06
+      weight: 0.03
     - name: Latin Times
       url: https://www.latintimes.com/rss
-      weight: 0.06
+      weight: 0.04
     - name: Mexico News Daily
       url: https://mexiconewsdaily.com/feed/
       weight: 0.07
     - name: MercoPress
       url: https://en.mercopress.com/rss/
-      weight: 0.06
+      weight: 0.05
     - name: Buenos Aires Times
       url: https://www.batimes.com.ar/feed
       weight: 0.04
@@ -243,18 +245,29 @@ regions:
     - name: Colombia One
       url: https://colombiaone.com/feed/
       weight: 0.06
-    # Off since 2026-10-29: its certificate chain is broken (a DigiCert certificate sent with
-    # Sectigo's intermediates), so no client can verify it. Restore when it is fixed
-    # (and the Jamaica Observer's weight to 0.05).
-    # - name: Jamaica Gleaner
-    #   url: https://jamaica-gleaner.com/feed/rss.xml
-    #   weight: 0.06
+    - name: Jamaica Gleaner
+      url: https://jamaica-gleaner.com/feed/rss.xml
+      weight: 0.06
     - name: Jamaica Observer
       url: https://www.jamaicaobserver.com/feed/
-      weight: 0.11  # 0.05, plus the Jamaica Gleaner's 0.06 while it is off
+      weight: 0.05
     - name: Agência Brasil
       url: https://agenciabrasil.ebc.com.br/en/rss/ultimasnoticias/feed.xml
       weight: 0.03
+    # Latin America and the Caribbean beyond the US and Canada (added Nov 2026; Google's US
+    # and Canada editions and the BBC's feeds, which can't fill their weights, gave way)
+    - name: Rio Times
+      url: https://www.riotimesonline.com/feed/
+      weight: 0.05
+    - name: Tico Times
+      url: https://ticotimes.net/feed
+      weight: 0.05
+    - name: Barbados Today
+      url: https://barbadostoday.bb/feed/
+      weight: 0.03
+    - name: Bahamas Tribune
+      url: https://www.tribune242.com/rss/headlines/
+      weight: 0.04
     topic_sources:
     - name: Google News US Technology
       url: https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=en-US&gl=US&ceid=US:en
@@ -373,7 +386,7 @@ regions:
     sources:
     - name: Google News Australia
       url: https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSkwyMHZNR05vWjJoNUVnVmxiaTFCVlNnQVAB?hl=en-AU&gl=AU&ceid=AU:en
-      weight: 0.24
+      weight: 0.22
       label: other
     - name: Google News New Zealand
       url: https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSkwyMHZNR04wZDE5aUVnVmxiaTFPV2lnQVAB?hl=en-NZ&gl=NZ&ceid=NZ:en
@@ -381,16 +394,16 @@ regions:
       label: other
     - name: ABC Australia
       url: https://www.abc.net.au/news/feed/51120/rss.xml
-      weight: 0.15
+      weight: 0.10
     - name: RNZ
       url: https://www.rnz.co.nz/rss/national.xml
-      weight: 0.12
+      weight: 0.08
     - name: BBC Australia
       url: https://feeds.bbci.co.uk/news/world/australia/rss.xml
-      weight: 0.06
+      weight: 0.03
     - name: Guardian Australia
       url: https://www.theguardian.com/australia-news/rss
-      weight: 0.08
+      weight: 0.06
     - name: RNZ Pacific
       url: https://www.rnz.co.nz/rss/pacific.xml
       weight: 0.07
@@ -402,6 +415,20 @@ regions:
       weight: 0.04
     - name: Asia Pacific Report
       url: https://asiapacificreport.nz/feed/
+      weight: 0.02
+    # More of New Zealand, Australia and the Pacific than RNZ and ABC, which filled a quarter of
+    # the tab (added Nov 2026; they and the BBC's feed, which can't fill its weight, gave way)
+    - name: 1News NZ
+      url: https://www.1news.co.nz/arc/outboundfeeds/rss/?outputType=xml
+      weight: 0.07
+    - name: The Conversation AU
+      url: https://theconversation.com/au/articles.atom
+      weight: 0.04
+    - name: FBC News
+      url: https://www.fbcnews.com.fj/feed/
+      weight: 0.03
+    - name: Cook Islands News
+      url: https://www.cookislandsnews.com/feed/
       weight: 0.02
     topic_sources:
     - name: Google News Australia Technology
@@ -436,6 +463,7 @@ extras:
 - name: Hacker News
   url: https://news.ycombinator.com/rss
   weight: 0.1
+  views: [all]  # The same 10 headlines on every tab took 50 regional slots; still in each region's topic tabs
 topic_extras:
 - name: Guardian Environment
   url: https://www.theguardian.com/environment/rss
@@ -448,9 +476,6 @@ topic_extras:
   label: nature
 - name: Good News Network
   url: https://www.goodnewsnetwork.org/feed/
-  label: uplifting
-- name: Positive News
-  url: https://www.positive.news/feed/
   label: uplifting
 - name: Reasons to be Cheerful
   url: https://reasonstobecheerful.world/feed/
@@ -479,3 +504,29 @@ topic_extras:
 - name: Mongabay
   url: https://news.mongabay.com/feed/
   label: nature
+# Added Nov 2026: long reads and explainers, and outlets from outside the news wires
+- name: Nice News
+  url: https://nicenews.com/feed/
+  label: uplifting
+  max_items: 3  # Mostly good news, but also gift guides
+- name: Anthropocene Magazine
+  url: https://www.anthropocenemagazine.org/feed/
+  label: nature
+- name: Grist
+  url: https://grist.org/feed/
+  label: nature
+- name: Nautilus
+  url: https://nautil.us/feed/
+  label: science
+- name: Quanta Magazine
+  url: https://www.quantamagazine.org/feed/
+  label: science
+- name: Aeon
+  url: https://aeon.co/feed.rss
+  label: culture
+- name: Atlas Obscura
+  url: https://www.atlasobscura.com/feeds/latest
+  label: culture
+- name: Rest of World
+  url: https://restofworld.org/feed/latest
+  label: tech

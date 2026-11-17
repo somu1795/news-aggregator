@@ -29,7 +29,8 @@ def build_views(catalog: Catalog, results_by_source: Dict[str, List[Dict]], now:
        regional lists, equally (a story two regions both carry appears once;
        the publisher cap applies across regions).
     2. Extras lists: each extra on its own, publisher-capped.
-    3. Each view interleaves its news list with the extras lists. Everything is
+    3. Each view interleaves its news list with the extras lists (those of its extras: one
+       can be kept to some views, `views` in sources.yaml, the news taking its share elsewhere). Everything is
        already capped, so this step only interleaves and de-duplicates. News has
        the largest single weight, so it leads every view.
 
@@ -51,12 +52,13 @@ def build_views(catalog: Catalog, results_by_source: Dict[str, List[Dict]], now:
     )
     extras = {source.name: mix_headlines([source], results_by_source, now, view=source.name, limit=build_limit(), rng=rng)
               for source in catalog.extras}
-    news_weight = 1 - sum(source.weight for source in catalog.extras)
 
     def with_extras(view: str, news: List[Dict]) -> List[Dict]:
         if not news:
             return []
-        sources = [NewsSource(name="news", url="", weight=news_weight)] + catalog.extras
+        here = [source for source in catalog.extras if source.views is None or view in source.views]
+        news_weight = 1 - sum(source.weight for source in here)  # An extra kept off this tab leaves its share to the news
+        sources = [NewsSource(name="news", url="", weight=news_weight)] + here
         return mix_headlines(sources, {"news": news} | extras, now, view=view, cap_publishers=False, limit=build_limit(), rng=rng)
 
     views = {region_id: with_extras(region_id, items) for region_id, items in regional.items()}

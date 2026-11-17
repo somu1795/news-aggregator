@@ -25,6 +25,8 @@ class NewsSource(BaseModel):
     # (its items are always tagged with it, as for a TopicSource)
     label: Optional[str] = None
     max_items: Optional[int] = None  # At most this many of its items per view (for a feed whose quality varies)
+    # An extra's main tabs ("all", region ids), if not all of them: its headlines would be the same on each
+    views: Optional[List[str]] = None
 
 
 class TopicSource(BaseModel):
@@ -139,6 +141,13 @@ def check_catalog(catalog: Catalog) -> None:
             raise ValueError(f"Source weights of region '{region.id}' must sum to 1.0")
     if not 0 <= sum(s.weight for s in catalog.extras) < 1:
         raise ValueError("extras weights must sum to less than 1.0")
+    for source in [s for r in catalog.regions for s in r.sources]:
+        if source.views is not None:
+            raise ValueError(f"Only extras can be kept to some tabs (views), not '{source.name}'")
+    for source in catalog.extras:
+        unknown = set(source.views or []) - set(catalog.view_ids)
+        if unknown:
+            raise ValueError(f"Extra '{source.name}' names tabs that don't exist: {sorted(unknown)}")
     topic_ids = {topic.id for topic in catalog.topics}
     labels = {s.label for s in catalog.labelled_sources}
     if not labels <= topic_ids | {OTHER_LABEL}:

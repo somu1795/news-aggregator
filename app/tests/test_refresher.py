@@ -360,6 +360,32 @@ async def test_the_search_index_is_rebuilt_only_every_so_often(tmp_path, monkeyp
     assert os.stat(archive_index.index_path()).st_ino != first
 
 
+def test_an_extra_kept_to_some_tabs_is_only_on_those_and_the_news_fills_the_others(monkeypatch):
+    from services.views.main_views import build_views
+    monkeypatch.setattr(settings, "MAX_HEADLINES", 20)
+    monkeypatch.setattr(settings, "STORY_GROUP_HEADROOM", 0)
+    hn = CATALOG.extras[0].model_copy(update={"views": [ALL_VIEW]})
+    limited = CATALOG.model_copy(update={"extras": [hn]})
+    now = time.time()
+    def items(prefix, count):
+        return [{"title": f"{prefix} story {i}", "link": f"https://{prefix}.example/{i}", "source": prefix,
+                 "published": now - i * 60} for i in range(count)]
+    results = {"GN India": items("in", 30), "Outlet Asia": items("asia", 30), "GN UK": items("gb", 30),
+               "Hacker News": items("hn", 30)}
+    views = build_views(limited, results, now)
+    hn_in = lambda view: sum(h["source"] == "hn" for h in views[view])
+    assert hn_in(ALL_VIEW) == 4  # Its 0.2 of 20
+    assert hn_in("asia") == 0 and hn_in("europe") == 0
+    assert len(views["asia"]) == 20  # The region's news takes its place
+
+
+def test_an_extra_can_only_be_kept_to_tabs_that_exist():
+    from catalog import check_catalog
+    hn = CATALOG.extras[0].model_copy(update={"views": ["mars"]})
+    with pytest.raises(ValueError, match="mars"):
+        check_catalog(CATALOG.model_copy(update={"extras": [hn]}))
+
+
 def test_cycles_start_an_interval_apart_however_long_one_takes(monkeypatch):
     monkeypatch.setattr(settings, "REFRESH_INTERVAL_SECONDS", 300)
     assert until_next_cycle(started=1000.0, now=1025.0) == 275.0
