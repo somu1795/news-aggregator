@@ -960,9 +960,9 @@
         var name = "news-" + (normalize(title).replace(/[^a-z0-9]+/g, "-")
             .replace(/^-|-$/g, "").slice(0, 60) || "snap") + ".png";
         var caption = !href ? "" : snapMode === "url" ? href : snapMode === "text" ? title + "\n" + href : "";
-        var copied = caption && navigator.clipboard && navigator.clipboard.writeText  // Now, while the click still counts
-            ? navigator.clipboard.writeText(caption).then(function () { return true; }, function () { return false; })
-            : Promise.resolve(false);
+        if (caption && navigator.clipboard && navigator.clipboard.writeText) {  // Now, while the click still counts
+            navigator.clipboard.writeText(caption).catch(function () {});  // Not copied: the image is still saved
+        }
         button.disabled = true;
         snapIcon(host)
             .then(function (icon) {
@@ -989,12 +989,6 @@
                 a.click();
                 a.remove();
                 setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
-            })
-            .then(function () { return copied; })
-            .then(function (linkCopied) {
-                if (!linkCopied) return;
-                button.textContent = snapMode === "text" ? "text copied" : "link copied";
-                setTimeout(function () { button.textContent = "snap"; }, 3000);
             })
             .catch(function () {
                 button.textContent = "snap failed";

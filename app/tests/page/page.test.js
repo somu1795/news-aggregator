@@ -215,7 +215,7 @@ test("snap: url also copies the headline's link, and shares it as the caption", 
     const seen = await snapIn("url");
     assert.equal(seen.download, "news-felix-gallardo-dies-at-80.png");
     assert.equal(seen.copied, LINK);
-    assert.equal(seen.button, "link copied");
+    assert.equal(seen.button, "snap");  // Unchanged: no "link copied"
     const phone = await snapIn("url", { phone: true });
     assert.equal(phone.sharedText, LINK);  // WhatsApp's caption
     assert.equal(phone.copied, LINK);
@@ -224,7 +224,7 @@ test("snap: url also copies the headline's link, and shares it as the caption", 
 test("snap: text copies and shares the headline with its link", async () => {
     const seen = await snapIn("text");
     assert.equal(seen.copied, "Félix Gallardo dies at 80\n" + LINK);
-    assert.equal(seen.button, "text copied");
+    assert.equal(seen.button, "snap");
     const phone = await snapIn("text", { phone: true });
     assert.equal(phone.sharedText, "Félix Gallardo dies at 80\n" + LINK);
     assert.equal(phone.download, undefined);
