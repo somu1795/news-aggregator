@@ -7,6 +7,7 @@ import json
 
 import httpx
 import respx
+from structlog.testing import capture_logs
 
 from services.links.google_news import RESOLVED_URL_PREFIX, _is_unresolved, decode_with_signature, resolve_link
 
@@ -116,10 +117,13 @@ async def test_google_asking_to_slow_down_pauses_resolution_without_retries(mock
     other_page = respx.get(other)
 
     async with httpx.AsyncClient() as client:
-        assert await resolve_link(client, mock_redis, GOOGLE_URL) == GOOGLE_URL
-        assert await resolve_link(client, mock_redis, other) == other
+        with capture_logs() as logs:
+            assert await resolve_link(client, mock_redis, GOOGLE_URL) == GOOGLE_URL
+            assert await resolve_link(client, mock_redis, other) == other
 
     assert page.call_count == 1 and not fallback_page.called and not other_page.called
+    assert [e["event"] for e in logs if e["log_level"] == "warning"] == [
+        "Google asked us to slow down, pausing link resolution"]  # Once, not once per link left
     assert await mock_redis.get(f"{RESOLVED_URL_PREFIX}{GOOGLE_URL}") is None
 
 

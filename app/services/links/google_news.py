@@ -261,7 +261,7 @@ async def resolve_link(client: httpx.AsyncClient, redis_client: aioredis.Redis, 
     if not _is_unresolved(url):
         return url  # Already a publisher link (e.g. Hacker News); nothing to resolve
     resolved = await resolve_redirect(client, redis_client, url)
-    if not _is_unresolved(resolved):
+    if not _is_unresolved(resolved) or _GOOGLE.paused(_GOOGLE_HOST):  # Paused: a later refresh resolves it
         return resolved
 
     try:
