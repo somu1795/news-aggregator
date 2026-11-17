@@ -86,6 +86,7 @@ class FeedPoller:
     def __init__(self):
         self.feeds: Dict[str, _FeedState] = {}  # By feed URL
         self.backoff: Dict[str, _HostBackoff] = {}  # By host
+        self.next_turn: Dict[str, float] = {}  # By host: when its next request may start (time.monotonic())
         # Last fetch of the topic feeds: {"at": monotonic time, "results": {source name: headlines}}
         self.topic_feeds: Dict = {"at": float("-inf"), "results": {}}
 
@@ -96,9 +97,11 @@ class FeedPoller:
           it (up to FEED_MAX_INTERVAL_SECONDS), new headlines reset it to every cycle;
           in between, its last headlines are reused without a request;
         - conditional requests (ETag / Last-Modified): an unchanged feed answers 304;
+        - requests start after a small random delay, and FEED_HOST_GAP_SECONDS apart on
+          one host, so they don't all go out at once;
         - a 429 or 503 pauses every feed on that host (Retry-After, or a doubling
-          backoff), with no retries; network errors are retried with backoff;
-        - requests start after a small random delay, so they don't all go out at once.
+          backoff), with no retries, and stops those still waiting their turn; network
+          errors are retried with backoff.
         When a feed can't be fetched, its last headlines are reused (they still age
         out after MAX_HEADLINE_AGE_HOURS).
         """
@@ -110,6 +113,9 @@ class FeedPoller:
         if now < state.next_fetch:
             return state.items
         await asyncio.sleep(random.uniform(0, settings.FEED_JITTER_SECONDS))
+        await self._take_turn(host)
+        if time.monotonic() < self.backoff.get(host, _HostBackoff()).until:  # Told to slow down while waiting
+            return state.items
         headers = dict(_FEED_HEADERS)
         if state.etag:
             headers["If-None-Match"] = state.etag
@@ -154,9 +160,21 @@ class FeedPoller:
         logger.info("Fetched headlines from source", count=len(headlines), source=source_name)
         return headlines
 
+    async def _take_turn(self, host: str) -> None:
+        """Waits until this host's next request may start, and books the one after."""
+        now = time.monotonic()
+        start = max(now, self.next_turn.get(host, now))
+        self.next_turn[host] = start + settings.FEED_HOST_GAP_SECONDS
+        await asyncio.sleep(start - now)
+
     def _back_off(self, host: str, response: httpx.Response) -> float:
-        """Pauses every feed on a host that answered 429/503: its Retry-After, or 10 min doubling up to 2 h."""
+        """
+        Pauses every feed on a host that answered 429/503: its Retry-After, or 10 min doubling up to 2 h.
+        Answers to requests sent before the pause began don't double it again.
+        """
         state = self.backoff.setdefault(host, _HostBackoff())
+        if time.monotonic() < state.until:
+            return state.until - time.monotonic()
         state.strikes += 1
         seconds = _retry_after(response)
         if seconds is None:

@@ -48,7 +48,7 @@ class Settings(BaseSettings):
     LOCAL_CACHE_SECONDS: float = 5.0  # How long each API worker reuses its in-memory snapshot
 
     # --- Refresher Settings ---
-    # 84 feeds per cycle (18 from Google News): every 5 minutes keeps upstream load polite
+    # Every 5 minutes keeps upstream load polite (feeds that bring nothing new are fetched less often)
     REFRESH_INTERVAL_SECONDS: int = 300
     REFRESH_TIMEOUT_SECONDS: int = 270  # Hard cap on a single refresh cycle (both phases)
     TOPIC_REFRESH_TIMEOUT_SECONDS: int = 150  # Cap on the topic views phase (tagging, link resolution)
@@ -80,6 +80,9 @@ class Settings(BaseSettings):
     FEED_BACKOFF_SECONDS: int = 600  # A host that answers 429/503 without Retry-After is paused this long, doubling
     FEED_BACKOFF_MAX_SECONDS: int = 7200
     FEED_JITTER_SECONDS: float = 10.0  # Each request starts after a random delay of up to this
+    # ...and at least this long after the last one to the same host: 58 Google News feeds sent within
+    # seconds of each other drew 429s and a two-hour pause most nights
+    FEED_HOST_GAP_SECONDS: float = 1.0
     BACKOFF_BASE: int = 2
 
     # --- Tagger (topic views) ---

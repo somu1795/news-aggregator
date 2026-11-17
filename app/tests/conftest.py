@@ -28,6 +28,7 @@ from services.feeds.poller import FeedPoller
 @pytest.fixture(autouse=True)
 def no_request_jitter(monkeypatch):
     monkeypatch.setattr(settings, "FEED_JITTER_SECONDS", 0.0)
+    monkeypatch.setattr(settings, "FEED_HOST_GAP_SECONDS", 0.0)
 
 
 @pytest.fixture(autouse=True)

@@ -97,3 +97,43 @@ async def test_a_failing_feed_keeps_its_last_headlines(poller, monkeypatch):
         await poller.fetch(client, "Outlet", FEED)
         poller.feeds[FEED].next_fetch = 0
         assert [h["title"] for h in await poller.fetch(client, "Outlet", FEED)] == ["a"]
+
+
+def same_host_feeds(n):
+    return [SimpleNamespace(name=f"Outlet {i}", url=f"https://outlet.example/{i}/rss") for i in range(n)]
+
+
+@respx.mock
+async def test_requests_to_one_host_are_spaced_out(poller, monkeypatch):
+    monkeypatch.setattr(settings, "FEED_HOST_GAP_SECONDS", 0.05)
+    started = []
+
+    def answer(request):
+        started.append(time.monotonic())
+        return httpx.Response(200, content=rss("a"))
+    respx.get(url__regex=r"https://outlet\.example/\d/rss").mock(side_effect=answer)
+    respx.get("https://other.example/rss").mock(return_value=httpx.Response(200, content=rss("o")))
+    other = SimpleNamespace(name="Other", url="https://other.example/rss")
+    async with httpx.AsyncClient() as client:
+        results = await poller.fetch_all(client, same_host_feeds(3) + [other])
+    assert len(results) == 4 and len(started) == 3
+    assert all(b - a >= 0.045 for a, b in zip(started, started[1:])), started
+
+
+@respx.mock
+async def test_a_429_stops_the_requests_still_waiting_their_turn(poller, monkeypatch):
+    monkeypatch.setattr(settings, "FEED_HOST_GAP_SECONDS", 0.05)
+    route = respx.get(url__regex=r"https://outlet\.example/\d/rss").mock(return_value=httpx.Response(429))
+    async with httpx.AsyncClient() as client:
+        await poller.fetch_all(client, same_host_feeds(3))
+    assert route.call_count == 1
+
+
+@respx.mock
+async def test_429s_already_on_their_way_count_as_one(poller):
+    respx.get(url__regex=r"https://outlet\.example/\d/rss").mock(return_value=httpx.Response(429))
+    async with httpx.AsyncClient() as client:
+        await poller.fetch_all(client, same_host_feeds(4))  # No gap: all sent before the first answer
+    paused = poller.backoff["outlet.example"]
+    assert paused.strikes == 1
+    assert paused.until - poller_module.time.monotonic() == pytest.approx(settings.FEED_BACKOFF_SECONDS, abs=1)
