@@ -31,7 +31,7 @@ def no_request_jitter(monkeypatch):
     monkeypatch.setattr(settings, "FEED_JITTER_SECONDS", 0.0)
     monkeypatch.setattr(settings, "FEED_HOST_GAP_SECONDS", 0.0)
     monkeypatch.setattr(settings, "LINK_RESOLVE_GAP_SECONDS", 0.0)
-    monkeypatch.setattr(google_news, "_GOOGLE", HostLimits())  # Google's pauses don't carry from test to test
+    monkeypatch.setattr(google_news, "_GOOGLE", HostLimits("links"))  # Google's pauses don't carry from test to test
 
 
 @pytest.fixture(autouse=True)

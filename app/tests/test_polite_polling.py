@@ -9,7 +9,7 @@ import respx
 
 from config import settings
 from services.feeds import poller as poller_module
-from services.feeds.poller import HostLimits
+from services.feeds.poller import FeedPoller, HostLimits
 
 FEED = "https://outlet.example/rss"
 
@@ -176,3 +176,46 @@ def test_an_answer_to_a_request_sent_before_a_pause_does_not_lift_it():
     limits.back_off("outlet.example", httpx.Response(429))
     limits.answered("outlet.example")  # A 200 that was already on its way
     assert limits.paused("outlet.example") and limits.backoff["outlet.example"].strikes == 1
+
+
+@respx.mock
+async def test_a_pause_and_its_strikes_outlast_a_restart(mock_redis, monkeypatch):
+    respx.get(FEED).mock(return_value=httpx.Response(429))
+    async with httpx.AsyncClient() as client:
+        await FeedPoller(mock_redis).fetch(client, "Outlet", FEED)  # Paused 10 min, then the refresher restarts
+        restarted = FeedPoller(mock_redis)
+        await restarted.restore(mock_redis)
+        assert restarted.paused("outlet.example")
+        assert restarted.backoff["outlet.example"].until - poller_module.time.monotonic() == pytest.approx(
+            settings.FEED_BACKOFF_SECONDS, abs=1)
+        assert await restarted.fetch(client, "Outlet", FEED) == [] and respx.calls.call_count == 1  # Not asked
+        advance(monkeypatch, settings.FEED_BACKOFF_SECONDS + 1)
+        await restarted.fetch(client, "Outlet", FEED)  # Refused again: the second strike, twice as long
+    assert restarted.backoff["outlet.example"].until - poller_module.time.monotonic() == pytest.approx(
+        2 * settings.FEED_BACKOFF_SECONDS, abs=1)
+
+
+@respx.mock
+async def test_a_host_answering_after_its_pause_is_forgotten_across_restarts_too(mock_redis, monkeypatch):
+    respx.get(FEED).mock(side_effect=[httpx.Response(429), httpx.Response(200, content=rss("a"))])
+    poller = FeedPoller(mock_redis)
+    async with httpx.AsyncClient() as client:
+        await poller.fetch(client, "Outlet", FEED)
+        advance(monkeypatch, settings.FEED_BACKOFF_SECONDS + 1)
+        await poller.fetch(client, "Outlet", FEED)
+    restarted = FeedPoller(mock_redis)
+    await restarted.restore(mock_redis)
+    assert "outlet.example" not in restarted.backoff and await mock_redis.keys("host-pause:*") == []
+
+
+async def test_without_redis_pauses_are_only_remembered_in_memory(monkeypatch):
+    class Down:
+        def scan_iter(self, *args, **kwargs):
+            raise poller_module.aioredis.RedisError("down")
+        async def set(self, *args, **kwargs):
+            raise poller_module.aioredis.RedisError("down")
+    poller = FeedPoller(Down())
+    await poller.restore(poller.redis)
+    poller.back_off("outlet.example", httpx.Response(429))
+    await poller.remember(poller.redis, "outlet.example")
+    assert poller.paused("outlet.example")

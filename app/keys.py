@@ -60,3 +60,8 @@ def full_page_host_key(host: str) -> str:
 def refresh_started_key() -> str:
     """Redis key holding when the refresher's latest cycle started (Unix time), for a restart to wait for the next."""
     return "refresh:started"
+
+
+def host_pause_key(scope: str, host: str) -> str:
+    """Redis key holding a host's pause and strikes ("feeds" or "links"), so they outlast a refresher restart."""
+    return f"host-pause:{scope}:{host}"

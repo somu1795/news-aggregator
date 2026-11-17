@@ -42,7 +42,12 @@ RESOLVED_URL_TTL = 86400  # 24 hours
 
 _BROWSER_UA = settings.BROWSER_USER_AGENT
 _GOOGLE_HOST = "news.google.com"
-_GOOGLE = HostLimits()  # Link resolution's own spacing and pause (the refresher is one long-lived process)
+_GOOGLE = HostLimits("links")  # Link resolution's own spacing and pause (the refresher is one long-lived process)
+
+
+async def restore_pause(redis_client: aioredis.Redis) -> None:
+    """Takes up a pause Google asked for before the refresher restarted (HostLimits.restore)."""
+    await _GOOGLE.restore(redis_client)
 
 
 async def _take_turn() -> bool:
@@ -258,6 +263,13 @@ async def decode_with_signature(client: httpx.AsyncClient, url: str) -> Optional
 
 async def resolve_link(client: httpx.AsyncClient, redis_client: aioredis.Redis, url: str) -> str:
     """Resolves a headline link: custom resolver first, fallback only if it failed."""
+    try:
+        return await _resolve_link(client, redis_client, url)
+    finally:
+        await _GOOGLE.remember(redis_client, _GOOGLE_HOST)  # If Google paused it (or a pause was forgotten), for a restart
+
+
+async def _resolve_link(client: httpx.AsyncClient, redis_client: aioredis.Redis, url: str) -> str:
     if not _is_unresolved(url):
         return url  # Already a publisher link (e.g. Hacker News); nothing to resolve
     resolved = await resolve_redirect(client, redis_client, url)

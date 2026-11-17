@@ -9,6 +9,7 @@ throttling throughput.
 
 import asyncio
 import email.utils
+import json
 import random
 import time
 from dataclasses import dataclass, field
@@ -16,10 +17,12 @@ from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
 import httpx
+import redis.asyncio as aioredis
 import structlog
 
 from catalog import Catalog, NewsSource, TopicSource
 from config import settings
+from keys import host_pause_key
 from services.feeds.parse import parse
 
 logger = structlog.get_logger(__name__)
@@ -85,11 +88,19 @@ class HostLimits:
     Being polite to hosts: requests to one start at least a gap apart (take_turn), and one that
     answers 429/503 is paused (back_off: its Retry-After, or 10 min doubling up to 2 h), its
     strikes forgotten at its first answer after the pause (answered).
+
+    Pauses and strikes are also kept in Redis (remember, restore), under a scope of their own
+    (the feeds', link resolution's), so a restarted refresher doesn't ask a host that is still
+    paused: forgetting it asked Google again 13 s before its pause ended, and drew another 429.
+    Memory stays the authority; Redis is written only when a host's pause changes, and if it's
+    unavailable a restart just starts without the pauses, as before.
     """
 
-    def __init__(self):
+    def __init__(self, scope: str = "feeds"):
+        self.scope = scope
         self.backoff: Dict[str, _HostBackoff] = {}  # By host
         self.next_turn: Dict[str, float] = {}  # By host: when its next request may start (time.monotonic())
+        self.saved: Dict[str, Optional[tuple]] = {}  # By host: its pause as last written to Redis
 
     def paused(self, host: str) -> bool:
         return time.monotonic() < self.backoff.get(host, _HostBackoff()).until
@@ -123,12 +134,52 @@ class HostLimits:
         if not self.paused(host):
             self.backoff.pop(host, None)
 
+    async def remember(self, redis_client: aioredis.Redis, host: str) -> None:
+        """Writes a host's pause and strikes to Redis if they changed (or deletes them once forgotten)."""
+        state = self.backoff.get(host)
+        current = (state.until, state.strikes) if state else None
+        if current == self.saved.get(host, None):
+            return
+        try:
+            if state:
+                left = state.until - time.monotonic()
+                # Kept after the pause ends, so the strikes still double the next one if the host refuses again
+                await redis_client.set(host_pause_key(self.scope, host),
+                                       json.dumps({"until": time.time() + left, "strikes": state.strikes}),
+                                       ex=max(1, int(left + settings.FEED_BACKOFF_MAX_SECONDS)))
+            else:
+                await redis_client.delete(host_pause_key(self.scope, host))
+            self.saved[host] = current
+        except aioredis.RedisError as e:
+            logger.warning("Host pause not saved", host=host, error=str(e))
+
+    async def restore(self, redis_client: aioredis.Redis) -> None:
+        """Takes up the pauses and strikes a previous run left in Redis (at a restart)."""
+        prefix = host_pause_key(self.scope, "")
+        try:
+            async for key in redis_client.scan_iter(match=prefix + "*"):
+                key = key.decode() if isinstance(key, bytes) else key
+                value = await redis_client.get(key)
+                if not value:
+                    continue
+                saved = json.loads(value)
+                host = key[len(prefix):]
+                self.backoff[host] = _HostBackoff(until=time.monotonic() + saved["until"] - time.time(),
+                                                  strikes=int(saved["strikes"]))
+                self.saved[host] = (self.backoff[host].until, self.backoff[host].strikes)
+                if self.paused(host):
+                    logger.info("Host still paused from before the restart", scope=self.scope, host=host,
+                                seconds=round(self.backoff[host].until - time.monotonic()))
+        except (aioredis.RedisError, ValueError, KeyError, TypeError) as e:
+            logger.warning("Host pauses not restored", scope=self.scope, error=str(e))
+
 
 class FeedPoller(HostLimits):
-    """Every feed's last headlines and validators, and every host's pause, kept between cycles."""
+    """Every feed's last headlines and validators, and every host's pause, kept between cycles (pauses in Redis too)."""
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, redis_client: Optional[aioredis.Redis] = None):
+        super().__init__("feeds")
+        self.redis = redis_client
         self.feeds: Dict[str, _FeedState] = {}  # By feed URL
         # Last fetch of the topic feeds: {"at": monotonic time, "results": {source name: headlines}}
         self.topic_feeds: Dict = {"at": float("-inf"), "results": {}}
@@ -171,8 +222,12 @@ class FeedPoller(HostLimits):
                     seconds = self.back_off(host, response)
                     logger.warning("Feed host asked us to slow down, pausing it", source=source_name, host=host,
                                    status=response.status_code, seconds=round(seconds))
+                    if self.redis:
+                        await self.remember(self.redis, host)
                     return state.items
                 self.answered(host)
+                if self.redis:
+                    await self.remember(self.redis, host)  # Only writes if that forgot a pause
                 if response.status_code == 304:
                     _schedule(state, changed=False)
                     return state.items

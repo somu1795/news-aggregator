@@ -199,18 +199,23 @@ test("snap still saves the image when the link can't be copied", async () => {
     assert.equal(button.textContent, "snap");
 });
 
-test("on a phone, snap opens the share sheet with the image", async () => {
+test("on a phone, snap opens the share sheet with the image, the headline and its link as its caption", async () => {
     const seen = {};
     const page = await open(SUMMARISED, { stored: { retroSiteIcons: "off" }, setup: (w) => {
         snapStandIns(w, seen);
         clipboardStandIn(w, seen);
         w.matchMedia =(query) => ({ matches: query === "(pointer: coarse)", addEventListener() {}, addListener() {} });
         w.navigator.canShare = () => true;
-        w.navigator.share = (data) => { seen.shared = Array.from(data.files, (f) => f.name + " " + f.type); return Promise.resolve(); };
+        w.navigator.share = (data) => {
+            seen.shared = Array.from(data.files, (f) => f.name + " " + f.type);
+            seen.sharedText = data.text;
+            return Promise.resolve();
+        };
     } });
     await page.click(await openSummary(page));
     await page.settle(60);
     assert.deepEqual(seen.shared, ["news-felix-gallardo-dies-at-80.png image/png"]);
+    assert.equal(seen.sharedText, "Félix Gallardo dies at 80\n" + SUMMARISED[ALL + "/" + EVERYTHING][0].link);  // WhatsApp's caption
     assert.equal(seen.download, undefined);
     assert.equal(seen.copied, SUMMARISED[ALL + "/" + EVERYTHING][0].link);
 });

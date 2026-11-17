@@ -968,7 +968,9 @@
                 var file = new File([blob], name, { type: "image/png" });
                 var phone = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
                 if (phone && navigator.canShare && navigator.canShare({ files: [file] })) {
-                    return navigator.share({ files: [file], title: cleanTitle(item.title, item.source) })
+                    // The text is the caption where the app takes one (WhatsApp on Android; on iPhones it may drop it)
+                    var title = cleanTitle(item.title, item.source);
+                    return navigator.share({ files: [file], title: title, text: href ? title + "\n" + href : title })
                         .catch(function (error) { if (error.name !== "AbortError") throw error; });  // Closing the sheet isn't a failure
                 }
                 var url = URL.createObjectURL(blob);

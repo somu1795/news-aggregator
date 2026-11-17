@@ -128,6 +128,20 @@ async def test_google_asking_to_slow_down_pauses_resolution_without_retries(mock
 
 
 @respx.mock
+async def test_googles_pause_on_link_resolution_outlasts_a_restart(mock_redis, monkeypatch):
+    from services.feeds.poller import HostLimits
+    from services.links import google_news
+    page = respx.get(GOOGLE_URL).mock(return_value=httpx.Response(429))
+    async with httpx.AsyncClient() as client:
+        await resolve_link(client, mock_redis, GOOGLE_URL)
+        monkeypatch.setattr(google_news, "_GOOGLE", HostLimits("links"))  # The refresher restarts
+        await google_news.restore_pause(mock_redis)
+        assert await resolve_link(client, mock_redis, GOOGLE_URL) == GOOGLE_URL
+    assert page.call_count == 1  # Still paused: not asked again
+    assert await mock_redis.keys("host-pause:feeds:*") == []  # The feeds' pauses are their own
+
+
+@respx.mock
 async def test_a_publisher_refusing_the_redirect_still_gives_its_url(mock_redis):
     """Google redirected to the publisher, whose 403 (to a bot) doesn't matter: its URL is the answer."""
     respx.get(GOOGLE_URL).mock(return_value=httpx.Response(302, headers={"Location": PUBLISHER_URL}))

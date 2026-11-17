@@ -36,6 +36,7 @@ from models import APIResponse
 from services import archive_index
 from services.archive import apply_story_moves, archive, last_story_move, set_stories, without_story
 from services.feeds.poller import FeedPoller
+from services.links import google_news
 from services.stats_stream import publish_new
 from services.views.main_views import get_fresh_views
 from services.views.top_turnover import turn_over
@@ -267,7 +268,9 @@ async def run() -> None:
     # Feeds, publishers and icons are other people's servers: public addresses only, but for the tagger
     async with public_client([settings.TAGGER_URL], limits=limits, timeout=settings.REQUEST_TIMEOUT) as http_client:
         logger.info("Refresher started", interval=settings.REFRESH_INTERVAL_SECONDS)
-        poller = FeedPoller()  # What it remembers about each feed and host, for the refresher's whole life
+        poller = FeedPoller(redis_client)  # What it remembers about each feed and host, for the refresher's whole life
+        await poller.restore(redis_client)  # Pauses hosts asked for before a restart
+        await google_news.restore_pause(redis_client)
         first = await until_first_cycle(redis_client)
         if first:
             logger.info("Waiting for the cycle the last run had due", seconds=round(first))
