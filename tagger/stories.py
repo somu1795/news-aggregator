@@ -196,6 +196,9 @@ class StoryGrouping:
             for i in close[np.argsort(-sims[close])]:
                 s = int(their_story[i])
                 if s not in fits:
+                    if s not in leaders:  # Its first headline dropped (prune): the story closed long ago
+                        fits[s] = False
+                        continue
                     lead_title, lead_seen, lead_vector = leaders[s]
                     verdict = verdicts.get(lead_title)
                     fits[s] = lead_seen >= first_seen - STORY_MAX_AGE_SECONDS and (
@@ -275,7 +278,8 @@ class StoryGrouping:
     def store_verdicts(self, verdicts: List["Verdict"]) -> int:
         """
         Stores the verdicts and applies them to the stories: "same" merges two stories
-        (into the older), "not" moves one of the two out of their story into one of its own
+        (into the older) unless together they'd last longer than a story may (STORY_MAX_AGE_SECONDS:
+        merges chained a month of horoscopes into one story), "not" moves one of the two out of their story into one of its own
         (the later, unless it's the story's first headline). Each change is logged
         (story_moves), for copies of the stories (the archive) to follow.
         """
@@ -292,7 +296,7 @@ class StoryGrouping:
             if len(found) < 2:
                 continue  # Not grouped yet: the verdict applies when they are
             (row_a, story_a), (row_b, story_b) = found[a], found[b]
-            if same and story_a != story_b:
+            if same and story_a != story_b and self._span(story_a, story_b) <= STORY_MAX_AGE_SECONDS:
                 old, new = max(story_a, story_b), min(story_a, story_b)
                 self.db.execute("UPDATE headlines SET story = ? WHERE story = ?", (new, old))
                 self.db.execute("INSERT INTO story_moves (old, new, title, moved) VALUES (?, ?, NULL, ?)", (old, new, now))
@@ -302,6 +306,39 @@ class StoryGrouping:
                 self.db.execute("INSERT INTO story_moves (old, new, title, moved) VALUES (?, ?, ?, ?)", (story_a, rowid, title, now))
         self.db.commit()
         return len(rows)
+
+    def _span(self, *stories: int) -> float:
+        """Seconds from the first headline of these stories to the last."""
+        first, last = self.db.execute(
+            f"SELECT MIN(first_seen), MAX(first_seen) FROM headlines WHERE story IN ({','.join('?' * len(stories))})",
+            stories).fetchone()
+        return last - first
+
+    def split_long_stories(self) -> int:
+        """
+        Cuts each story lasting longer than STORY_MAX_AGE_SECONDS (merged before merges were limited,
+        see store_verdicts) into stories that don't, in order of arrival, each led by its first
+        headline. Logs each headline moved (story_moves) and returns how many.
+        """
+        now = time.time()
+        long_stories = [s for (s,) in self.db.execute(
+            "SELECT story FROM headlines WHERE story IS NOT NULL GROUP BY story HAVING MAX(first_seen) - MIN(first_seen) > ?",
+            (STORY_MAX_AGE_SECONDS,))]
+        moves = []  # (old story, new story, rowid, title)
+        for story in long_stories:
+            start = lead = None
+            for rowid, title, first_seen in self.db.execute(
+                "SELECT rowid, title, first_seen FROM headlines WHERE story = ? ORDER BY first_seen, rowid", (story,),
+            ).fetchall():
+                if start is None or first_seen - start > STORY_MAX_AGE_SECONDS:
+                    start, lead = first_seen, rowid
+                if lead != story:
+                    moves.append((story, lead, rowid, title))
+        self.db.executemany("UPDATE headlines SET story = ? WHERE rowid = ?", [(new, rowid) for _, new, rowid, _ in moves])
+        self.db.executemany("INSERT INTO story_moves (old, new, title, moved) VALUES (?, ?, ?, ?)",
+                            [(old, new, title, now) for old, new, _, title in moves])
+        self.db.commit()
+        return len(moves)
 
     def story_moves(self, after: int, limit: int) -> List[dict]:
         """The story changes logged after id `after`, oldest first: a whole story (title None) or one headline."""

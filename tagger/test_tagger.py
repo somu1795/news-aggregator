@@ -296,6 +296,47 @@ def test_verdicts_merge_and_split_stories_and_log_it(tagger, monkeypatch):
     assert tagger.story_moves(moves[0]["id"], 10) == moves[1:]
 
 
+def test_a_same_verdict_merges_stories_only_as_long_as_one_story_may_last(tagger, monkeypatch):
+    monkeypatch.setattr(stories_module, "STORY_THRESHOLD", 0.9)
+    monkeypatch.setattr(stories_module, "STORY_LEADER_THRESHOLD", 0.9)
+    a, b = "leo horoscope today november first", "leo horoscope today november sixth"
+    [story_a] = tagger.group([Item(title=a)])
+    seen_days_ago(tagger, [a], 5)
+    [story_b] = tagger.group([Item(title=b)])
+    tagger.store_verdicts([tagger_module.Verdict(a=a, b=b, same=True)])
+    assert tagger.stories([Item(title=a), Item(title=b)]) == [story_a, story_b]  # Five days apart: not one story
+    assert tagger.story_moves(0, 10) == []
+
+
+def test_stories_grown_too_long_are_cut_into_stories_led_by_their_first_headlines(tagger, monkeypatch):
+    titles = [f"horoscope for day {word}" for word in ("one", "two", "three", "four")]
+    stories = tagger.group([Item(title=t) for t in titles])
+    rowid = dict(tagger.db.execute("SELECT title, rowid FROM headlines WHERE title LIKE 'horoscope%'"))
+    first = rowid[titles[0]]
+    tagger.db.execute("UPDATE headlines SET story = ? WHERE title LIKE 'horoscope%'", (first,))  # Merged before the limit
+    for title, days in zip(titles, (9, 7, 4, 1)):
+        seen_days_ago(tagger, [title], days)
+    assert tagger.split_long_stories() == 2
+    after = tagger.stories([Item(title=t) for t in titles])
+    assert after == [first, first, rowid[titles[2]], rowid[titles[2]]]  # Days 9-7, then 4-1
+    assert [(m["old"], m["new"], m["title"]) for m in tagger.story_moves(0, 10)] == [
+        (first, rowid[titles[2]], titles[2]), (first, rowid[titles[2]], titles[3])]
+    assert tagger.split_long_stories() == 0
+
+
+def test_grouping_goes_on_after_a_storys_first_headline_is_dropped(tagger, monkeypatch):
+    monkeypatch.setattr(stories_module, "STORY_THRESHOLD", 0.8)
+    a, b = "apple unveils homepod mini two with siri", "apple unveils homepod mini two with siri today"
+    c = "apple unveils homepod mini two with siri tonight"
+    [story, _] = tagger.group([Item(title=a), Item(title=b)])
+    seen_days_ago(tagger, [a], 40)
+    seen_days_ago(tagger, [b], 1)  # Joined a story that's now old (as through a merge)
+    tagger.db.commit()
+    assert tagger.prune(time.time()) == 1
+    [later] = tagger.group([Item(title=c)])  # Doesn't fail on the missing first headline
+    assert later != story
+
+
 def test_a_verdict_on_headlines_not_grouped_yet_changes_no_story(tagger):
     tagger.store_verdicts([tagger_module.Verdict(a="one thing", b="another", same=True)])
     assert tagger.story_moves(0, 10) == []

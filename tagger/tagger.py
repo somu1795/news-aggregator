@@ -98,12 +98,16 @@ class Tagger(StoryGrouping):
 
     def start(self) -> None:
         """
-        Stores the seed headlines (embedding any not stored yet), gives grouped headlines without a
-        story one (a database from before stories) and loads or trains the classifier.
+        Stores the seed headlines (embedding any not stored yet), cuts stories that last too long,
+        gives grouped headlines without a story one (a database from before stories) and loads or
+        trains the classifier.
         """
         seed = json.loads((BUNDLED / "seed.json").read_text())
         self._store([(row["title"], None, None, row["label"]) for row in seed])
         started = time.monotonic()
+        split = self.split_long_stories()
+        if split:
+            logger.info("Moved %d headlines out of stories that lasted too long", split)
         assigned = self.assign_all()
         if assigned:
             logger.info("Gave %d headlines their stories in %.0fs", assigned, time.monotonic() - started)
