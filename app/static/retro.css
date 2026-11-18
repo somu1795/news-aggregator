@@ -37,7 +37,7 @@
 
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }  /* Elements styled with display (e.g. nav) must still hide */
-html { background: var(--paper); }
+html { background: var(--paper); scrollbar-gutter: stable; }  /* The scrollbar's room is kept, so the page doesn't jump sideways when the list arrives */
 body {
     margin: 0 auto;
     max-width: 76ch;
