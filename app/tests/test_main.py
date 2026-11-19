@@ -637,3 +637,43 @@ def test_an_unexpected_error_tells_api_clients_nothing_about_the_server():
 
 def test_site_icons_and_the_admin_route_are_rate_limited():
     assert {"routes.site_icons.site_icon", "routes.admin.clear_cache"} <= set(limiter._route_limits)
+
+
+def _moon_data(html):
+    return json.loads(html.split('<script id="moon-data" type="application/json">')[1].split("</script>")[0])
+
+
+def test_moon_page_is_served(client):
+    """The moon page: the news page's look, a way back, and the moon data the header gets."""
+    response = client.get("/moon", headers={"Accept": "text/html"})
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
+    assert "NEWS.TXT / moon" in response.text
+    assert re.search(r"<title>[^<]+ / moon</title>", response.text)
+    assert re.search(r'<a id="back" href="/"', response.text)
+    assert set(_moon_data(response.text)) == {"south", "position"}
+
+
+def test_moon_page_has_the_content_security_policy(client):
+    response = client.get("/moon", headers={"Accept": "text/html"})
+    csp = response.headers["content-security-policy"]
+    nonce = csp.split("script-src 'nonce-")[1].split("'")[0]
+    assert re.search(rf'<link rel="stylesheet" href="/static/retro\.css\?v=\w+" nonce="{nonce}">', response.text)
+    for name in ("sky", "moonart", "moon"):
+        assert re.search(rf'<script src="/static/{name}\.js\?v=\w+" nonce="{nonce}" defer></script>', response.text)
+    assert "<style" not in response.text and "<script>" not in response.text and "style=" not in response.text
+    assert "unsafe-inline" not in csp and "frame-ancestors 'none'" in csp
+
+
+def test_moon_page_answers_head(client):
+    assert client.head("/moon").status_code == 200
+
+
+def test_moon_page_passes_the_visitors_position(client):
+    response = client.get("/moon", headers={"Accept": "text/html", "cf-ipcountry": "AU", "cf-iplatitude": "-33.87", "cf-iplongitude": "151.21"})
+    assert _moon_data(response.text) == {"south": True, "position": [-33.9, 151.2]}
+
+
+def test_news_page_does_not_link_to_the_moon_page(client):
+    """Not live yet: nothing leads to it."""
+    assert not re.search(r'href="/moon[/"?#]', client.get("/", headers={"Accept": "text/html"}).text)

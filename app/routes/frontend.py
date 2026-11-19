@@ -30,7 +30,7 @@ templates = Jinja2Templates(directory="templates")
 
 # The page links to its stylesheet and script by a hash of their content, so browsers and the CDN
 # can keep them for a year: a changed file gets a new URL
-_ASSET_HASHES = {name: hashlib.sha256(Path("static", name).read_bytes()).hexdigest()[:12] for name in ("retro.css", "sky.js", "moonart.js", "retro.js")}
+_ASSET_HASHES = {name: hashlib.sha256(Path("static", name).read_bytes()).hexdigest()[:12] for name in ("retro.css", "sky.js", "moonart.js", "retro.js", "moon.js")}
 _ASSETS = {name: f"/static/{name}?v={digest}" for name, digest in _ASSET_HASHES.items()}
 
 
@@ -53,6 +53,12 @@ _CSP = (
 )
 
 
+def _moon_data(request: Request) -> dict:
+    """The moon as the visitor sees it: mirrored for the southern hemisphere, or tilted as seen from their rough position."""
+    return {"south": in_southern_hemisphere(request.headers.get("cf-ipcountry")),
+            "position": rough_position(request.headers.get("cf-iplatitude"), request.headers.get("cf-iplongitude"))}
+
+
 @router.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
 @limiter.limit(settings.API_RATE_LIMIT)
 async def root(request: Request):
@@ -69,9 +75,7 @@ async def root(request: Request):
              "assets": _ASSETS, "site_url": _site_url(request), "default_theme": settings.DEFAULT_THEME,
              # Starting tab for visitors who haven't chosen one (country from Cloudflare)
              "home_region": region_for_country(request.headers.get("cf-ipcountry")),
-             # The header's moon: mirrored for the southern hemisphere, or tilted as seen from the visitor's rough position
-             "moon": {"south": in_southern_hemisphere(request.headers.get("cf-ipcountry")),
-                      "position": rough_position(request.headers.get("cf-iplatitude"), request.headers.get("cf-iplongitude"))}},
+             "moon": _moon_data(request)},
         )
         response.headers["Content-Security-Policy"] = _CSP.format(nonce=nonce)
         response.headers["Vary"] = "Accept"  # The same address answers JSON too: caches must keep both apart
@@ -81,6 +85,18 @@ async def root(request: Request):
         "version": settings.APP_VERSION,
         "docs": "/docs" if settings.ENABLE_API_DOCS else "disabled",
     }, headers={"Vary": "Accept"})
+
+
+@router.api_route("/moon", methods=["GET", "HEAD"], include_in_schema=False)
+@limiter.limit(settings.API_RATE_LIMIT)
+async def moon_page(request: Request):
+    """The moon page: the moon now, and its orbit and phase as moving diagrams. Not linked from anywhere yet."""
+    nonce = secrets.token_urlsafe(16)
+    response = templates.TemplateResponse(
+        request, "moon.html", {"site": get_site(), "csp_nonce": nonce, "assets": _ASSETS,
+                               "default_theme": settings.DEFAULT_THEME, "moon": _moon_data(request)})
+    response.headers["Content-Security-Policy"] = _CSP.format(nonce=nonce)
+    return response
 
 
 def _site_url(request: Request) -> str:

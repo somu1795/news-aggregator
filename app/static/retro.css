@@ -207,3 +207,6 @@ footer { margin-top: 1.5rem; color: var(--muted); font-size: .85em; }
     body { font-size: 14px; padding-top: 1.5rem; }
     li { grid-template-columns: 3ch 1fr; }
 }
+
+/* --- The moon page (templates/moon.html, static/moon.js) --- */
+.moon-page canvas { image-rendering: pixelated; image-rendering: crisp-edges; }

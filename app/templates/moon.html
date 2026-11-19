@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="{{ default_theme }}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="The moon now: its phase, its orbit around Earth, and the next 30 days.">
+    <title>{{ site.name }} / moon</title>
+    <link rel="icon" href="/favicon.ico" sizes="32x32">
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <meta name="theme-color" content="{{ '#120f0a' if default_theme == 'dark' else '#f3efe4' }}">
+    <link rel="stylesheet" href="{{ assets['retro.css'] }}" nonce="{{ csp_nonce }}">
+    <script src="{{ assets['sky.js'] }}" nonce="{{ csp_nonce }}" defer></script>
+    <script src="{{ assets['moonart.js'] }}" nonce="{{ csp_nonce }}" defer></script>
+    <script src="{{ assets['moon.js'] }}" nonce="{{ csp_nonce }}" defer></script>
+</head>
+<body class="moon-page">
+    <header>
+        <div class="masthead">
+            <h1>{{ site.name | upper }} / moon<span class="cursor blink">_</span></h1>
+            <nav aria-label="Controls">
+                <a id="back" href="/" title="Back to the news (b)">[<span class="key">b</span>]ack</a>
+            </nav>
+        </div>
+        <hr class="rule">
+    </header>
+
+    <main>
+        <p class="notice" id="moon-notice" hidden></p>
+
+        <section class="moon-now" aria-label="The moon now">
+            <canvas id="now-moon" width="24" height="24"></canvas>
+            <div id="now-text"></div>
+        </section>
+        <hr class="rule">
+
+        <section class="moon-diagrams" aria-label="Orbit and phase">
+            <figure>
+                <canvas id="orbit"></canvas>
+                <figcaption>orbit around earth, seen from above the north pole</figcaption>
+            </figure>
+            <figure>
+                <canvas id="phase" width="24" height="24"></canvas>
+                <ol id="phase-names"></ol>
+                <figcaption>phase, as seen from earth</figcaption>
+            </figure>
+        </section>
+        <p class="moon-clock"><span id="clock-label"></span></p>
+        <nav class="moon-controls" aria-label="Clock">
+            <button id="play">[<span class="key">space</span>] pause</button>
+            <button id="step-back">[<span class="key">&larr;</span>] a day back</button>
+            <button id="step-forward">[<span class="key">&rarr;</span>] a day on</button>
+            <button id="now-button">[<span class="key">n</span>]ow</button>
+        </nav>
+        <hr class="rule">
+
+        <section aria-label="The next 30 days">
+            <ol class="moon-days" id="days"></ol>
+            <ul class="moon-phases" id="phases"></ul>
+        </section>
+    </main>
+
+    <footer>
+        <hr class="rule">
+        <p>-- end of transmission --</p>
+    </footer>
+
+    <script id="moon-data" type="application/json">{{ moon | tojson }}</script>
+</body>
+</html>

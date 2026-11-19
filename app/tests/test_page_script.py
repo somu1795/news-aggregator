@@ -22,6 +22,8 @@ def test_the_pages_script(client, tmp_path):
         pytest.skip("needs Node, and `npm ci` in tests/page")
     page = tmp_path / "page.html"
     page.write_text(client.get("/", headers={"Accept": "text/html"}).text)
-    result = subprocess.run([NODE, "--test", "--test-timeout=10000"], cwd=PAGE_TESTS, env={**os.environ, "PAGE_HTML": str(page)},
+    moon = tmp_path / "moon.html"  # The moon page, for tests/page/moon.test.js
+    moon.write_text(client.get("/moon", headers={"Accept": "text/html"}).text)
+    result = subprocess.run([NODE, "--test", "--test-timeout=10000"], cwd=PAGE_TESTS, env={**os.environ, "PAGE_HTML": str(page), "MOON_HTML": str(moon)},
                             capture_output=True, text=True, timeout=120)
     assert result.returncode == 0, result.stdout[-6000:] + result.stderr[-2000:]
