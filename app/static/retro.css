@@ -209,7 +209,7 @@ footer { margin-top: 1.5rem; color: var(--muted); font-size: .85em; }
 }
 
 /* --- The moon page (templates/moon.html, static/moon.js) --- */
-.moon-page canvas { image-rendering: pixelated; image-rendering: crisp-edges; }
+.moon-page canvas { image-rendering: pixelated; image-rendering: crisp-edges; max-width: 100%; }
 .moon-page h1 { flex: 1 1 auto; }
 .moon-now { display: flex; gap: 2ch; align-items: center; margin: 1.25rem 0; }
 .moon-now canvas { flex: none; }
@@ -217,7 +217,7 @@ footer { margin-top: 1.5rem; color: var(--muted); font-size: .85em; }
 .moon-now p:first-child { color: var(--ink); font-weight: 700; }
 .moon-now p + p { color: var(--muted); }
 .moon-diagrams { display: flex; flex-wrap: wrap; gap: 1.5rem 3ch; margin: 1.25rem 0 .5rem; }
-.moon-diagrams figure { flex: 1 1 260px; margin: 0; display: flex; flex-direction: column; align-items: center; gap: .6rem; }
+.moon-diagrams figure { flex: 1 1 260px; min-width: 0; margin: 0; display: flex; flex-direction: column; align-items: center; gap: .6rem; }
 .moon-diagrams figcaption { color: var(--muted); font-size: .85em; text-align: center; }
 .moon-page #phase-names { list-style: none; margin: 0; padding: 0; color: var(--muted); font-size: .85em; }
 .moon-page #phase-names li { position: relative; margin: 0; padding: 0 0 0 2ch; line-height: 1.6; white-space: nowrap; }

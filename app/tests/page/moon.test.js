@@ -125,18 +125,39 @@ test("the phase diagram names the phase the clock is at, and both diagrams say w
     assert.ok(page.draws("orbit") > 0 && page.draws("phase") > 0);
 });
 
-// Where the lit pixels of the phase diagram lie, from its centre: positive on the right
-function litSide(page) {
-    const ops = page.$("phase").ops, last = ops.map((op) => op[0]).lastIndexOf("clearRect");  // The latest drawing
+// Where the lit pixels of a 24-pixel moon (the phase diagram's, or the big one's) lie, from its centre: positive on the right
+function litSide(page, id) {
+    const ops = page.$(id || "phase").ops, last = ops.map((op) => op[0]).lastIndexOf("clearRect");  // The latest drawing
     const lit = ops.slice(last).filter((op) => op[0] === "fillRect" && op[1] === LIT);
     return lit.reduce((sum, op) => sum + op[2] + 0.5 - 12, 0);
 }
 
-test("the phase diagram is lit on the right while waxing, mirrored in the south", async () => {
+test("without the visitor's place, both moons are lit on the right while waxing, mirrored in the south", async () => {
     const north = await open({ now: "2026-11-19T00:00:00Z", moon: { south: false, position: null }, reducedMotion: true });
-    assert.ok(litSide(north) > 0);
-    const south = await open({ now: "2026-11-19T00:00:00Z", moon: { south: true, position: [-33.9, 151.2] }, reducedMotion: true });
-    assert.ok(litSide(south) < 0);
+    assert.ok(litSide(north, "phase") > 0 && litSide(north, "now-moon") > 0);
+    const south = await open({ now: "2026-11-19T00:00:00Z", moon: { south: true, position: null }, reducedMotion: true });
+    assert.ok(litSide(south, "phase") < 0 && litSide(south, "now-moon") < 0);
+});
+
+test("a long gap between frames (a laptop asleep with the page open) moves the clock a day at most", async () => {
+    const page = await open({ now: "2026-11-19T00:00:00Z" });
+    page.frame(8 * 3600 * 1000);
+    assert.match(page.text("clock-label"), /\+1 d\b/);
+    assert.match(page.text("clock-label"), /2026/);
+});
+
+test("the diagrams fit the column, and shrink with it when the window narrows", async () => {
+    let width = 1000;
+    const page = await open({ reducedMotion: true, setup: (w) => {
+        Object.defineProperty(w.HTMLElement.prototype, "clientWidth", { configurable: true,
+            get() { return this.matches(".moon-diagrams figure, .moon-now") ? width : 0; } });
+    } });
+    assert.equal(parseFloat(page.$("orbit").style.width), 96 * 3);
+    width = 250;
+    page.window.dispatchEvent(new page.window.Event("resize"));
+    await page.settle();
+    assert.ok(parseFloat(page.$("orbit").style.width) <= 250, page.$("orbit").style.width);
+    assert.ok(parseFloat(page.$("phase").style.width) <= 250);
 });
 
 // --- The next 30 days ---

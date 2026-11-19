@@ -304,7 +304,9 @@
 
     function frame(timestamp) {
         pending = null;
-        if (lastFrame !== null) clock.advance(timestamp - lastFrame);
+        // At most a second's worth at once: after a stall (a laptop asleep with the page open) the clock goes on,
+        // it doesn't jump years
+        if (lastFrame !== null) clock.advance(Math.min(timestamp - lastFrame, 1000));
         lastFrame = timestamp;
         drawDiagrams(timestamp);
         schedule();
@@ -345,6 +347,11 @@
         event.preventDefault();  // Space and the arrows would scroll the page
         actions[event.key]();
         changed();
+    });
+    // A narrower or wider window: the pixels again, at the scale that fits
+    window.addEventListener("resize", function () {
+        renderNow();
+        drawDiagrams();
     });
     document.addEventListener("visibilitychange", function () {
         if (document.hidden) stop(); else schedule();
