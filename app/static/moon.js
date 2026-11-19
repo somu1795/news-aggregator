@@ -280,7 +280,7 @@
         var width = (document.querySelector(".moon-diagrams figure") || document.body).clientWidth;
         var scale = width ? Math.min(DIAGRAM_SCALE_MAX, scaleFor(width, ORBIT_SIZE)) : 2;
         drawOrbit(time, scale);
-        drawPhase(time, e, Math.min(DIAGRAM_SCALE_MAX * 4, scale * 4));  // The same size on screen as Earth's orbit, about
+        drawPhase(time, e, scale * 2);  // 24 pixels at twice the orbit's scale: half its width
         var offset = offsetLabel(time - Date.now());
         labelEl.textContent = dateLabel(time) + " · " + offset;
         // What the diagrams show, for screen readers: at most once a second while playing
@@ -338,7 +338,9 @@
         document.getElementById(pair[0]).addEventListener("click", function () { actions[pair[1]](); changed(); });
     });
     document.addEventListener("keydown", function (event) {
-        if (event.ctrlKey || event.metaKey || event.altKey || !actions[event.key]) return;
+        if (event.ctrlKey || event.metaKey || event.altKey) return;
+        if (event.key === "b") { document.getElementById("back").click(); return; }
+        if (!actions[event.key]) return;
         if (event.target && /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(event.target.tagName) && event.key === " ") return;  // A focused button's own space
         event.preventDefault();  // Space and the arrows would scroll the page
         actions[event.key]();
@@ -348,6 +350,15 @@
         if (document.hidden) stop(); else schedule();
     });
     changed();
+
+    // Another theme: the pixels again, in its colours
+    if (window.MutationObserver) {
+        new MutationObserver(function () {
+            renderNow();
+            renderDays();
+            drawDiagrams();
+        }).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    }
 
     // Left open, the page catches up: today's moon, the strip from today, the next phases, the mark for now
     window.setInterval(function () {

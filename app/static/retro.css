@@ -219,15 +219,16 @@ footer { margin-top: 1.5rem; color: var(--muted); font-size: .85em; }
 .moon-diagrams { display: flex; flex-wrap: wrap; gap: 1.5rem 3ch; margin: 1.25rem 0 .5rem; }
 .moon-diagrams figure { flex: 1 1 260px; margin: 0; display: flex; flex-direction: column; align-items: center; gap: .6rem; }
 .moon-diagrams figcaption { color: var(--muted); font-size: .85em; text-align: center; }
-.moon-page #phase-names { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, auto); gap: .1rem 2ch;
-    color: var(--muted); font-size: .85em; }
+.moon-page #phase-names { list-style: none; margin: 0; padding: 0; color: var(--muted); font-size: .85em; }
+.moon-page #phase-names li { position: relative; margin: 0; padding: 0 0 0 2ch; line-height: 1.6; white-space: nowrap; }
 .moon-page #phase-names .current { color: var(--ink); font-weight: 700; }
-.moon-page #phase-names .current::before { content: "> "; }
+.moon-page #phase-names .current::before { content: ">"; position: absolute; left: 0; }
 .moon-clock { margin: .5rem 0 .25rem; text-align: center; color: var(--ink); }
 .moon-controls { display: flex; flex-wrap: wrap; justify-content: center; gap: .25rem 2ch; }
 @media (max-width: 600px) { .moon-diagrams figure { flex-basis: 100%; } }
-.moon-days { list-style: none; margin: 1.25rem 0 .75rem; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(7ch, 1fr)); gap: .75rem .5ch; }
+.moon-days { list-style: none; margin: 1.25rem 0 .75rem; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(9ch, 1fr)); gap: .75rem 1ch; }
 .moon-days li { display: flex; flex-direction: column; align-items: center; gap: .2rem; color: var(--muted); font-size: .75em; text-align: center; }
 .moon-days li:first-child { color: var(--ink); font-weight: 700; }
 .moon-phases { list-style: none; margin: 0; padding: 0; color: var(--muted); }
+.moon-phases li { margin: .2rem 0; }
 .moon-phases li::before { content: "* "; color: var(--accent); }

@@ -175,3 +175,41 @@ test("left open, the page catches up every minute", async () => {
     assert.notEqual(page.text("phases"), phases);
     assert.ok(page.intervals.some((interval) => interval.ms === 60000));
 });
+
+// --- Theme and keys ---
+test("the page follows the theme chosen on the news page", async () => {
+    const page = await open({ stored: { retroTheme: "dark" } });
+    assert.equal(page.window.document.documentElement.getAttribute("data-theme"), "dark");
+});
+
+test("a theme change redraws the pixels in its colours", async () => {
+    const page = await open({ reducedMotion: true });
+    const before = page.draws("now-moon") + page.draws("orbit") + page.draws("phase");
+    page.window.document.documentElement.setAttribute("data-theme", "dark");
+    await page.settle();
+    assert.ok(page.draws("now-moon") + page.draws("orbit") + page.draws("phase") > before);
+});
+
+test("b goes back to the news", async () => {
+    const page = await open();
+    let followed = false;
+    page.$("back").addEventListener("click", (event) => { followed = true; event.preventDefault(); });
+    await page.key("b");
+    assert.ok(followed);
+});
+
+test("keys with ctrl, alt or cmd are the browser's", async () => {
+    const page = await open({ now: "2026-11-19T00:00:00Z" });
+    const document = page.window.document;
+    document.dispatchEvent(new page.window.KeyboardEvent("keydown", { key: "ArrowRight", ctrlKey: true, bubbles: true }));
+    document.dispatchEvent(new page.window.KeyboardEvent("keydown", { key: "b", metaKey: true, bubbles: true }));
+    await page.settle();
+    assert.match(page.text("clock-label"), /now/);
+});
+
+test("the phase disc is at most half as wide as the orbit diagram", async () => {
+    const page = await open({ reducedMotion: true });
+    const width = (id) => parseFloat(page.$(id).style.width);
+    assert.ok(width("orbit") > 0);
+    assert.ok(width("phase") <= width("orbit") / 2, `${width("phase")} vs ${width("orbit")}`);
+});
