@@ -29,7 +29,7 @@ async function open(options) {
     const page = { errors: [], frameQueue: [], intervals: [], clock: 0, now: Date.parse(options.now || "2026-11-19T00:00:00Z") };
     const virtualConsole = new VirtualConsole();
     virtualConsole.on("jsdomError", (error) => page.errors.push(error));
-    const dom = new JSDOM(html, { runScripts: "dangerously", url: "https://testserver/moon", virtualConsole: virtualConsole, beforeParse(window) {
+    const dom = new JSDOM(html, { runScripts: "dangerously", pretendToBeVisual: true, url: "https://testserver/moon", virtualConsole: virtualConsole, beforeParse(window) {
         Object.entries(options.stored || {}).forEach(([key, value]) => window.localStorage.setItem(key, value));
         window.Date.now = () => page.now;
         window.matchMedia = (query) => ({ matches: Boolean(options.reducedMotion) && /reduce/.test(query), addEventListener() {}, addListener() {} });

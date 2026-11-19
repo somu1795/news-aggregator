@@ -84,34 +84,48 @@
     var MoonArt = root.MoonArt;
     var DEGREES = 180 / Math.PI;
     var MOON = JSON.parse(document.getElementById("moon-data").textContent);
-    // The pixels' colours: the stylesheet's, so they follow the theme
+    // The pixels' colours: the stylesheet's, so they follow the theme (the light theme's if it didn't load)
     var COLOURS = { lit: "--moon", shade: "--moon-shade", crater: "--moon-crater" };
+    var EARTH = { lit: "--visited", shade: "--eclipsed", crater: "--visited" };  // Day and night
+    var FALLBACK = { "--moon": "#d9a441", "--moon-shade": "#d3cbb6", "--moon-crater": "#b8862f", "--visited": "#7a6a8c",
+        "--eclipsed": "#4a4236", "--sun": "#e8892b", "--muted": "#6f685a", "--accent": "#a8431a" };
+    var MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+    var ORBIT_SIZE = 96, ORBIT_RADIUS = 36, EARTH_SIZE = 9, ORBIT_MOON_SIZE = 7;  // Diagram A, in its own pixels
+    var DIAGRAM_SCALE_MAX = 3;
     var NOW_SCALE_MAX = 4;  // The big moon: 24 pixels, at most 4 screen pixels each
 
     function read(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
     var savedTheme = read("retroTheme");
     if (savedTheme === "dark" || savedTheme === "light") document.documentElement.setAttribute("data-theme", savedTheme);
 
-    function colour(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || "#888"; }
+    function colour(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || FALLBACK[name]; }
     function pad(n) { return (n < 10 ? "0" : "") + n; }
     function clockTime(time) { var d = new Date(time); return pad(d.getHours()) + ":" + pad(d.getMinutes()); }
     function startOfDay(time) { var d = new Date(time); d.setHours(0, 0, 0, 0); return d.getTime(); }
 
-    // A disc of pixels (MoonArt.disc's rows) painted on a canvas, one canvas pixel each, shown `scale` times larger
-    function paint(canvas, rows, scale) {
-        canvas.width = rows.length;
-        canvas.height = rows.length;
-        canvas.style.width = canvas.style.height = rows.length * scale + "px";
+    // A canvas `size` pixels square, shown `scale` times larger, cleared: its drawing context (null if none)
+    function surface(canvas, size, scale) {
+        if (canvas.width !== size) canvas.width = canvas.height = size;
+        canvas.style.width = canvas.style.height = size * scale + "px";
         var context = canvas.getContext("2d");
-        if (!context) return;
-        context.clearRect(0, 0, rows.length, rows.length);
+        if (context) context.clearRect(0, 0, size, size);
+        return context;
+    }
+
+    // A disc's pixels (MoonArt.disc's rows) with its top left at x, y, in the given colours
+    function dots(context, rows, x0, y0, colours) {
         rows.forEach(function (row, y) {
             row.forEach(function (kind, x) {
                 if (kind === null) return;
-                context.fillStyle = colour(COLOURS[kind] || COLOURS.lit);
-                context.fillRect(x, y, 1, 1);
+                context.fillStyle = colour(colours[kind] || colours.lit);
+                context.fillRect(x0 + x, y0 + y, 1, 1);
             });
         });
+    }
+
+    function paint(canvas, rows, scale) {
+        var context = surface(canvas, rows.length, scale);
+        if (context) dots(context, rows, 0, 0, COLOURS);
     }
 
     // How the moon's lit edge points (degrees): as seen from the visitor's place, or the textbook way
@@ -155,4 +169,146 @@
         return;
     }
     renderNow();
+
+    // --- The diagrams, on one clock ---
+    var reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    var clock = createClock(Date.now(), !reduced);
+    var orbitEl = document.getElementById("orbit"), phaseEl = document.getElementById("phase");
+    var namesEl = document.getElementById("phase-names"), labelEl = document.getElementById("clock-label");
+    var playBtn = document.getElementById("play");
+    var pending = null, lastFrame = null, lastLabel = -Infinity;
+
+    MoonArt.NAMES.forEach(function (name) {
+        var li = document.createElement("li");
+        li.textContent = name;
+        namesEl.appendChild(li);
+    });
+    orbitEl.setAttribute("role", "img");
+    phaseEl.setAttribute("role", "img");
+
+    function dateLabel(time) {
+        var d = new Date(time);
+        return d.getDate() + " " + MONTHS[d.getMonth()] + " " + d.getFullYear() + " " + clockTime(time);
+    }
+
+    // How far the clock is from now: "now" within a minute, else "+5 d 14 h", "-3 h", "+20 min"
+    function offsetLabel(ms) {
+        var minutes = Math.round(Math.abs(ms) / 60000);
+        if (minutes < 1) return "now";
+        var days = Math.floor(minutes / 1440), hours = Math.floor(minutes % 1440 / 60), sign = ms < 0 ? "-" : "+";
+        if (days) return sign + days + " d" + (hours ? " " + hours + " h" : "");
+        if (hours) return sign + hours + " h";
+        return sign + minutes + " min";
+    }
+
+    // Diagram A: Earth in the middle, sunlight from the left, the moon on its orbit at its elongation (anticlockwise,
+    // seen from above the north pole), its lit half toward the sun; a mark where the moon is now
+    function drawOrbit(time, scale) {
+        var context = surface(orbitEl, ORBIT_SIZE, scale);
+        if (!context) return;
+        var centre = ORBIT_SIZE / 2;
+        context.fillStyle = colour("--sun");
+        for (var y = 8; y < ORBIT_SIZE; y += 12) context.fillRect(1, y, 4, 1);  // Sunlight, from the left
+        context.fillStyle = colour("--muted");
+        for (var a = 0; a < 360; a += 10) {
+            context.fillRect(Math.round(centre + ORBIT_RADIUS * Math.cos(a / DEGREES)), Math.round(centre + ORBIT_RADIUS * Math.sin(a / DEGREES)), 1, 1);
+        }
+        dots(context, MoonArt.disc({ size: EARTH_SIZE, e: 90, limb: 90 }), Math.round(centre - EARTH_SIZE / 2), Math.round(centre - EARTH_SIZE / 2), EARTH);
+        // Toward the sun (left) is 180 degrees; the moon goes round anticlockwise, which on screen (y down) is -e
+        var at = function (time, radius) {
+            var angle = (180 + Sky.elongation(time)) / DEGREES;
+            return [centre + radius * Math.cos(angle), centre - radius * Math.sin(angle)];
+        };
+        var mark = at(Date.now(), ORBIT_RADIUS + 5);
+        context.fillStyle = colour("--accent");
+        context.fillRect(Math.round(mark[0]) - 1, Math.round(mark[1]) - 1, 2, 2);
+        var moon = at(time, ORBIT_RADIUS);
+        dots(context, MoonArt.disc({ size: ORBIT_MOON_SIZE, e: 90, limb: 90 }), Math.round(moon[0] - ORBIT_MOON_SIZE / 2),
+            Math.round(moon[1] - ORBIT_MOON_SIZE / 2), COLOURS);
+    }
+
+    // Diagram B: the disc as seen from Earth, the textbook way up (lit on the right while waxing, mirrored in the south)
+    function drawPhase(time, e, scale) {
+        paint(phaseEl, MoonArt.disc({ size: 24, e: e, limb: e < 180 !== MOON.south ? -90 : 90, south: MOON.south }), scale);
+        var name = MoonArt.phaseName(e);
+        [].forEach.call(namesEl.children, function (li) {
+            var current = li.textContent === name;
+            li.classList.toggle("current", current);
+            if (current) li.setAttribute("aria-current", "true"); else li.removeAttribute("aria-current");
+        });
+    }
+
+    function drawDiagrams(realTime) {
+        var time = clock.time(), e = Sky.elongation(time);
+        var width = (document.querySelector(".moon-diagrams figure") || document.body).clientWidth;
+        var scale = width ? Math.min(DIAGRAM_SCALE_MAX, scaleFor(width, ORBIT_SIZE)) : 2;
+        drawOrbit(time, scale);
+        drawPhase(time, e, Math.min(DIAGRAM_SCALE_MAX * 4, scale * 4));  // The same size on screen as Earth's orbit, about
+        var offset = offsetLabel(time - Date.now());
+        labelEl.textContent = dateLabel(time) + " · " + offset;
+        // What the diagrams show, for screen readers: at most once a second while playing
+        if (realTime === undefined || realTime - lastLabel >= 1000) {
+            lastLabel = realTime === undefined ? lastLabel : realTime;
+            var name = MoonArt.phaseName(e), lit = MoonArt.litPercent(e) + "% lit";
+            orbitEl.setAttribute("aria-label", "orbit: moon at " + name + ", " + lit + ", " + offset);
+            phaseEl.setAttribute("aria-label", "phase: " + name + ", " + lit + ", " + offset);
+        }
+    }
+
+    function button(el, key, text) {
+        el.textContent = "";
+        var k = document.createElement("span");
+        k.className = "key";
+        k.textContent = key;
+        el.appendChild(document.createTextNode("["));
+        el.appendChild(k);
+        el.appendChild(document.createTextNode("] " + text));
+    }
+
+    function frame(timestamp) {
+        pending = null;
+        if (lastFrame !== null) clock.advance(timestamp - lastFrame);
+        lastFrame = timestamp;
+        drawDiagrams(timestamp);
+        schedule();
+    }
+
+    function schedule() {
+        if (pending === null && clock.playing && !document.hidden) pending = window.requestAnimationFrame(frame);
+    }
+
+    function stop() {
+        if (pending !== null) window.cancelAnimationFrame(pending);
+        pending = null;
+        lastFrame = null;
+    }
+
+    // After a control: show the change now, and run or stop the animation to match
+    function changed() {
+        button(playBtn, "space", clock.playing ? "pause" : "play");
+        stop();
+        drawDiagrams();
+        schedule();
+    }
+
+    var actions = {
+        " ": function () { clock.toggle(); },
+        ArrowLeft: function () { clock.step(-1); },
+        ArrowRight: function () { clock.step(1); },
+        n: function () { clock.reset(Date.now()); }
+    };
+    [["play", " "], ["step-back", "ArrowLeft"], ["step-forward", "ArrowRight"], ["now-button", "n"]].forEach(function (pair) {
+        document.getElementById(pair[0]).addEventListener("click", function () { actions[pair[1]](); changed(); });
+    });
+    document.addEventListener("keydown", function (event) {
+        if (event.ctrlKey || event.metaKey || event.altKey || !actions[event.key]) return;
+        if (event.target && /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(event.target.tagName) && event.key === " ") return;  // A focused button's own space
+        event.preventDefault();  // Space and the arrows would scroll the page
+        actions[event.key]();
+        changed();
+    });
+    document.addEventListener("visibilitychange", function () {
+        if (document.hidden) stop(); else schedule();
+    });
+    changed();
 })(this);

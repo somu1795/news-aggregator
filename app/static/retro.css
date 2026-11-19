@@ -210,3 +210,19 @@ footer { margin-top: 1.5rem; color: var(--muted); font-size: .85em; }
 
 /* --- The moon page (templates/moon.html, static/moon.js) --- */
 .moon-page canvas { image-rendering: pixelated; image-rendering: crisp-edges; }
+.moon-page h1 { flex: 1 1 auto; }
+.moon-now { display: flex; gap: 2ch; align-items: center; margin: 1.25rem 0; }
+.moon-now canvas { flex: none; }
+.moon-now p { margin: .15rem 0; }
+.moon-now p:first-child { color: var(--ink); font-weight: 700; }
+.moon-now p + p { color: var(--muted); }
+.moon-diagrams { display: flex; flex-wrap: wrap; gap: 1.5rem 3ch; margin: 1.25rem 0 .5rem; }
+.moon-diagrams figure { flex: 1 1 260px; margin: 0; display: flex; flex-direction: column; align-items: center; gap: .6rem; }
+.moon-diagrams figcaption { color: var(--muted); font-size: .85em; text-align: center; }
+.moon-page #phase-names { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, auto); gap: .1rem 2ch;
+    color: var(--muted); font-size: .85em; }
+.moon-page #phase-names .current { color: var(--ink); font-weight: 700; }
+.moon-page #phase-names .current::before { content: "> "; }
+.moon-clock { margin: .5rem 0 .25rem; text-align: center; color: var(--ink); }
+.moon-controls { display: flex; flex-wrap: wrap; justify-content: center; gap: .25rem 2ch; }
+@media (max-width: 600px) { .moon-diagrams figure { flex-basis: 100%; } }
