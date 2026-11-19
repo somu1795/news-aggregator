@@ -100,7 +100,15 @@
         return [south ? -30 : 30, Math.max(-180, Math.min(180, -offsetMinutes / 4)) + 0];  // + 0: never -0
     }
 
-    var MoonPage = { createClock: createClock, nextPhases: nextPhases, roundTo10: roundTo10, age: age, distanceLine: distanceLine,
+    // How the moon looks from a place when it's highest that day, in degrees: Sky.moonView's tilt keeps turning as
+    // the moon crosses the sky, but at its highest the turn is 0 seen from north of the moon, 180 seen from south of
+    // it. view: Sky.moonView's (radians); lat: the place's (degrees); dec: the moon's declination (radians)
+    function atHighest(view, lat, dec) {
+        var turn = lat * Math.PI / 180 > dec ? 0 : Math.PI;
+        return { limb: (view.limb + view.face - turn) * 180 / Math.PI, face: turn * 180 / Math.PI };
+    }
+
+    var MoonPage = { createClock: createClock, atHighest: atHighest, nextPhases: nextPhases, roundTo10: roundTo10, age: age, distanceLine: distanceLine,
         riseSetLine: riseSetLine, compass: compass, scaleFor: scaleFor, guessPlace: guessPlace, riseSetBetween: riseSetBetween,
         heightLine: heightLine };
     if (typeof module !== "undefined" && module.exports) module.exports = MoonPage;
@@ -356,8 +364,11 @@
             }
         }
         var earth = project([0, 0, 0]), e = Sky.elongation(time), moon = project(onOrbit(180 + e));
-        var size = Math.max(8, Math.round(MOON_R * ORBIT_K * moon.f) * 2), way = orientation(time, e, PLACE);
-        var moonRows = cachedDisc("orbit", { size: size, e: e, limb: way.limb, face: way.face, south: way.south, craters: craters(size) });
+        // As it looks from the visitor's place when highest that day: it turns slowly with the days, instead of
+        // rolling round with each night as the clock races (a day every 3 s at 8 h/s)
+        var way = MOON.position ? atHighest(Sky.moonView(time, MOON.position), MOON.position[0], Sky.sunAndMoon(time).moon.dec) : orientation(time, e);
+        var size = Math.max(8, Math.round(MOON_R * ORBIT_K * moon.f) * 2);
+        var moonRows = cachedDisc("orbit", { size: size, e: e, limb: way.limb, face: way.face, south: Boolean(way.south), craters: craters(size) });
         var tip = project(along([0, 0, 0], AXIS, 1)), north = Math.atan2(tip.x - earth.x, earth.y - tip.y);
         for (var y = 30; y < ORBIT_H - 20; y += 24) for (var x = 2; x < 12; x++) put(x, y, "--sun");  // Sunlight, from the left
         // Back to front: Earth hides what's behind it

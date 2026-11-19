@@ -82,3 +82,15 @@ test("how high the moon is, in words", () => {
     assert.equal(MoonPage.heightLine(0.4, 95, true), "just above the horizon, in the east");
     assert.equal(MoonPage.heightLine(-5, 0, false), "below the horizon now");
 });
+
+test("the moon as it looks when highest that day: the same whenever in the day it's asked", () => {
+    const RAD = Math.PI / 180;
+    // Sky.moonView's limb is the bright limb's angle less the turn; at its highest the turn is 0 seen from north of
+    // the moon, 180 degrees seen from south of it
+    const asked = (turn) => MoonPage.atHighest({ limb: 50 * RAD - turn, face: turn }, 51.5, 10 * RAD);
+    assert.ok(Math.abs(asked(1.2).limb - asked(-0.7).limb) < 1e-9 && asked(1.2).face === asked(-0.7).face);
+    assert.ok(Math.abs(asked(1.2).limb - 50) < 1e-9 && asked(1.2).face === 0);
+    const south = MoonPage.atHighest({ limb: 50 * RAD - 0.4, face: 0.4 }, -33.9, 10 * RAD);
+    assert.equal(south.face, 180);
+    assert.ok(Math.abs(south.limb - (50 - 180)) < 1e-9);
+});
