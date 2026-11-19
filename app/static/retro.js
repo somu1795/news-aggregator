@@ -1212,11 +1212,8 @@
     var MOON_DATA = JSON.parse(document.getElementById("moon-data").textContent);
     var MOON_SOUTH = MOON_DATA.south;  // Mirrored: lit on the left while waxing (when the position isn't known)
     var MOON_POSITION = MOON_DATA.position;  // [latitude, longitude], rounded (Cloudflare's), or null
-    var MOON_NAMES = ["new moon", "waxing crescent", "first quarter", "waxing gibbous", "full moon", "waning gibbous", "last quarter", "waning crescent"];
     // The icon is 39x24 pixels, one CSS pixel each (so they fall on whole screen pixels at any zoom of 1x, 2x, 3x)
     var MOON_SIZE = 24, MOON_X = 7;  // The moon's diameter and left edge; the stars are either side of it
-    var MOON_CRATERS = [[7, 6], [8, 6], [9, 6], [6, 7], [7, 7], [8, 7], [9, 7], [7, 8], [8, 8], [14, 9], [15, 9], [15, 10], [16, 10],
-        [15, 11], [9, 15], [10, 15], [11, 15], [10, 16], [16, 17], [17, 17]];
     var MOON_STARS = [[1, 4], [4, 18], [34, 1], [36, 15]];  // At dusk and dawn only the first two
     var MOON_CLOUD = [[2, 0, 3], [7, 0, 3], [0, 1, 12], [0, 2, 12], [2, 3, 8]];  // The cloud's rows of pixels: x, y, width
     var MOON_CLOUD_WIDTH = 12, MOON_CLOUD_Y = 2;  // Across the top: lower down, the craters and a cloud looked like a face
@@ -1229,12 +1226,6 @@
     var DEGREES = 180 / Math.PI;
     var moonEl = document.getElementById("moon");
     var moonShown = null;
-
-    function moonName(e) {
-        var quarter = Math.round(e / 90);
-        if (Math.abs(e - quarter * 90) < 6) return MOON_NAMES[(quarter % 4) * 2];  // About half a day either side
-        return MOON_NAMES[Math.floor(e / 90) * 2 + 1];
-    }
 
     // Hours until the next full moon (while waxing) or new moon (while waning)
     function hoursToNext(time, e) {
@@ -1290,47 +1281,16 @@
         if (scene.sun) SUN.forEach(function (p) { svg.appendChild(pixel((scene.sun === "right" ? 32 : 0) + p[0], p[1], p[2], "sun")); });
         var clip = svgElement("clipPath", { id: "moon-disc" });  // The cloud shows only where it crosses the disc
         var drop = scene.set ? MOON_HORIZON - MOON_SIZE / 2 : 0, bottom = scene.set ? MOON_HORIZON - 1 : MOON_SIZE - 1, eclipse = scene.eclipse;
-        var cos = Math.cos(scene.e / DEGREES), limb = scene.limb / DEGREES, face = (scene.face || 0) / DEGREES;
-        var limbX = -Math.sin(limb), limbY = -Math.cos(limb);  // Toward the lit edge, on screen (y down)
-        var faceCos = Math.cos(face), faceSin = Math.sin(face);
-        var craters = {};
-        MOON_CRATERS.forEach(function (p) { craters[p[0] + "," + p[1]] = true; });
-        var half = MOON_SIZE / 2, centre = half - 0.5;
+        // What each of the disc's pixels shows (moonart.js)
+        var disc = MoonArt.disc({ size: MOON_SIZE, e: scene.e, limb: scene.limb, face: scene.face, south: scene.south,
+            eclipse: eclipse, craters: MoonArt.CRATERS });
         for (var y = 0; y < MOON_SIZE; y++) {
             var first = null, last = null, run = null;  // Pixels of one kind side by side are drawn as one
             for (var x = 0; x < MOON_SIZE; x++) {
-                // A pixel is part of the disc if half of it is (4x4 points each), and lit if a third of that is
-                var inside = 0, litPoints = 0, covered = 0;
-                for (var sy = 0; sy < 4; sy++) {
-                    for (var sx = 0; sx < 4; sx++) {
-                        var px = (x + (sx + 0.5) / 4 - half) / half, py = (y + (sy + 0.5) / 4 - half) / half;  // The disc's radius is 1
-                        if (px * px + py * py > 1) continue;
-                        inside++;
-                        var along = px * limbX + py * limbY, across = px * limbY - py * limbX;  // Turned to the lit edge
-                        var width = Math.sqrt(Math.max(0, 1 - across * across));  // Half the disc's width there
-                        // The terminator is half an ellipse: lit beyond it, toward the sun
-                        if (along > width * cos) litPoints++;
-                        // In an eclipse: inside the covering disc (Earth's shadow, or the moon over the sun)
-                        if (eclipse && Math.pow(px - eclipse.at[0], 2) + Math.pow(py - eclipse.at[1], 2) < eclipse.size * eclipse.size) covered++;
-                    }
-                }
-                if (inside < 8 || y + drop > bottom) { run = null; continue; }
+                var kind = disc[y][x];
+                if (kind === null || y + drop > bottom) { run = null; continue; }
                 if (first === null) first = x;
                 last = x;
-                var kind;
-                if (eclipse && eclipse.kind === "solar") {
-                    kind = covered * 2 >= inside ? "eclipsed" : "sun-disc";
-                    // In totality the corona glows around the moon: the disc's outermost ring of pixels
-                    if (eclipse.type === "total" && Math.pow(x - centre, 2) + Math.pow(y - centre, 2) > Math.pow(half - 1.5, 2)) kind = "corona";
-                }
-                else {
-                    // The craters turn with the moon's face (the pixel it shows here, turned back), or mirror
-                    var faceX = scene.south ? MOON_SIZE - 1 - x : Math.round((x - centre) * faceCos + (y - centre) * faceSin + centre);
-                    var faceY = scene.south ? y : Math.round((y - centre) * faceCos - (x - centre) * faceSin + centre);
-                    var crater = craters[faceX + "," + faceY];
-                    kind = litPoints * 3 < inside ? "shade" : crater ? "crater" : "lit";  // A third: thin crescents stay unbroken
-                    if (eclipse && covered * 2 >= inside) kind = crater ? "blood-crater" : "blood";  // In Earth's shadow
-                }
                 if (run && run.getAttribute("class") === kind) run.setAttribute("width", Number(run.getAttribute("width")) + 1);
                 else svg.appendChild(run = pixel(MOON_X + x, y + drop, 1, kind));
             }
@@ -1402,11 +1362,11 @@
     }
 
     function renderMoon() {
-        if (!window.Sky) return;  // sky.js didn't load: no moon, the rest of the page as usual
+        if (!window.Sky || !window.MoonArt) return;  // sky.js or moonart.js didn't load: no moon, the rest of the page as usual
         var now = Date.now();
         var e = Sky.elongation(now);
-        var percent = Math.round((1 - Math.cos(e / DEGREES)) / 2 * 100);
-        var name = percent === 0 ? "new moon" : percent === 100 ? "full moon" : moonName(e);
+        var percent = MoonArt.litPercent(e);
+        var name = percent === 0 ? "new moon" : percent === 100 ? "full moon" : MoonArt.phaseName(e);
         var label = name === "new moon" || name === "full moon" ? name : name + " " + percent + "%";
         var scene = skyScene(now, e);
         var hours = hoursToNext(now, e);

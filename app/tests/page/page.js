@@ -1,12 +1,12 @@
 // Opens the page in jsdom: the HTML the server renders (the file PAGE_HTML names, written by
-// tests/test_page_script.py) with the repo's sky.js and retro.js, and the API answered from a test's own views.
+// tests/test_page_script.py) with the repo's sky.js, moonart.js and retro.js, and the API answered from a test's own views.
 const fs = require("fs");
 const path = require("path");
 const { JSDOM } = require("jsdom");
 
 const HTML = fs.readFileSync(process.env.PAGE_HTML, "utf8");
 // The scripts are deferred: they run in order once the page is parsed, so here they go at the end of the body
-const PAGE = ["sky.js", "retro.js"].reduce((page, name) => {
+const PAGE = ["sky.js", "moonart.js", "retro.js"].reduce((page, name) => {
     const tag = new RegExp('<script src="/static/' + name.replace(".", "\\.") + '[^>]*></script>');
     if (!tag.test(page)) throw new Error("The page doesn't load /static/" + name);
     const script = fs.readFileSync(path.join(__dirname, "../../static", name), "utf8");
