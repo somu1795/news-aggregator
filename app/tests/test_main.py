@@ -677,3 +677,11 @@ def test_moon_page_passes_the_visitors_position(client):
 def test_news_page_does_not_link_to_the_moon_page(client):
     """Not live yet: nothing leads to it."""
     assert not re.search(r'href="/moon[/"?#]', client.get("/", headers={"Accept": "text/html"}).text)
+
+
+def test_moon_page_lists_the_phase_names_itself(client):
+    """Written in the page, not added by its script, so the list doesn't push the page down when the script runs."""
+    html = client.get("/moon", headers={"Accept": "text/html"}).text
+    names = re.findall(r"<li>([a-z ]+)</li>", html.split('<ol id="phase-names">')[1].split("</ol>")[0])
+    assert names == ["new moon", "waxing crescent", "first quarter", "waxing gibbous", "full moon", "waning gibbous",
+                     "last quarter", "waning crescent"]

@@ -264,11 +264,13 @@
     var playBtn = document.getElementById("play");
     var pending = null, lastFrame = null, lastLabel = -Infinity;
 
-    MoonArt.NAMES.forEach(function (name) {
-        var li = document.createElement("li");
-        li.textContent = name;
-        namesEl.appendChild(li);
-    });
+    if (!namesEl.children.length) {  // The page lists them, so they take their room before this runs
+        MoonArt.NAMES.forEach(function (name) {
+            var li = document.createElement("li");
+            li.textContent = name;
+            namesEl.appendChild(li);
+        });
+    }
     orbitEl.setAttribute("role", "img");
     phaseEl.setAttribute("role", "img");
 
