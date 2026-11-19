@@ -269,9 +269,9 @@
     }
 
     // A "snap" button under each open summary, which saves the headline and summary as an image (saveSnap), and
-    // with it, by mode: nothing more (image), the headline's link (url), or the headline and its link (text): copied,
-    // and given to the share sheet as the caption. Or no snap button (off). Kept under its first name, retroSnippet
-    // ("on", from before the modes, is the default)
+    // with it, by mode: the headline's link copied (image), the link given to the share sheet as the caption (url),
+    // or the headline and its link both copied and as the caption (text). Or no snap button (off). Kept under its
+    // first name, retroSnippet ("on", from before the modes, is the default)
     var SNAP_MODES = ["image", "url", "text", "off"];
     var snapMode = SNAP_MODES.indexOf(read("retroSnippet")) >= 0 ? read("retroSnippet") : SNAP_MODES[0];
     function renderSnapSetting() {
@@ -820,7 +820,8 @@
             snap.type = "button";
             snap.textContent = "snap";
             snap.title = "Save this headline and its summary as an image" + {
-                image: "", url: ", and copy its link", text: ", and copy the headline and its link" }[snapMode];
+                image: ", and copy its link", url: ", with its link as the caption when shared",
+                text: ", and copy the headline and its link (also the caption when shared)" }[snapMode];
             snap.addEventListener("click", function () { saveSnap(item, snap); });
             note.appendChild(document.createTextNode(" · "));
             note.appendChild(snap);
@@ -951,17 +952,20 @@
         return canvas;
     }
 
-    // Saves the snap: the share sheet on phones (save to photos, send to an app), a PNG download elsewhere;
-    // in the url and text modes, also copies the link (or the headline and link), to paste beside it, and gives
-    // it to the share sheet as the caption (only on https: browsers have no clipboard API on plain http)
+    // Saves the snap: the share sheet on phones (save to photos, send to an app), a PNG download elsewhere. By
+    // mode, also copies the link (image) or the headline and link (text), to paste beside it (only on https: browsers
+    // have no clipboard API on plain http), and gives the link (url) or the headline and link (text) to the share
+    // sheet as the caption
     function saveSnap(item, button) {
         var href = safeUrl(item.link), host = href ? hostOf(href) : "";
         var title = cleanTitle(item.title, item.source);
         var name = "news-" + (normalize(title).replace(/[^a-z0-9]+/g, "-")
             .replace(/^-|-$/g, "").slice(0, 60) || "snap") + ".png";
-        var caption = !href ? "" : snapMode === "url" ? href : snapMode === "text" ? title + "\n" + href : "";
-        if (caption && navigator.clipboard && navigator.clipboard.writeText) {  // Now, while the click still counts
-            navigator.clipboard.writeText(caption).catch(function () {});  // Not copied: the image is still saved
+        var both = title + "\n" + href;
+        var copy = !href ? "" : snapMode === "image" ? href : snapMode === "text" ? both : "";
+        var caption = !href ? "" : snapMode === "url" ? href : snapMode === "text" ? both : "";
+        if (copy && navigator.clipboard && navigator.clipboard.writeText) {  // Now, while the click still counts
+            navigator.clipboard.writeText(copy).catch(function () {});  // Not copied: the image is still saved
         }
         button.disabled = true;
         snapIcon(host)

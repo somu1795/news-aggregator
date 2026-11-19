@@ -200,25 +200,25 @@ async function snapIn(mode, { phone = false, clipboard = true } = {}) {
     return seen;
 }
 
-test("by default snap saves only the image: nothing copied, nothing shared with it", async () => {
+test("by default (image) snap saves the image and copies the headline's link, but shares only the image", async () => {
     const seen = await snapIn(null);
-    assert.equal(seen.download, "news-felix-gallardo-dies-at-80.png");
-    assert.equal(seen.copied, undefined);
-    assert.equal(seen.button, "snap");
-    const phone = await snapIn(null, { phone: true });
-    assert.deepEqual(phone.shared, ["news-felix-gallardo-dies-at-80.png image/png"]);
-    assert.equal(phone.sharedText, undefined);
-    assert.equal(phone.copied, undefined);
-});
-
-test("snap: url also copies the headline's link, and shares it as the caption", async () => {
-    const seen = await snapIn("url");
     assert.equal(seen.download, "news-felix-gallardo-dies-at-80.png");
     assert.equal(seen.copied, LINK);
     assert.equal(seen.button, "snap");  // Unchanged: no "link copied"
+    const phone = await snapIn(null, { phone: true });
+    assert.deepEqual(phone.shared, ["news-felix-gallardo-dies-at-80.png image/png"]);
+    assert.equal(phone.sharedText, undefined);
+    assert.equal(phone.copied, LINK);
+});
+
+test("snap: url shares the headline's link as the caption, and copies nothing", async () => {
+    const seen = await snapIn("url");
+    assert.equal(seen.download, "news-felix-gallardo-dies-at-80.png");
+    assert.equal(seen.copied, undefined);
+    assert.equal(seen.button, "snap");
     const phone = await snapIn("url", { phone: true });
     assert.equal(phone.sharedText, LINK);  // WhatsApp's caption
-    assert.equal(phone.copied, LINK);
+    assert.equal(phone.copied, undefined);
 });
 
 test("snap: text copies and shares the headline with its link", async () => {
@@ -231,7 +231,7 @@ test("snap: text copies and shares the headline with its link", async () => {
 });
 
 test("snap still saves the image when the link can't be copied", async () => {
-    const seen = await snapIn("url", { clipboard: false });
+    const seen = await snapIn(null, { clipboard: false });
     assert.equal(seen.download, "news-felix-gallardo-dies-at-80.png");
     assert.equal(seen.button, "snap");
 });
