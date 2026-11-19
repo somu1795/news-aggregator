@@ -659,7 +659,7 @@ def test_moon_page_has_the_content_security_policy(client):
     csp = response.headers["content-security-policy"]
     nonce = csp.split("script-src 'nonce-")[1].split("'")[0]
     assert re.search(rf'<link rel="stylesheet" href="/static/retro\.css\?v=\w+" nonce="{nonce}">', response.text)
-    for name in ("sky", "moonart", "moon"):
+    for name in ("sky", "moonart", "earth", "moon"):
         assert re.search(rf'<script src="/static/{name}\.js\?v=\w+" nonce="{nonce}" defer></script>', response.text)
     assert "<style" not in response.text and "<script>" not in response.text and "style=" not in response.text
     assert "unsafe-inline" not in csp and "frame-ancestors 'none'" in csp

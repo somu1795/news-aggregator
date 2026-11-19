@@ -1,12 +1,12 @@
 // Opens the moon page in jsdom: the HTML the server renders (the file MOON_HTML names, written by
-// tests/test_page_script.py) with the repo's sky.js, moonart.js and moon.js. Canvases record what's drawn on them,
+// tests/test_page_script.py) with the repo's sky.js, moonart.js, earth.js and moon.js. Canvases record what's drawn on them,
 // and animation frames and timers wait until a test runs them.
 const fs = require("fs");
 const path = require("path");
 const { JSDOM, VirtualConsole } = require("jsdom");
 
 const HTML = fs.readFileSync(process.env.MOON_HTML, "utf8");
-const SCRIPTS = ["sky.js", "moonart.js", "moon.js"];
+const SCRIPTS = ["sky.js", "moonart.js", "earth.js", "moon.js"];
 
 function pageWith(names) {
     // The scripts are deferred: they run in order once the page is parsed, so here they go at the end of the body
@@ -20,7 +20,7 @@ function pageWith(names) {
     }, HTML);
 }
 
-// options: now (UTC string), moon ({south, position}), reducedMotion, stored (localStorage), noSky (no sky.js
+// options: now (UTC string), moon ({south, position}), reducedMotion, stored (localStorage), noSky (only moon.js: no sky.js,
 // or moonart.js), setup(window) before the page runs
 async function open(options) {
     options = options || {};
