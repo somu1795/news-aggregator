@@ -40,6 +40,9 @@ test("times round to 10 minutes; the moon's age", () => {
     assert.equal(MoonPage.roundTo10(Date.parse("2026-11-24T14:55:00Z")), Date.parse("2026-11-24T15:00:00Z"));
     const age = MoonPage.age(Date.parse("2026-11-24T14:53:34Z"));  // Full: about half way
     assert.ok(age > 14 && age < 15.6, String(age));
+    // Ten days after JPL's new moon of 9 Dec 2026 00:51:51 UTC
+    const ten = MoonPage.age(Date.parse("2026-12-19T00:51:51Z"));
+    assert.ok(Math.abs(ten - 10) < 0.05, String(ten));
 });
 
 test("text lines", () => {
