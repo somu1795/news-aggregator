@@ -14,6 +14,11 @@
     --blood: #b5462e;
     --blood-crater: #8f3624;
     --eclipsed: #4a4236;
+    --earth-land: #8c8a4c;  /* The moon page's Earth */
+    --earth-ocean: #5d7088;
+    --earth-ice: #ece7da;
+    --earth-land-night: #55513a;
+    --earth-night: #3b3a40;
     color-scheme: light;
 }
 :root[data-theme="dark"] {
@@ -32,6 +37,11 @@
     --blood: #c4533a;
     --blood-crater: #8f3624;
     --eclipsed: #4a3a22;
+    --earth-land: #8f8a45;
+    --earth-ocean: #4f6a8f;
+    --earth-ice: #efe6cf;
+    --earth-land-night: #3a3722;
+    --earth-night: #22232c;
     color-scheme: dark;
 }
 
@@ -218,7 +228,11 @@ footer { margin-top: 1.5rem; color: var(--muted); font-size: .85em; }
 .moon-now p + p { color: var(--muted); }
 .moon-diagrams { display: flex; flex-wrap: wrap; gap: 1.5rem 3ch; margin: 1.25rem 0 .5rem; }
 .moon-diagrams figure { flex: 1 1 260px; min-width: 0; margin: 0; display: flex; flex-direction: column; align-items: center; gap: .6rem; }
-.moon-diagrams figcaption { color: var(--muted); font-size: .85em; text-align: center; }
+.moon-diagrams figcaption { color: var(--muted); font-size: .85em; text-align: center; max-width: 60ch; }
+.moon-diagrams .moon-orbit { flex-basis: 100%; }
+.moon-page #orbit { height: auto; cursor: grab; touch-action: pan-y; user-select: none; -webkit-user-select: none; }
+.moon-page #orbit:active { cursor: grabbing; }
+.moon-controls button[aria-pressed="true"] { color: var(--ink); font-weight: 700; }
 .moon-page #phase-names { list-style: none; margin: 0; padding: 0; color: var(--muted); font-size: .85em; }
 .moon-page #phase-names li { position: relative; margin: 0; padding: 0 0 0 2ch; line-height: 1.6; white-space: nowrap; }
 .moon-page #phase-names .current { color: var(--ink); font-weight: 700; }

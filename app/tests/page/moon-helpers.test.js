@@ -61,3 +61,9 @@ test("the canvas scale fits the column, and is at least 1", () => {
     assert.equal(MoonPage.scaleFor(300, 96), 3);
     assert.equal(MoonPage.scaleFor(50, 96), 1);
 });
+
+test("without a position, the place is guessed from the time zone and the hemisphere", () => {
+    assert.deepEqual(MoonPage.guessPlace(-330, false), [30, 82.5]);  // India: UTC+5:30
+    assert.deepEqual(MoonPage.guessPlace(0, true), [-30, 0]);
+    assert.deepEqual(MoonPage.guessPlace(-840, false), [30, 180]);  // UTC+14: no further east than 180
+});

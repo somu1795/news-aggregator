@@ -37,9 +37,10 @@
         <hr class="rule">
 
         <section class="moon-diagrams" aria-label="Orbit and phase">
-            <figure>
-                <canvas id="orbit" width="96" height="96"></canvas>
-                <figcaption>orbit around earth, seen from above the north pole</figcaption>
+            <figure class="moon-orbit">
+                <canvas id="orbit" width="480" height="300"></canvas>
+                <figcaption>the moon's orbit around earth, from the sun's side. earth and the moon show the faces seen from
+                    your area, so their lit sides follow that view, not the sunlight. drag to turn it; a flick spins it.</figcaption>
             </figure>
             <figure>
                 <canvas id="phase" width="24" height="24"></canvas>
@@ -53,6 +54,9 @@
             <button id="step-back">[<span class="key">&larr;</span>] a day back</button>
             <button id="step-forward">[<span class="key">&rarr;</span>] a day on</button>
             <button id="now-button">[<span class="key">n</span>]ow</button>
+            <button id="speed-1" aria-pressed="false">[<span class="key">1</span>] 1 h/s</button>
+            <button id="speed-2" aria-pressed="true">[<span class="key">2</span>] 8 h/s</button>
+            <button id="speed-3" aria-pressed="false">[<span class="key">3</span>] 1 d/s</button>
         </nav>
         <hr class="rule">
 

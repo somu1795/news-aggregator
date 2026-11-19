@@ -21,12 +21,12 @@ function pageWith(names) {
 }
 
 // options: now (UTC string), moon ({south, position}), reducedMotion, stored (localStorage), noSky (only moon.js: no sky.js,
-// or moonart.js), setup(window) before the page runs
+// moonart.js or earth.js), setup(window) before the page runs
 async function open(options) {
     options = options || {};
     let html = pageWith(options.noSky ? ["moon.js"] : SCRIPTS);
     if (options.moon) html = html.replace(/(<script id="moon-data" type="application\/json">)[^<]*/, (_, tag) => tag + JSON.stringify(options.moon));
-    const page = { errors: [], frameQueue: [], intervals: [], clock: 0, now: Date.parse(options.now || "2026-11-19T00:00:00Z") };
+    const page = { errors: [], frameQueue: [], intervals: [], timeouts: [], clock: 0, now: Date.parse(options.now || "2026-11-19T00:00:00Z") };
     const virtualConsole = new VirtualConsole();
     virtualConsole.on("jsdomError", (error) => page.errors.push(error));
     const dom = new JSDOM(html, { runScripts: "dangerously", pretendToBeVisual: true, url: "https://testserver/moon", virtualConsole: virtualConsole, beforeParse(window) {
@@ -36,10 +36,18 @@ async function open(options) {
         window.requestAnimationFrame = (callback) => { page.frameQueue.push(callback); return page.frameQueue.length; };
         window.cancelAnimationFrame = () => { page.frameQueue = []; };
         window.setInterval = (callback, ms) => { page.intervals.push({ callback: callback, ms: ms }); return page.intervals.length; };
+        // Timeouts wait until a test fires them (page.fireTimeouts)
+        let timeoutId = 0;
+        window.setTimeout = (callback, ms) => { page.timeouts.push({ id: ++timeoutId, callback: callback, ms: ms }); return timeoutId; };
+        window.clearTimeout = (id) => { page.timeouts = page.timeouts.filter((t) => t.id !== id); };
         window.HTMLCanvasElement.prototype.getContext = function () {
             const canvas = this;
             canvas.ops = canvas.ops || [];
-            return new Proxy({}, {
+            const target = {
+                createImageData: (w, h) => ({ width: w, height: h, data: new Uint8ClampedArray(w * h * 4) }),
+                putImageData: (image) => { canvas.ops.push(["putImageData", null, image]); canvas.image = Buffer.from(image.data).toString("base64"); }
+            };
+            return new Proxy(target, {
                 get: (target, name) => (name in target ? target[name] : (...args) => { canvas.ops.push([name, target.fillStyle, ...args]); }),
                 set: (target, name, value) => { target[name] = value; return true; }
             });
@@ -60,6 +68,18 @@ async function open(options) {
     page.text = (id) => page.$(id).textContent.replace(/\s+/g, " ").trim();
     page.setNow = (utc) => { page.now = Date.parse(utc); };
     page.tick = () => page.intervals.forEach((interval) => interval.callback());  // Every timer fires once
+    page.fireTimeouts = () => { const due = page.timeouts; page.timeouts = []; due.forEach((t) => t.callback()); };
+    page.image = (id) => page.$(id).image;  // What a canvas drawn with putImageData shows now
+    // A pointer drag on an element: from x, y by dx, dy in `steps` moves; `holdMs` still before letting go
+    page.drag = async (id, dx, dy, options) => {
+        const o = Object.assign({ x: 100, y: 100, steps: 5, holdMs: 0, pointerType: "mouse" }, options || {}), el = page.$(id);
+        const fire = (type, x, y) => el.dispatchEvent(new window.MouseEvent(type, { bubbles: true, clientX: x, clientY: y, button: 0 }));
+        fire("pointerdown", o.x, o.y);
+        for (let i = 1; i <= o.steps; i++) fire("pointermove", o.x + dx * i / o.steps, o.y + dy * i / o.steps);
+        if (o.holdMs) await page.settle(o.holdMs);
+        fire("pointerup", o.x + dx, o.y + dy);
+        await page.settle();
+    };
     page.close = () => window.close();
     await page.settle();
     page.frame(0);  // The first frame, which sets the animation's starting time

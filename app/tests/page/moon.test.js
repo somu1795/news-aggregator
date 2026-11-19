@@ -46,12 +46,21 @@ test("if the sky's scripts don't load, the page says so and nothing breaks", asy
 // --- The diagrams and their clock ---
 const LIT = "#d9a441";  // --moon in the light theme: the colour lit pixels are painted with
 
-test("the clock plays a day a second", async () => {
+test("the clock plays 8 hours a second; 1, 2 and 3 pick an hour, 8 hours or a day a second", async () => {
     const page = await open({ now: "2026-11-19T00:00:00Z" });
     assert.match(page.text("clock-label"), /now/);
     page.frame(1000);
-    assert.match(page.text("clock-label"), /\+1 d\b/);
-    assert.match(page.text("clock-label"), /20 nov 2026/);
+    assert.match(page.text("clock-label"), /\+8 h\b/);
+    assert.equal(page.$("speed-2").getAttribute("aria-pressed"), "true");
+    await page.key("3");
+    page.frame(0);
+    page.frame(1000);
+    assert.match(page.text("clock-label"), /\+1 d 8 h\b/);
+    assert.equal(page.$("speed-3").getAttribute("aria-pressed"), "true");
+    await page.click(page.$("speed-1"));
+    page.frame(0);
+    page.frame(1000);
+    assert.match(page.text("clock-label"), /\+1 d 9 h\b/);
 });
 
 test("space pauses: nothing moves, and no frames are asked for", async () => {
@@ -139,10 +148,10 @@ test("without the visitor's place, both moons are lit on the right while waxing,
     assert.ok(litSide(south, "phase") < 0 && litSide(south, "now-moon") < 0);
 });
 
-test("a long gap between frames (a laptop asleep with the page open) moves the clock a day at most", async () => {
+test("a long gap between frames (a laptop asleep with the page open) moves the clock a second's worth at most", async () => {
     const page = await open({ now: "2026-11-19T00:00:00Z" });
     page.frame(8 * 3600 * 1000);
-    assert.match(page.text("clock-label"), /\+1 d\b/);
+    assert.match(page.text("clock-label"), /\+8 h\b/);  // A second's worth
     assert.match(page.text("clock-label"), /2026/);
 });
 
@@ -152,7 +161,7 @@ test("the diagrams fit the column, and shrink with it when the window narrows", 
         Object.defineProperty(w.HTMLElement.prototype, "clientWidth", { configurable: true,
             get() { return this.matches(".moon-diagrams figure, .moon-now") ? width : 0; } });
     } });
-    assert.equal(parseFloat(page.$("orbit").style.width), 96 * 3);
+    assert.equal(parseFloat(page.$("orbit").style.width), 480 * 2);
     width = 250;
     page.window.dispatchEvent(new page.window.Event("resize"));
     await page.settle();
