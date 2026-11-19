@@ -185,6 +185,13 @@ services:
           cpus: '1.5'
           memory: 1536M
           pids: 512
+    # The image's check, but a failure stops the container so it restarts clean: browsers left by
+    # requests that never finished can use up the process limit, and Docker doesn't restart an
+    # unhealthy container. curl gives up before the check's own timeout, so the kill runs
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -m 25 \"http://127.0.0.1:$${PORT}/health\" || kill 1"]
+      interval: 15m
+      timeout: 30s
     restart: unless-stopped
 
   # The browser's only way out: an HTTP(S) proxy (Smokescreen) that connects to public
