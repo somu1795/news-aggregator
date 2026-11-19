@@ -70,7 +70,6 @@
         return { moon: equatorial(moonLon, moonLat), sun: equatorial(sunLon, 0), sunLon: ((sunLon / RAD) % 360 + 360) % 360 };
     }
 
-    // The place's sidereal angle (radians): how far the sky has turned there (mean sidereal time)
     // The moon's distance from Earth's centre, km: the main terms of Meeus 47 (those of 10 km or more, without the
     // tiny eccentricity factor), within about 100 km. Each is [D, M, M', F, amplitude in metres]
     var DISTANCE_TERMS = [[0, 0, 1, 0, -20905355], [2, 0, -1, 0, -3699111], [2, 0, 0, 0, -2955968], [0, 0, 2, 0, -569925],
@@ -88,6 +87,7 @@
         }, 385000.56);
     }
 
+    // The place's sidereal angle (radians): how far the sky has turned there (mean sidereal time)
     function sidereal(time, place) {
         return (280.46061837 + 360.98564736629 * daysSince2000(time) + place[1]) * RAD;
     }

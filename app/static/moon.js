@@ -73,6 +73,24 @@
 
     function compass(az) { return COMPASS[Math.round(az / 45) % 8]; }
 
+    // Today's rise and set between today's midnights (`start`, `end`: a day can be 23 or 25 hours long). sky.js looks
+    // 24 hours ahead, so look from both ends and keep what falls inside: riseSet(from) -> { rise, set }
+    function riseSetBetween(riseSet, start, end) {
+        var found = { rise: null, set: null }, a = riseSet(start), b = riseSet(end - DAY);
+        ["rise", "set"].forEach(function (event) {
+            [a[event], b[event]].forEach(function (time) {
+                if (time && time >= start && time < end && (found[event] === null || time < found[event])) found[event] = time;
+            });
+        });
+        return found;
+    }
+
+    // How high the moon is, in words: just risen reads better than "0 degrees up"
+    function heightLine(alt, az, up) {
+        if (!up) return "below the horizon now";
+        return (alt < 1 ? "just above the horizon" : "now " + Math.round(alt) + "° up") + ", in the " + compass(az);
+    }
+
     // The largest whole-number scale at which `pixels` fit in `containerPx`, never below 1
     function scaleFor(containerPx, pixels) { return Math.max(1, Math.floor(containerPx / pixels)); }
 
@@ -83,7 +101,8 @@
     }
 
     var MoonPage = { createClock: createClock, nextPhases: nextPhases, roundTo10: roundTo10, age: age, distanceLine: distanceLine,
-        riseSetLine: riseSetLine, compass: compass, scaleFor: scaleFor, guessPlace: guessPlace };
+        riseSetLine: riseSetLine, compass: compass, scaleFor: scaleFor, guessPlace: guessPlace, riseSetBetween: riseSetBetween,
+        heightLine: heightLine };
     if (typeof module !== "undefined" && module.exports) module.exports = MoonPage;
     else root.MoonPage = MoonPage;
 
@@ -118,6 +137,7 @@
     function pad(n) { return (n < 10 ? "0" : "") + n; }
     function clockTime(time) { var d = new Date(time); return pad(d.getHours()) + ":" + pad(d.getMinutes()); }
     function startOfDay(time) { var d = new Date(time); d.setHours(0, 0, 0, 0); return d.getTime(); }
+    function nextMidnight(time) { var d = new Date(startOfDay(time)); d.setDate(d.getDate() + 1); return d.getTime(); }
 
     // A canvas `size` pixels square, shown `scale` times larger, cleared: its drawing context (null if none)
     function surface(canvas, size, scale) {
@@ -128,15 +148,26 @@
         return context;
     }
 
-    // A disc's pixels (MoonArt.disc's rows) with its top left at x, y, in the given colours
+    // A disc's pixels (MoonArt.disc's rows) with its top left at x, y, in the given colours (looked up once)
     function dots(context, rows, x0, y0, colours) {
+        var resolved = {};
+        Object.keys(colours).forEach(function (kind) { resolved[kind] = colour(colours[kind]); });
         rows.forEach(function (row, y) {
             row.forEach(function (kind, x) {
                 if (kind === null) return;
-                context.fillStyle = colour(colours[kind] || colours.lit);
+                context.fillStyle = resolved[kind] || resolved.lit;
                 context.fillRect(x0 + x, y0 + y, 1, 1);
             });
         });
+    }
+
+    // MoonArt.disc, kept while what it shows hasn't changed enough to see: half a degree of phase, 3 degrees of turn
+    // (as the header's icon redraws)
+    var discCache = {};
+    function cachedDisc(slot, options) {
+        var key = [options.size, Math.round(options.e * 2), Math.round(options.limb / 3), Math.round((options.face || 0) / 3), options.south].join();
+        if (!discCache[slot] || discCache[slot].key !== key) discCache[slot] = { key: key, rows: MoonArt.disc(options) };
+        return discCache[slot].rows;
     }
 
     function paint(canvas, rows, scale) {
@@ -174,9 +205,10 @@
         line(text, distanceLine(Sky.moonDistance(now)));
         if (MOON.position) {
             var up = Sky.isUp("moon", now, MOON.position);
-            line(text, riseSetLine(Sky.riseSet("moon", startOfDay(now), MOON.position), up, clockTime));
+            var today = riseSetBetween(function (from) { return Sky.riseSet("moon", from, MOON.position); }, startOfDay(now), nextMidnight(now));
+            line(text, riseSetLine(today, up, clockTime));
             var seen = Sky.horizontal(Sky.sunAndMoon(now).moon, now, MOON.position);
-            line(text, up ? "now " + Math.round(seen.alt) + "° up, in the " + compass(seen.az) : "below the horizon now");
+            line(text, heightLine(seen.alt, seen.az, up));
         }
     }
 
@@ -190,14 +222,17 @@
 
     // The next 30 days from today, each moon as it is at local noon, the textbook way up
     function renderDays() {
-        var list = document.getElementById("days"), noon = startOfDay(Date.now()) + 12 * 3600000;
+        var list = document.getElementById("days"), today = new Date(Date.now());
         list.textContent = "";
         for (var i = 0; i < DAYS; i++) {
-            var d = new Date(noon);
-            d.setDate(d.getDate() + i);  // Calendar days: clock changes make some 23 or 25 hours long
+            var d = new Date(today.getTime());
+            d.setDate(today.getDate() + i);  // Calendar days, each at noon: clock changes make some 23 or 25 hours long
+            d.setHours(12, 0, 0, 0);
             var time = d.getTime(), e = Sky.elongation(time);
             var li = document.createElement("li"), canvas = document.createElement("canvas"), label = document.createElement("span");
             li.title = MoonArt.phaseName(e) + ", " + MoonArt.litPercent(e) + "% lit";
+            li.dataset.time = String(time);
+            canvas.setAttribute("aria-hidden", "true");  // Its date and phase are beside it and in the title
             label.className = "moon-day-date";
             label.textContent = dayLabel(time);
             paint(canvas, MoonArt.disc({ size: DAY_SIZE, e: e, limb: e < 180 !== MOON.south ? -90 : 90, south: MOON.south }), DAY_SCALE);
@@ -320,7 +355,7 @@
         }
         var earth = project([0, 0, 0]), e = Sky.elongation(time), moon = project(onOrbit(180 + e));
         var size = Math.max(8, Math.round(MOON_R * ORBIT_K * moon.f) * 2), way = orientation(time, e, PLACE);
-        var moonRows = MoonArt.disc({ size: size, e: e, limb: way.limb, face: way.face, south: way.south, craters: craters(size) });
+        var moonRows = cachedDisc("orbit", { size: size, e: e, limb: way.limb, face: way.face, south: way.south, craters: craters(size) });
         var tip = project(along([0, 0, 0], AXIS, 1)), north = Math.atan2(tip.x - earth.x, earth.y - tip.y);
         for (var y = 30; y < ORBIT_H - 20; y += 24) for (var x = 2; x < 12; x++) put(x, y, "--sun");  // Sunlight, from the left
         // Back to front: Earth hides what's behind it
@@ -337,8 +372,11 @@
     }
 
     // Diagram B: the disc as seen from Earth, the textbook way up (lit on the right while waxing, mirrored in the south)
-    function drawPhase(time, e, scale) {
-        paint(phaseEl, MoonArt.disc({ size: 24, e: e, limb: e < 180 !== MOON.south ? -90 : 90, south: MOON.south }), scale);
+    var phaseShown = null;
+    function drawPhase(time, e, scale, force) {
+        var rows = cachedDisc("phase", { size: 24, e: e, limb: e < 180 !== MOON.south ? -90 : 90, south: MOON.south });
+        if (force || !phaseShown || phaseShown.rows !== rows || phaseShown.scale !== scale) paint(phaseEl, rows, scale);  // Only when it changed
+        phaseShown = { rows: rows, scale: scale };
         var name = MoonArt.phaseName(e);
         [].forEach.call(namesEl.children, function (li) {
             var current = li.textContent === name;
@@ -380,6 +418,8 @@
     // back to the starting view on a double-click, v, or after 10 s left alone
     var SENSITIVITY = 0.011, FRICTION = 0.0032, GLIDE_MS = 140, STILL_MS = 90, IDLE_MS = 10000;  // rad per px; per ms; ms
     var hand = { dragging: false, touch: false, vAz: 0, vEl: 0, x: 0, y: 0, t: 0, gliding: false }, idleTimer = null;
+    var CLOCK_FRAME_MS = 1000 / 30 - 1;  // The clock alone moves things slowly: 30 drawings a second are plenty
+    var lastDraw = null, onScreen = true;
     function clampEl(el) { return Math.max(EL_MIN, Math.min(EL_MAX, el)); }
     function moving() { return hand.dragging || hand.gliding || hand.vAz !== 0 || hand.vEl !== 0; }
     function coast(dt) {
@@ -410,8 +450,9 @@
         pending = null;
         // At most a second's worth at once: after a stall (a laptop asleep with the page open) the clock goes on,
         // it doesn't jump years
+        if (!moving() && lastDraw !== null && timestamp - lastDraw < CLOCK_FRAME_MS) { schedule(); return; }
         var dt = lastFrame === null ? 0 : Math.min(timestamp - lastFrame, 1000);
-        lastFrame = timestamp;
+        lastFrame = lastDraw = timestamp;
         clock.advance(dt);
         coast(Math.min(dt, 100));
         drawDiagrams(timestamp);
@@ -419,13 +460,13 @@
     }
 
     function schedule() {
-        if (pending === null && (clock.playing || moving()) && !document.hidden) pending = window.requestAnimationFrame(frame);
+        if (pending === null && (clock.playing || moving()) && onScreen && !document.hidden) pending = window.requestAnimationFrame(frame);
     }
 
     function stop() {
         if (pending !== null) window.cancelAnimationFrame(pending);
         pending = null;
-        lastFrame = null;
+        lastFrame = lastDraw = null;
     }
 
     // After a control: show the change now, and run or stop the animation to match
@@ -499,6 +540,19 @@
         renderNow();
         drawDiagrams();
     });
+    // Scrolled out of view, the diagrams stop until they're back
+    if (window.IntersectionObserver) {
+        new IntersectionObserver(function (entries) {
+            onScreen = entries[entries.length - 1].isIntersecting;
+            if (onScreen) schedule(); else stop();
+        }).observe(document.querySelector(".moon-diagrams"));
+    }
+    // A theme chosen on the news page in another tab
+    window.addEventListener("storage", function (event) {
+        if (event.key === "retroTheme" && (event.newValue === "dark" || event.newValue === "light")) {
+            document.documentElement.setAttribute("data-theme", event.newValue);
+        }
+    });
     document.addEventListener("visibilitychange", function () {
         if (document.hidden) stop(); else schedule();
     });
@@ -509,6 +563,7 @@
         new MutationObserver(function () {
             renderNow();
             renderDays();
+            phaseShown = null;  // Same disc, new colours
             drawDiagrams();
         }).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
     }

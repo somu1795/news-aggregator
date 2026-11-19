@@ -26,7 +26,7 @@ async function open(options) {
     options = options || {};
     let html = pageWith(options.noSky ? ["moon.js"] : SCRIPTS);
     if (options.moon) html = html.replace(/(<script id="moon-data" type="application\/json">)[^<]*/, (_, tag) => tag + JSON.stringify(options.moon));
-    const page = { errors: [], frameQueue: [], intervals: [], timeouts: [], clock: 0, now: Date.parse(options.now || "2026-11-19T00:00:00Z") };
+    const page = { errors: [], frameQueue: [], intervals: [], timeouts: [], observers: [], clock: 0, now: Date.parse(options.now || "2026-11-19T00:00:00Z") };
     const virtualConsole = new VirtualConsole();
     virtualConsole.on("jsdomError", (error) => page.errors.push(error));
     const dom = new JSDOM(html, { runScripts: "dangerously", pretendToBeVisual: true, url: "https://testserver/moon", virtualConsole: virtualConsole, beforeParse(window) {
@@ -36,6 +36,8 @@ async function open(options) {
         window.requestAnimationFrame = (callback) => { page.frameQueue.push(callback); return page.frameQueue.length; };
         window.cancelAnimationFrame = () => { page.frameQueue = []; };
         window.setInterval = (callback, ms) => { page.intervals.push({ callback: callback, ms: ms }); return page.intervals.length; };
+        // Whether the diagrams are on screen: a test says, with page.onScreen(true or false)
+        window.IntersectionObserver = function (callback) { page.observers.push(callback); this.observe = () => {}; this.disconnect = () => {}; };
         // Timeouts wait until a test fires them (page.fireTimeouts)
         let timeoutId = 0;
         window.setTimeout = (callback, ms) => { page.timeouts.push({ id: ++timeoutId, callback: callback, ms: ms }); return timeoutId; };
@@ -68,6 +70,7 @@ async function open(options) {
     page.text = (id) => page.$(id).textContent.replace(/\s+/g, " ").trim();
     page.setNow = (utc) => { page.now = Date.parse(utc); };
     page.tick = () => page.intervals.forEach((interval) => interval.callback());  // Every timer fires once
+    page.onScreen = (visible) => page.observers.forEach((callback) => callback([{ isIntersecting: visible }]));
     page.fireTimeouts = () => { const due = page.timeouts; page.timeouts = []; due.forEach((t) => t.callback()); };
     page.image = (id) => page.$(id).image;  // What a canvas drawn with putImageData shows now
     // A pointer drag on an element: from x, y by dx, dy in `steps` moves; `holdMs` still before letting go

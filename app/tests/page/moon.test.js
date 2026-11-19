@@ -232,9 +232,12 @@ test("keys with ctrl, alt or cmd are the browser's", async () => {
     const page = await open({ now: "2026-11-19T00:00:00Z" });
     const document = page.window.document;
     document.dispatchEvent(new page.window.KeyboardEvent("keydown", { key: "ArrowRight", ctrlKey: true, bubbles: true }));
+    let followed = false;
+    page.$("back").addEventListener("click", (event) => { followed = true; event.preventDefault(); });
     document.dispatchEvent(new page.window.KeyboardEvent("keydown", { key: "b", metaKey: true, bubbles: true }));
     await page.settle();
     assert.match(page.text("clock-label"), /now/);
+    assert.equal(followed, false);
 });
 
 test("the phase disc is at most half as wide as the orbit diagram", async () => {
@@ -242,4 +245,61 @@ test("the phase disc is at most half as wide as the orbit diagram", async () => 
     const width = (id) => parseFloat(page.$(id).style.width);
     assert.ok(width("orbit") > 0);
     assert.ok(width("phase") <= width("orbit") / 2, `${width("phase")} vs ${width("orbit")}`);
+});
+
+// --- Light on the machine, and the small things ---
+const drawsOf = (page) => page.$("orbit").ops.filter((op) => op[0] === "putImageData").length;
+
+test("while only the clock plays, it draws 30 times a second, not 60", async () => {
+    const page = await open({ now: "2026-11-19T00:00:00Z" });
+    page.frame(16);
+    const before = drawsOf(page);
+    page.frame(16); page.frame(16); page.frame(16);
+    assert.equal(drawsOf(page) - before, 1);
+    assert.ok(page.frames() > 0);
+});
+
+test("colours are looked up once a drawing, not once a pixel", async () => {
+    let calls = 0;
+    const page = await open({ now: "2026-11-19T00:00:00Z", setup: (w) => {
+        const real = w.getComputedStyle.bind(w);
+        w.getComputedStyle = (el) => { calls++; return real(el); };
+    } });
+    calls = 0;
+    page.frame(50);
+    assert.ok(calls < 30, calls + " lookups for one frame");
+});
+
+test("scrolled out of view, the diagrams stop; back in view, they go on", async () => {
+    const page = await open({ now: "2026-11-19T00:00:00Z" });
+    assert.ok(page.observers.length > 0);
+    page.onScreen(false);
+    page.frame(50);
+    assert.equal(page.frames(), 0);
+    page.onScreen(true);
+    assert.ok(page.frames() > 0);
+});
+
+test("each day's moon is drawn at noon local time, across a clock change", async () => {
+    const zone = process.env.TZ;
+    process.env.TZ = "Europe/London";  // The clocks go forward on 28 March 2027
+    try {
+        const page = await open({ now: "2027-03-20T12:00:00Z" });
+        const hours = [...page.$("days").children].map((li) => new Date(Number(li.dataset.time)).getHours());
+        assert.equal(hours.length, 30);
+        assert.ok(hours.every((h) => h === 12), hours.join(","));
+    } finally { if (zone === undefined) delete process.env.TZ; else process.env.TZ = zone; }
+});
+
+test("a theme chosen in another tab reaches this one", async () => {
+    const page = await open();
+    page.window.dispatchEvent(new page.window.StorageEvent("storage", { key: "retroTheme", newValue: "dark" }));
+    await page.settle();
+    assert.equal(page.window.document.documentElement.getAttribute("data-theme"), "dark");
+});
+
+test("the moons beside their own text are hidden from screen readers", async () => {
+    const page = await open();
+    assert.equal(page.$("now-moon").getAttribute("aria-hidden"), "true");
+    assert.ok([...page.$("days").querySelectorAll("canvas")].every((c) => c.getAttribute("aria-hidden") === "true"));
 });

@@ -67,3 +67,18 @@ test("without a position, the place is guessed from the time zone and the hemisp
     assert.deepEqual(MoonPage.guessPlace(0, true), [-30, 0]);
     assert.deepEqual(MoonPage.guessPlace(-840, false), [30, 180]);  // UTC+14: no further east than 180
 });
+
+test("today's rise and set: only those between today's midnights, on 23- and 25-hour days too", () => {
+    const H = 3600000, start = 1000 * H;
+    const riseSet = (from) => (from === start ? { rise: start + 2 * H, set: start + 24.5 * H } : { rise: start + 2 * H, set: start + 24.5 * H });
+    assert.deepEqual(MoonPage.riseSetBetween(riseSet, start, start + 23 * H), { rise: start + 2 * H, set: null });  // Tomorrow's set is left out
+    assert.deepEqual(MoonPage.riseSetBetween(riseSet, start, start + 25 * H), { rise: start + 2 * H, set: start + 24.5 * H });  // The 25th hour is in
+    const late = (from) => (from === start ? { rise: null, set: null } : { rise: start + 24.5 * H, set: null });
+    assert.deepEqual(MoonPage.riseSetBetween(late, start, start + 25 * H), { rise: start + 24.5 * H, set: null });  // Found from the end
+});
+
+test("how high the moon is, in words", () => {
+    assert.equal(MoonPage.heightLine(19.4, 135, true), "now 19° up, in the south-east");
+    assert.equal(MoonPage.heightLine(0.4, 95, true), "just above the horizon, in the east");
+    assert.equal(MoonPage.heightLine(-5, 0, false), "below the horizon now");
+});

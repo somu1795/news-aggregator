@@ -41,19 +41,48 @@
         return [lat / DEG, ((lon / DEG + 540) % 360) - 180];
     }
 
+    // A face's cells with north up, worked out once per size and place: whether each is on the disc, its latitude's
+    // sine and cosine, its longitude (radians), and what's there (0 sea, 1 land, 2 ice)
+    var cellsCache = { key: null };
+    function cells(size, lat, lon) {
+        var key = size + "," + lat + "," + lon;
+        if (cellsCache.key === key) return cellsCache;
+        var n = size * size, inside = new Uint8Array(n), kind = new Uint8Array(n);
+        var sinLat = new Float64Array(n), cosLat = new Float64Array(n), lons = new Float64Array(n);
+        var options = { size: size, lat: lat, lon: lon, rot: 0 };
+        for (var y = 0; y < size; y++) {
+            for (var x = 0; x < size; x++) {
+                var at = cellLatLon(options, x, y), i = y * size + x;
+                if (!at) continue;
+                inside[i] = 1;
+                sinLat[i] = Math.sin(at[0] * DEG); cosLat[i] = Math.cos(at[0] * DEG); lons[i] = at[1] * DEG;
+                kind[i] = at[0] > ICE_N || at[0] < ICE_S ? 2 : isLand(at[0], at[1]) === 1 ? 1 : 0;
+            }
+        }
+        cellsCache = { key: key, inside: inside, kind: kind, sinLat: sinLat, cosLat: cosLat, lons: lons };
+        return cellsCache;
+    }
+
     // The face as rows of what each pixel shows: null outside the disc, "land", "ocean", "ice" by day, or
-    // "land-night", "ocean-night" (ice at night counts as land); the line between day and night dithered
+    // "land-night", "ocean-night" (ice at night counts as land); the line between day and night dithered.
+    // Turned by `rot`, each pixel shows the nearest cell of the face with north up
+    var DAY_KINDS = ["ocean", "land", "ice"], NIGHT_KINDS = ["ocean-night", "land-night", "land-night"];
     function face(options) {
-        var sub = subsolar(options.time), slat = sub[0] * DEG, slon = sub[1] * DEG, rows = [];
-        for (var y = 0; y < options.size; y++) {
-            var row = [];
-            for (var x = 0; x < options.size; x++) {
-                var at = cellLatLon(options, x, y);
-                if (!at) { row.push(null); continue; }
-                var lat = at[0] * DEG, lon = at[1] * DEG, ice = at[0] > ICE_N || at[0] < ICE_S, land = isLand(at[0], at[1]) === 1;
-                var sunUp = Math.sin(lat) * Math.sin(slat) + Math.cos(lat) * Math.cos(slat) * Math.cos(lon - slon);
+        var size = options.size, c = cells(size, options.lat, options.lon), r = size / 2;
+        var sub = subsolar(options.time), sinS = Math.sin(sub[0] * DEG), cosS = Math.cos(sub[0] * DEG), slon = sub[1] * DEG;
+        var cr = Math.cos(options.rot), sr = Math.sin(options.rot), rows = [];
+        for (var y = 0; y < size; y++) {
+            var row = [], dy = y + 0.5 - r;
+            for (var x = 0; x < size; x++) {
+                var dx = x + 0.5 - r;
+                if (dx * dx + dy * dy > r * r) { row.push(null); continue; }
+                // Where this pixel was before turning: east and north, as in cellLatLon
+                var sx = Math.floor(r + dx * cr + dy * sr), sy = Math.floor(r - (dx * sr - dy * cr));
+                var i = Math.min(size - 1, Math.max(0, sy)) * size + Math.min(size - 1, Math.max(0, sx));
+                if (!c.inside[i]) { row.push(null); continue; }
+                var sunUp = c.sinLat[i] * sinS + c.cosLat[i] * cosS * Math.cos(c.lons[i] - slon);
                 var day = Math.max(0, Math.min(1, sunUp * 4 + 0.5)) > (BAYER[(y & 3) * 4 + (x & 3)] + 0.5) / 16;
-                row.push(day ? (ice ? "ice" : land ? "land" : "ocean") : (ice || land ? "land-night" : "ocean-night"));
+                row.push((day ? DAY_KINDS : NIGHT_KINDS)[c.kind[i]]);
             }
             rows.push(row);
         }
