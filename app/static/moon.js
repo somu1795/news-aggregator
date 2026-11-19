@@ -89,6 +89,8 @@
     var EARTH = { lit: "--visited", shade: "--eclipsed", crater: "--visited" };  // Day and night
     var FALLBACK = { "--moon": "#d9a441", "--moon-shade": "#d3cbb6", "--moon-crater": "#b8862f", "--visited": "#7a6a8c",
         "--eclipsed": "#4a4236", "--sun": "#e8892b", "--muted": "#6f685a", "--accent": "#a8431a" };
+    var WEEKDAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+    var DAY_SIZE = 12, DAY_SCALE = 2, DAYS = 30;  // The strip's small moons: 12 pixels, each 2 screen pixels
     var MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
     var ORBIT_SIZE = 96, ORBIT_RADIUS = 36, EARTH_SIZE = 9, ORBIT_MOON_SIZE = 7;  // Diagram A, in its own pixels
     var DIAGRAM_SCALE_MAX = 3;
@@ -127,6 +129,8 @@
         var context = surface(canvas, rows.length, scale);
         if (context) dots(context, rows, 0, 0, COLOURS);
     }
+
+    function dayLabel(time) { var d = new Date(time); return WEEKDAYS[d.getDay()] + " " + d.getDate() + " " + MONTHS[d.getMonth()]; }
 
     // How the moon's lit edge points (degrees): as seen from the visitor's place, or the textbook way
     // (lit on the right while waxing, mirrored in the south) without it
@@ -169,6 +173,39 @@
         return;
     }
     renderNow();
+
+    // The next 30 days from today, each moon as it is at local noon, the textbook way up
+    function renderDays() {
+        var list = document.getElementById("days"), noon = startOfDay(Date.now()) + 12 * 3600000;
+        list.textContent = "";
+        for (var i = 0; i < DAYS; i++) {
+            var d = new Date(noon);
+            d.setDate(d.getDate() + i);  // Calendar days: clock changes make some 23 or 25 hours long
+            var time = d.getTime(), e = Sky.elongation(time);
+            var li = document.createElement("li"), canvas = document.createElement("canvas"), label = document.createElement("span");
+            li.title = MoonArt.phaseName(e) + ", " + MoonArt.litPercent(e) + "% lit";
+            label.className = "moon-day-date";
+            label.textContent = dayLabel(time);
+            paint(canvas, MoonArt.disc({ size: DAY_SIZE, e: e, limb: e < 180 !== MOON.south ? -90 : 90, south: MOON.south }), DAY_SCALE);
+            li.appendChild(canvas);
+            li.appendChild(label);
+            list.appendChild(li);
+        }
+    }
+
+    // The next new moon, quarters and full moon, to about 10 minutes (sky.js is good to an hour or so)
+    function renderPhases() {
+        var list = document.getElementById("phases");
+        list.textContent = "";
+        nextPhases(Date.now()).forEach(function (phase) {
+            var li = document.createElement("li"), at = roundTo10(phase.time);
+            li.textContent = phase.name + " · about " + dayLabel(at) + " " + clockTime(at);
+            list.appendChild(li);
+        });
+    }
+
+    renderDays();
+    renderPhases();
 
     // --- The diagrams, on one clock ---
     var reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -311,4 +348,12 @@
         if (document.hidden) stop(); else schedule();
     });
     changed();
+
+    // Left open, the page catches up: today's moon, the strip from today, the next phases, the mark for now
+    window.setInterval(function () {
+        renderNow();
+        renderDays();
+        renderPhases();
+        if (!clock.playing) drawDiagrams();
+    }, 60000);
 })(this);

@@ -138,3 +138,40 @@ test("the phase diagram is lit on the right while waxing, mirrored in the south"
     const south = await open({ now: "2026-11-19T00:00:00Z", moon: { south: true, position: [-33.9, 151.2] }, reducedMotion: true });
     assert.ok(litSide(south) < 0);
 });
+
+// --- The next 30 days ---
+const WEEKDAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+const dayLabel = (time) => { const d = new Date(time); return WEEKDAYS[d.getDay()] + " " + d.getDate() + " " + MONTHS[d.getMonth()]; };
+
+test("the next 30 days, a small moon each, from today", async () => {
+    const page = await open({ now: "2026-11-19T00:00:00Z" });
+    const days = page.$("days").children;
+    assert.equal(days.length, 30);
+    assert.equal(days[0].querySelector(".moon-day-date").textContent, dayLabel(Date.parse("2026-11-19T00:00:00Z")));
+    assert.equal(days[29].querySelector(".moon-day-date").textContent, dayLabel(Date.parse("2026-11-19T00:00:00Z") + 29 * 86400000));
+    assert.ok([...days].every((day) => day.querySelector("canvas") && day.querySelector("canvas").ops.length > 0));
+});
+
+test("the next four phases, in order, to about 10 minutes", async () => {
+    const page = await open({ now: "2026-11-19T00:00:00Z" });
+    const lines = [...page.$("phases").children].map((li) => li.textContent);
+    assert.equal(lines.length, 4);
+    assert.match(lines[0], /^full moon/);
+    assert.deepEqual(lines.map((l) => l.split(" · ")[0]), ["full moon", "last quarter", "new moon", "first quarter"]);
+    for (const l of lines) {
+        assert.match(l, /about/);
+        assert.equal(Number(l.match(/(\d\d):(\d\d)$/)[2]) % 10, 0, l);
+    }
+});
+
+test("left open, the page catches up every minute", async () => {
+    const page = await open({ now: "2026-11-19T00:00:00Z", moon: { south: false, position: LONDON } });
+    const firstDay = page.$("days").children[0].textContent, now = page.text("now-text"), phases = page.text("phases");
+    page.setNow("2026-11-25T00:00:00Z");
+    page.tick();
+    assert.notEqual(page.$("days").children[0].textContent, firstDay);
+    assert.notEqual(page.text("now-text"), now);
+    assert.notEqual(page.text("phases"), phases);
+    assert.ok(page.intervals.some((interval) => interval.ms === 60000));
+});

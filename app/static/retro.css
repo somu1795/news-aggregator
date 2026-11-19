@@ -226,3 +226,8 @@ footer { margin-top: 1.5rem; color: var(--muted); font-size: .85em; }
 .moon-clock { margin: .5rem 0 .25rem; text-align: center; color: var(--ink); }
 .moon-controls { display: flex; flex-wrap: wrap; justify-content: center; gap: .25rem 2ch; }
 @media (max-width: 600px) { .moon-diagrams figure { flex-basis: 100%; } }
+.moon-days { list-style: none; margin: 1.25rem 0 .75rem; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(7ch, 1fr)); gap: .75rem .5ch; }
+.moon-days li { display: flex; flex-direction: column; align-items: center; gap: .2rem; color: var(--muted); font-size: .75em; text-align: center; }
+.moon-days li:first-child { color: var(--ink); font-weight: 700; }
+.moon-phases { list-style: none; margin: 0; padding: 0; color: var(--muted); }
+.moon-phases li::before { content: "* "; color: var(--accent); }
