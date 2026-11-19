@@ -94,3 +94,11 @@ test("the brightest planet in a dark sky", () => {
     assert.equal(planet("2026-11-16T12:00:00Z", "London"), null);  // Daylight
     assert.equal(planet("2026-11-16T19:45:00Z", "Bengaluru"), "Jupiter");  // 1:15 am, Jupiter in the east
 });
+
+test("the moon's distance is within 150 km of JPL's", () => {
+    // DE421 via skyfield, centre to centre
+    for (const [utc, km] of [["2026-11-19T00:00:00Z", 389922.0], ["2026-12-24T00:00:00Z", 356779.2], ["2027-01-08T12:00:00Z", 406184.7]]) {
+        const found = Sky.moonDistance(Date.parse(utc));
+        assert.ok(Math.abs(found - km) < 150, `${utc}: ${found.toFixed(0)} vs ${km}`);
+    }
+});

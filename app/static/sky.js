@@ -71,6 +71,23 @@
     }
 
     // The place's sidereal angle (radians): how far the sky has turned there (mean sidereal time)
+    // The moon's distance from Earth's centre, km: the main terms of Meeus 47 (those of 10 km or more, without the
+    // tiny eccentricity factor), within about 100 km. Each is [D, M, M', F, amplitude in metres]
+    var DISTANCE_TERMS = [[0, 0, 1, 0, -20905355], [2, 0, -1, 0, -3699111], [2, 0, 0, 0, -2955968], [0, 0, 2, 0, -569925],
+        [0, 1, 0, 0, 48888], [2, 0, -2, 0, 246158], [2, -1, -1, 0, -152138], [2, 0, 1, 0, -170733], [2, -1, 0, 0, -204586],
+        [0, 1, -1, 0, -129620], [1, 0, 0, 0, 108743], [0, 1, 1, 0, 104755], [2, 0, 0, -2, 10321], [0, 0, 1, -2, 79661],
+        [4, 0, -1, 0, -34782], [0, 0, 3, 0, -23210], [4, 0, -2, 0, -21636], [2, 1, -1, 0, 24208], [2, 1, 0, 0, 30824],
+        [1, 1, 0, 0, -16675], [2, -1, 1, 0, -12831], [2, 0, 2, 0, -10445], [4, 0, 0, 0, -11650], [2, 0, -3, 0, 14403],
+        [2, -1, -2, 0, 10056]];
+    function moonDistance(time) {
+        var t = daysSince2000(time) / 36525;
+        var d = (297.8501921 + 445267.1114034 * t) * RAD, m = (357.5291092 + 35999.0502909 * t) * RAD;
+        var mm = (134.9633964 + 477198.8675055 * t) * RAD, f = (93.2720950 + 483202.0175233 * t) * RAD;
+        return DISTANCE_TERMS.reduce(function (km, term) {
+            return km + term[4] / 1000 * Math.cos(term[0] * d + term[1] * m + term[2] * mm + term[3] * f);
+        }, 385000.56);
+    }
+
     function sidereal(time, place) {
         return (280.46061837 + 360.98564736629 * daysSince2000(time) + place[1]) * RAD;
     }
@@ -271,7 +288,7 @@
         return null;
     }
 
-    var Sky = { elongation: elongation, sunAndMoon: sunAndMoon, moonView: moonView, altitude: altitude, isUp: isUp, riseSet: riseSet,
+    var Sky = { elongation: elongation, sunAndMoon: sunAndMoon, moonDistance: moonDistance, moonView: moonView, altitude: altitude, isUp: isUp, riseSet: riseSet,
         brightPlanet: brightPlanet, planetPosition: planetPosition, horizontal: horizontal, meteorShower: meteorShower, eclipse: eclipse, ECLIPSES: ECLIPSES };
     if (typeof module !== "undefined" && module.exports) module.exports = Sky;
     else root.Sky = Sky;
