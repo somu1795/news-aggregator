@@ -433,3 +433,17 @@ test("the icon is redrawn only when what it shows changes, not on every update",
     ticks.forEach((tick) => tick());
     assert.notEqual(page.$("moon").querySelector("svg"), last);
 });
+
+// The header icon must come out byte-identical after the pixel moon moves to moonart.js
+const SNAPSHOT = require("path").join(__dirname, "header-moon-snapshot.json");
+const SCENES = [["2026-11-19T00:00:00Z", [51.5, -0.1]], ["2026-11-24T14:00:00Z", [-33.9, 151.2]], ["2026-12-09T01:00:00Z", null],
+    ["2026-12-17T05:00:00Z", null, true], ["2027-08-02T10:07:00Z", [25.7, 32.6]], ["2028-01-12T04:13:00Z", [51.5, -0.1]]];
+test("the header moon is unchanged", async () => {
+    const seen = {};
+    for (const [utc, position, south] of SCENES) {
+        const page = await open(VIEWS, { moon: { south: Boolean(south), position: position }, setup: (w) => { w.Date.now = () => Date.parse(utc); } });
+        seen[utc] = page.$("moon").innerHTML;
+    }
+    if (process.env.WRITE_MOON_SNAPSHOT) require("fs").writeFileSync(SNAPSHOT, JSON.stringify(seen, null, 1));
+    assert.deepEqual(seen, JSON.parse(require("fs").readFileSync(SNAPSHOT, "utf8")));
+});
