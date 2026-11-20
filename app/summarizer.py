@@ -80,6 +80,11 @@ logger = structlog.get_logger(__name__)
 
 LINK = re.compile(r"https?://|www\.", re.IGNORECASE)
 UNREADABLE = re.compile(r"\s*UNREADABLE\W*$")  # The summary prompt's answer for a block, error or cookie page
+# An answer about the text it was given rather than news: what the LLM writes for a page with no story in it
+# (TSN's video pages read as a playlist of clip lengths) instead of answering UNREADABLE
+ABOUT_THE_TEXT = re.compile(
+    r"\s*(it (looks|seems|appears)( like)? you|you('ve| have) (provided|shared|pasted|given|sent)|"
+    r"the (text|content|input|list) you('ve| have)? (provided|shared|pasted|gave|sent))", re.IGNORECASE)
 # An article the LLM fails on this many passes in a row (while it answers its check) is set aside
 # and retried later: it is first in every pass, so nothing after it would be summarized
 LLM_FAILURES_MAX = 3
@@ -254,7 +259,7 @@ async def summarize_ready(client: httpx.AsyncClient, redis_client: aioredis.Redi
         _llm_failures.pop(item["link"], None)
         if LINK.search(summary):  # Articles can steer the model (prompt injection); a summary never needs a link
             await redis_client.set(key, json.dumps({"failed": "summary contains a link"}), ex=settings.SUMMARY_FAILED_TTL_SECONDS)
-        elif UNREADABLE.match(summary):  # What was read wasn't the article
+        elif UNREADABLE.match(summary) or ABOUT_THE_TEXT.match(summary):  # What was read wasn't the article
             await redis_client.set(key, json.dumps({"failed": "not the article"}), ex=settings.SUMMARY_FAILED_TTL_SECONDS)
         else:
             await redis_client.set(key, json.dumps({"text": summary, "model": settings.SUMMARIZER_MODEL, "via": read["via"]}),

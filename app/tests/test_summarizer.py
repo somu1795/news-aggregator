@@ -291,6 +291,40 @@ async def test_pages_the_llm_calls_unreadable_get_no_summary(mock_redis, answer)
 
 
 @respx.mock
+@pytest.mark.parametrize("answer", [
+    "It looks like you've provided a list of time durations, possibly representing game times or event durations.",
+    "It looks like you've shared a list of time values, possibly representing durations.",
+    "It seems you've pasted a list of links rather than an article.",
+    "You've provided a list of scores without any story.",
+    "The text you provided appears to be a video playlist.",
+])
+async def test_answers_about_the_text_given_rather_than_the_news_get_no_summary(mock_redis, answer):
+    # A page with no story in it (TSN's video pages: a playlist of clip lengths), which the LLM describes back
+    # instead of answering UNREADABLE
+    await put_view(mock_redis, "all", [1])
+    respx.get("https://pub.example/1").mock(return_value=httpx.Response(200, html=ARTICLE))
+    llm_up(answer)
+
+    async with httpx.AsyncClient() as client:
+        assert await summarize_new(client, mock_redis) == 0
+    assert json.loads(await mock_redis.get(summary_key("https://pub.example/1"))) == {"failed": "not the article"}
+
+
+@respx.mock
+@pytest.mark.parametrize("answer", [
+    "Fans said it looks like the team has turned a corner after a fifth straight win.",
+    "The coach said you have to give credit to the defence, which provided three turnovers.",
+])
+async def test_summaries_that_only_quote_such_words_are_kept(mock_redis, answer):
+    await put_view(mock_redis, "all", [1])
+    respx.get("https://pub.example/1").mock(return_value=httpx.Response(200, html=ARTICLE))
+    llm_up(answer)
+
+    async with httpx.AsyncClient() as client:
+        assert await summarize_new(client, mock_redis) == 1
+
+
+@respx.mock
 async def test_summaries_mentioning_unreadable_are_kept(mock_redis):
     await put_view(mock_redis, "all", [1])
     respx.get("https://pub.example/1").mock(return_value=httpx.Response(200, html=ARTICLE))
