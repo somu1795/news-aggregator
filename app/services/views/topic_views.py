@@ -17,6 +17,7 @@ from catalog import ALL_VIEW, OTHER_LABEL, Catalog, NewsSource, Topic, get_catal
 from config import settings
 from keys import topic_check_key, topic_checks_pending_key
 from services.feeds.poller import FeedPoller
+from services.feeds.unwanted import drop_unwanted
 from services.links import resolve_links
 from services.places import matcher_for
 from services.views.mixing import build_limit, mix_headlines, title_key
@@ -164,4 +165,4 @@ async def get_topic_views(
     left_out = list({h["link"]: h for items in results.values() for h in items if h["title"] in misfiled}.values())
     unique = list({id(h): h for items in views.values() for h in items}.values()) + left_out
     await resolve_links(client, redis_client, unique)
-    return views, left_out
+    return drop_unwanted(views), left_out  # Google News items' real links can be video pages

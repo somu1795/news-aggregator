@@ -104,7 +104,7 @@ So request volume costs almost nothing upstream or in Redis, and users keep gett
     - `redis_client.py`: Redis client factory.
     - `archive_search.py`: searching the refresher's headline archive (`archive.py`), read-only, for the page's older headlines (`/api/search`).
     - `archive_index.py`: the archive's search index (word → headlines, as roaring bitmaps): written by the refresher into a file next to the archive, mapped into memory by every app worker, where `archive_search.py` finds its matches.
-    - `feeds/`: `poller.py` (`FeedPoller`: fetching feeds politely, remembering each feed and host between cycles; the refresher keeps one for its life), `parse.py` (a feed into headlines).
+    - `feeds/`: `poller.py` (`FeedPoller`: fetching feeds politely, remembering each feed and host between cycles; the refresher keeps one for its life), `parse.py` (a feed into headlines), `unwanted.py` (headlines that aren't news to read, below).
     - `views/`: `mixing.py` (`mix_headlines()`: weights, de-duplication, caps), `main_views.py` ("all" and the regions), `topic_views.py` (tagging and the topic views).
     - `links/`: `resolve_links()` for a list of headlines, and `google_news.py` (the custom Google News resolver first, then the fallback).
   - **`templates/`**: `retro.html` (the page), `moon.html` (the moon page, not linked yet) and the error pages.
@@ -246,6 +246,7 @@ Fetching:
 
 1. **Keep each source's own order.** Google's ranking and Hacker News's front-page rank are preserved; nothing is re-sorted by date.
 2. **Drop stale items** published more than `MAX_HEADLINE_AGE_HOURS` (**48h**) ago. Items without a date count as new.
+   Headlines that aren't news to read never get this far (`services/feeds/unwanted.py`): video and podcast pages (a whole `video`, `videos`, `podcast` or `podcasts` part of the link's path: nothing to read, and TSN's video pages gave summaries describing a playlist of clip lengths), horoscopes, daily puzzle hints and answers (a puzzle's name, "hints" or "answers", and a day or number), and lottery results. Feeds leave them out when parsed, so they aren't tabbed, archived, summarized or sent to the stats map; a Google News item's real link is only known once resolved, so the views drop those then. On Nov 13–20, 2026 that was 602 of 43,049 headlines: 398 video and podcast pages (Al Jazeera's video pages 212), 128 horoscopes, 71 puzzle answers, 5 lottery results. Articles about videos, podcasts, puzzles or the lottery, and ones with a clip in them ("Watch: …"), stay.
 3. **Interleave by weight.** Sources take turns by *smooth weighted round-robin*: each turn, every source earns credit equal to its weight and the source with the most credit supplies the next headline. Every stretch of the list therefore has roughly the configured mix, rather than blocks per source.
 4. **Skip duplicates and over-represented publishers:**
    - an item is a duplicate if its link, or its title (case and punctuation ignored, Google's " - Publisher" suffix removed), was already taken; the first occurrence wins;

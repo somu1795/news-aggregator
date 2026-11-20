@@ -14,6 +14,7 @@ import lxml.etree
 import lxml.html
 
 from config import settings
+from services.feeds.unwanted import unwanted
 
 
 def feed_text(entry) -> str:
@@ -64,6 +65,8 @@ def parse(content: bytes, source_name: str) -> List[Dict]:
     for entry in feed.entries:
         if not entry.get("title") or not entry.get("link"):
             continue  # One broken item mustn't cost the whole feed
+        if unwanted(entry.title, entry.link):
+            continue  # Not news to read: a video page, a horoscope, puzzle answers... (unwanted.py)
         headlines.append({
             "title": entry.title,
             "link": entry.link,

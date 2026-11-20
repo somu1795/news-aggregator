@@ -13,6 +13,7 @@ import structlog
 
 from catalog import ALL_VIEW, Catalog, NewsSource, get_catalog
 from services.feeds.poller import FeedPoller
+from services.feeds.unwanted import drop_unwanted
 from services.links import resolve_links
 from services.views.mixing import build_limit, mix_headlines
 
@@ -88,4 +89,4 @@ async def get_fresh_views(
     # The same headline object can appear in a region and in "all"; resolve each once
     unique = list({id(h): h for items in views.values() for h in items}.values())
     await resolve_links(client, redis_client, unique)
-    return views, results_by_source
+    return drop_unwanted(views), results_by_source  # Google News items' real links can be video pages
