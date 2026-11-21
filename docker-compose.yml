@@ -146,7 +146,10 @@ services:
     image: ghcr.io/flaresolverr/flaresolverr:v3.5.2
     environment:
       - LOG_LEVEL=warning
-      - TZ=UTC
+      # What Chrome tells sites: its language (Accept-Language; the image's own C.UTF-8 is what no real browser
+      # sends) and time zone, which should be the connection's own (BROWSER_TIMEZONE in .env)
+      - LANG=en-US
+      - TZ=${BROWSER_TIMEZONE:-UTC}
     networks: [browser]
     shm_size: 256m  # Chromium's shared memory; Docker's default 64 MB crashes tabs
     deploy:
@@ -172,7 +175,7 @@ services:
       - NO_PROXY=localhost,127.0.0.1
       # Fixed, so it doesn't look up its public IP to pick them
       - BROWSER_LOCALE=en-US
-      - BROWSER_TIMEZONE=UTC
+      - BROWSER_TIMEZONE=${BROWSER_TIMEZONE:-UTC}
     networks: [browser]
     volumes:
       - browser2_cache:/cache  # The GeoIP database, kept across restarts
