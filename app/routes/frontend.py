@@ -90,7 +90,7 @@ async def root(request: Request):
 @router.api_route("/moon", methods=["GET", "HEAD"], include_in_schema=False)
 @limiter.limit(settings.API_RATE_LIMIT)
 async def moon_page(request: Request):
-    """The moon page: the moon now, and its orbit and phase as moving diagrams. Not linked from anywhere yet."""
+    """The moon page: the moon now, and its orbit and phase as moving diagrams. The header moon links to it."""
     nonce = secrets.token_urlsafe(16)
     response = templates.TemplateResponse(
         request, "moon.html", {"site": get_site(), "csp_nonce": nonce, "assets": _ASSETS,

@@ -674,9 +674,9 @@ def test_moon_page_passes_the_visitors_position(client):
     assert _moon_data(response.text) == {"south": True, "position": [-33.9, 151.2]}
 
 
-def test_news_page_does_not_link_to_the_moon_page(client):
-    """Not live yet: nothing leads to it."""
-    assert not re.search(r'href="/moon[/"?#]', client.get("/", headers={"Accept": "text/html"}).text)
+def test_the_header_moon_leads_to_the_moon_page(client):
+    html = client.get("/", headers={"Accept": "text/html"}).text
+    assert re.search(r'<a [^>]*id="moon"[^>]*href="/moon"|<a [^>]*href="/moon"[^>]*id="moon"', html)
 
 
 def test_moon_page_lists_the_phase_names_itself(client):
