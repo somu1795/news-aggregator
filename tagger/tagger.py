@@ -51,7 +51,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 from classifier import OTHER, TOPICS, Classifier, evaluate, label_scores, train
-from embedder import Embedder
+from embedder import SUMMARY_TOKENS, Embedder
 from stories import StoryGrouping
 from store import clean_title, connect, from_blobs, to_blob
 
@@ -83,9 +83,11 @@ class Tagger(StoryGrouping):
     with its own read-only connection and swaps the classifier when done.
     """
 
-    def __init__(self, embedder: Embedder, data_dir: Path, story_embedder: Optional[Embedder] = None) -> None:
+    def __init__(self, embedder: Embedder, data_dir: Path, story_embedder: Optional[Embedder] = None,
+                 summary_embedder: Optional[Embedder] = None) -> None:
         self.embedder = embedder
         self.story_embedder = story_embedder
+        self.summary_embedder = summary_embedder  # The story model, for longer texts (articles' summaries)
         self.db_path = data_dir / "tagger.db"
         self.model_path = data_dir / "classifier.pkl"
         self.db = connect(self.db_path)
@@ -269,6 +271,16 @@ class VerdictRequest(BaseModel):
     verdicts: List[Verdict]
 
 
+class SummaryItem(BaseModel):
+    title: str
+    source: Optional[str] = None
+    summary: str
+
+
+class SummaryRequest(BaseModel):
+    items: List[SummaryItem]
+
+
 _worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="tagger")
 
 
@@ -308,7 +320,8 @@ async def lifespan(app: FastAPI):
 
     def setup():
         story = Embedder(STORY_MODEL_DIR, DEVICE, DATA_DIR / "ov_cache", pooling="mean", prefix="query: ")
-        tagger = Tagger(Embedder(MODEL_DIR, DEVICE, DATA_DIR / "ov_cache"), DATA_DIR, story)
+        summary = Embedder(STORY_MODEL_DIR, DEVICE, DATA_DIR / "ov_cache", pooling="mean", prefix="query: ", max_tokens=SUMMARY_TOKENS)
+        tagger = Tagger(Embedder(MODEL_DIR, DEVICE, DATA_DIR / "ov_cache"), DATA_DIR, story, summary)
         tagger.start()
         # The first NPU compile and the training leave ~0.7 GB of freed heap; give it back
         ctypes.CDLL("libc.so.6").malloc_trim(0)
@@ -355,6 +368,14 @@ async def story_candidates(limit: int = 20):
 @app.post("/story-verdicts")
 async def story_verdicts(request: VerdictRequest):
     return {"stored": await on_worker(app.state.tagger.store_verdicts, request.verdicts)}
+
+
+@app.post("/summaries")
+async def summaries(request: SummaryRequest):
+    result = await on_worker(app.state.tagger.add_summaries, request.items)
+    if result["embedded"]:
+        logger.info("Summaries embedded: %d, pairs for the judge: %d", result["embedded"], result["candidates"])
+    return result
 
 
 @app.get("/health")

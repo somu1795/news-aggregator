@@ -18,7 +18,8 @@ import pytest
 import classifier as classifier_module
 import stories as stories_module
 import tagger as tagger_module
-from tagger import Item, Tagger, clean_title
+from tagger import Item, SummaryItem, Tagger, clean_title
+import store as store_module
 
 SEED = (
     [{"title": f"team wins cup final match {i}", "label": "sport"} for i in range(10)]
@@ -57,7 +58,7 @@ def tagger(tmp_path, monkeypatch):
     (bundled / "eval.json").write_text(json.dumps(EVAL))
     monkeypatch.setattr(tagger_module, "BUNDLED", bundled)
     monkeypatch.setattr(classifier_module, "TOPIC_THRESHOLD", 0.5)  # The toy embedding's classifier is never very confident
-    t = Tagger(FakeEmbedder(), tmp_path, story_embedder=FakeEmbedder())
+    t = Tagger(FakeEmbedder(), tmp_path, story_embedder=FakeEmbedder(), summary_embedder=FakeEmbedder())
     t.start()
     return t
 
@@ -439,6 +440,61 @@ def test_the_routes_take_and_answer_what_the_shared_sample_says(tagger, monkeypa
         "story-candidates": asyncio.run(tagger_module.story_candidates()),
         "story-verdicts": asyncio.run(tagger_module.story_verdicts(request("story-verdicts", tagger_module.VerdictRequest))),
         "story-moves": asyncio.run(tagger_module.story_moves()),
+        "summaries": asyncio.run(tagger_module.summaries(request("summaries", tagger_module.SummaryRequest))),
     }
     for route, answer in answers.items():
         assert fields(answer) == fields(API[route]["response"]), route
+
+
+# Summaries: headlines worded too differently to be paired for the judge can still be, by their summaries
+FED, POWELL, MINISTER = "fed holds rates steady", "powell says no cut yet", "minister resigns over budget vote"
+SUMMARY = "the federal reserve kept interest rates unchanged and chair powell said there would be no cut yet"
+
+
+def test_summaries_pair_headlines_worded_apart_for_the_judge(tagger, monkeypatch):
+    monkeypatch.setattr(stories_module, "SUMMARY_CANDIDATE_THRESHOLD", 0.8)
+    tagger.group([Item(title=FED), Item(title=POWELL), Item(title=MINISTER)])
+    assert tagger.story_candidates(10) == []  # The headlines are too unlike
+    result = tagger.add_summaries([SummaryItem(title=FED, summary=SUMMARY + " on wednesday"),
+                                   SummaryItem(title=POWELL, summary=SUMMARY + " on thursday"),
+                                   SummaryItem(title=MINISTER, summary="the minister resigned after losing a vote on the budget")])
+    assert result == {"embedded": 3, "candidates": 1}
+    [pair] = tagger.story_candidates(10)
+    assert {pair["a"], pair["b"]} == {FED, POWELL} and pair["kind"] == "summary"
+    assert tagger.add_summaries([SummaryItem(title=FED, summary="something else")])["embedded"] == 0  # Each once
+
+
+def test_summaries_of_unknown_or_ungrouped_headlines_pair_nothing(tagger, monkeypatch):
+    monkeypatch.setattr(stories_module, "SUMMARY_CANDIDATE_THRESHOLD", 0.8)
+    result = tagger.add_summaries([SummaryItem(title="never seen", summary=SUMMARY), SummaryItem(title=FED, summary=SUMMARY)])
+    assert result == {"embedded": 0, "candidates": 0}
+
+
+def test_summary_pairs_come_first_carry_links_and_wait_past_the_hour(tagger, monkeypatch):
+    monkeypatch.setattr(stories_module, "STORY_THRESHOLD", 0.9)
+    monkeypatch.setattr(stories_module, "STORY_LEADER_THRESHOLD", 0.9)
+    monkeypatch.setattr(stories_module, "STORY_CANDIDATE_THRESHOLD", 0.6)
+    monkeypatch.setattr(stories_module, "SUMMARY_CANDIDATE_THRESHOLD", 0.8)
+    dogs, dogs2 = "big dogs age faster study finds", "big dogs age faster scientists say"  # A title pair (~0.7)
+    tagger.group([Item(title=dogs), Item(title=dogs2), Item(title=FED, link="https://pub.example/fed"),
+                  Item(title=POWELL, link="https://pub.example/powell")])
+    tagger.add_summaries([SummaryItem(title=FED, summary=SUMMARY + " today"), SummaryItem(title=POWELL, summary=SUMMARY + " again")])
+    first, second = tagger.story_candidates(10)
+    assert first["kind"] == "summary" and second["kind"] == "title"
+    links = {first["a"]: first["link_a"], first["b"]: first["link_b"]}
+    assert links == {FED: "https://pub.example/fed", POWELL: "https://pub.example/powell"}
+    tagger.db.execute("UPDATE story_candidates SET seen = seen - 7200")  # Two hours on, no grouping since
+    assert [p["kind"] for p in tagger.story_candidates(10)] == ["summary"]  # Made once: they wait to be judged
+
+
+def test_a_database_from_before_summaries_gets_their_columns(tmp_path):
+    db = store_module.sqlite3.connect(tmp_path / "old.db")
+    db.executescript("""CREATE TABLE headlines (title TEXT PRIMARY KEY, source TEXT, link TEXT, label TEXT, tags TEXT, model TEXT,
+                        embedding BLOB NOT NULL, first_seen REAL NOT NULL, story_embedding BLOB, story INTEGER);
+                        CREATE TABLE story_candidates (a TEXT NOT NULL, b TEXT NOT NULL, similarity REAL NOT NULL, rank INTEGER NOT NULL,
+                        seen REAL NOT NULL, PRIMARY KEY (a, b));
+                        INSERT INTO story_candidates VALUES ('x', 'y', 0.9, 0, 0);""")
+    db.close()
+    db = store_module.connect(tmp_path / "old.db")
+    assert "summary_embedding" in {row[1] for row in db.execute("PRAGMA table_info(headlines)")}
+    assert db.execute("SELECT kind FROM story_candidates").fetchone() == ("title",)

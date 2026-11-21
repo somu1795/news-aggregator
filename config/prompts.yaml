@@ -6,6 +6,8 @@
 #               article (a block, error or cookie page): it gets no summary
 #   same_story  system prompt for two headlines that story grouping was unsure of; the answer
 #               counts as "same story" when it starts with "yes"
+#   same_story_articles  the same, when both headlines' articles have a summary: the headlines and
+#               summaries follow ("Article 1: ...\nSummary: ..."); the answer is read the same way
 #   subject     system prompt for what a topic tab's headline is about, as a short name; a tab
 #               shows at most SUBJECT_CAP headlines with the same one
 #   topic_checks  by topic (one with min_feed_score in topics.yaml): a yes/no question about a headline
@@ -22,6 +24,12 @@ same_story: >-
   Do these two news headlines cover the same news: the same event, announcement, study, match,
   release or incident, even if worded differently or from a different angle (a result and its
   reaction, a study and an explainer of it)? Answer with one word: yes or no.
+same_story_articles: >-
+  Do these two news articles cover the same news: the same event, announcement, study, match,
+  release or incident, even if worded differently or from a different angle (a result and its
+  reaction, a study and an explainer of it)? Two articles about the same person, team or topic but
+  different events are not the same news. Ignore a summary that doesn't describe a news article.
+  Answer with one word: yes or no.
 subject: >-
   What specific thing is this news about? Answer with only its name, in 1 to 3 words: the event,
   product, person or organisation at the centre of it (for example: "World Cup 2026", "Windows 12",

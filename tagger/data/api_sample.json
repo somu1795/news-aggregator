@@ -14,7 +14,8 @@
     "response": {"stories": [1]}
   },
   "story-candidates": {
-    "response": {"pairs": [{"a": "big dogs age faster scientists say", "b": "big dogs age faster study finds", "similarity": 0.7}]}
+    "response": {"pairs": [{"a": "big dogs age faster scientists say", "b": "big dogs age faster study finds", "similarity": 0.7,
+                           "kind": "title", "link_a": null, "link_b": null}]}
   },
   "story-verdicts": {
     "request": {"verdicts": [
@@ -23,5 +24,10 @@
   },
   "story-moves": {
     "response": {"moves": [{"id": 1, "old": 2, "new": 1, "title": null}]}
+  },
+  "summaries": {
+    "request": {"items": [{"title": "big dogs age faster study finds", "source": "Pub",
+                           "summary": "Large dogs age faster than small ones, a study of 15,000 dogs found."}]},
+    "response": {"embedded": 0, "candidates": 0}
   }
 }

@@ -20,7 +20,7 @@ from catalog import Catalog
 from config import settings
 from keys import article_text_key, browser_host_key, feed_text_key, full_page_host_key, snapshot_key, subject_key, summary_key, topic_check_key, topic_checks_pending_key
 from refresher import publish
-from site_config import Prompts, Site
+from site_config import Prompts, Site, get_site
 from summarizer import LLMUnavailable, read_ahead, summarize_ready, top_items
 
 CATALOG = Catalog(
@@ -51,6 +51,17 @@ def fake_dns(monkeypatch):
         except ValueError:
             return ["192.168.1.1"] if host.endswith("internal.example") else ["93.184.216.34"]
     monkeypatch.setattr(safe_fetch, "_resolve", resolve)
+
+
+SEND_SUMMARIES = summarizer.send_summaries
+
+
+@pytest.fixture(autouse=True)
+def summaries_stay_here(monkeypatch):
+    """New summaries aren't sent to the tagger, but in the tests about that (which put send_summaries back)."""
+    async def keep(client, summarized):
+        return None
+    monkeypatch.setattr(summarizer, "send_summaries", keep)
 
 
 @pytest.fixture(autouse=True)
@@ -509,7 +520,7 @@ TAGGER = "http://tagger.test"
 
 
 @respx.mock
-async def test_unsure_story_pairs_are_judged_and_sent_back(monkeypatch):
+async def test_unsure_story_pairs_are_judged_and_sent_back(monkeypatch, mock_redis):
     monkeypatch.setattr(settings, "TAGGER_URL", TAGGER)
     pairs = [{"a": "Big dogs age faster", "b": "Why small dogs live longer", "similarity": 0.9},
              {"a": "City v PSG preview", "b": "City v Ipswich preview", "similarity": 0.91}]
@@ -518,21 +529,21 @@ async def test_unsure_story_pairs_are_judged_and_sent_back(monkeypatch):
     respx.post(f"{LLM}/api/chat").mock(side_effect=[llm_reply("Yes"), llm_reply("no")])
     stored = respx.post(f"{TAGGER}/story-verdicts").mock(return_value=httpx.Response(200, json={"stored": 2}))
     async with httpx.AsyncClient() as client:
-        assert await summarizer.judge_stories(client) == 2
+        assert await summarizer.judge_stories(client, mock_redis) == 2
     verdicts = json.loads(stored.calls.last.request.content)["verdicts"]
     assert [(v["a"], v["same"]) for v in verdicts] == [("Big dogs age faster", True), ("City v PSG preview", False)]
 
 
 @respx.mock
-async def test_story_judging_stops_quietly_without_the_tagger(monkeypatch):
+async def test_story_judging_stops_quietly_without_the_tagger(monkeypatch, mock_redis):
     monkeypatch.setattr(settings, "TAGGER_URL", TAGGER)
     respx.get(f"{TAGGER}/story-candidates").mock(side_effect=httpx.ConnectError("unreachable"))
     async with httpx.AsyncClient() as client:
-        assert await summarizer.judge_stories(client) == 0
+        assert await summarizer.judge_stories(client, mock_redis) == 0
 
 
 @respx.mock
-async def test_story_judging_reports_the_llm_down(monkeypatch):
+async def test_story_judging_reports_the_llm_down(monkeypatch, mock_redis):
     monkeypatch.setattr(settings, "TAGGER_URL", TAGGER)
     respx.get(f"{TAGGER}/story-candidates").mock(
         return_value=httpx.Response(200, json={"pairs": [{"a": "x", "b": "y", "similarity": 0.9}]}))
@@ -540,7 +551,7 @@ async def test_story_judging_reports_the_llm_down(monkeypatch):
     verdicts = respx.post(f"{TAGGER}/story-verdicts")
     async with httpx.AsyncClient() as client:
         with pytest.raises(LLMUnavailable):
-            await summarizer.judge_stories(client)
+            await summarizer.judge_stories(client, mock_redis)
     assert not verdicts.called
 
 
@@ -559,7 +570,7 @@ async def run_summary_loop(monkeypatch, summarized, judged, named=(), checked=()
         except StopIteration:
             raise Stop
 
-    async def judge_stories(client):
+    async def judge_stories(client, redis_client):
         return next(judgings)
 
     async def name_subjects(client, redis):
@@ -645,7 +656,7 @@ async def test_subjects_are_named_after_summaries_and_before_story_pairs(monkeyp
 @respx.mock
 async def test_flagged_feed_items_are_put_to_the_llm_once(mock_redis, monkeypatch):
     monkeypatch.setattr(site_config, "_site", Site(name="n", description="d", prompts=Prompts(
-        summary="s", same_story="t", subject="u", topic_checks={"tech": "Is this about technology? yes or no."})))
+        summary="s", same_story="t", same_story_articles="t (articles)", subject="u", topic_checks={"tech": "Is this about technology? yes or no."})))
     await mock_redis.set(topic_checks_pending_key(), json.dumps([
         {"topic": "tech", "title": "OECD exposes AI-powered cybercrime - Pub", "source": "Pub"},
         {"topic": "tech", "title": "Test cricket dying?", "source": "Pub"},
@@ -669,3 +680,86 @@ async def test_flagged_items_are_judged_before_subjects_are_named(monkeypatch):
     calls = []
     await run_summary_loop(monkeypatch, summarized=[0, 0], judged=[0], checked=[3, 0], calls=calls)
     assert calls == ["check", "check", "name"]
+
+
+# The judge reads both articles' summaries when it has them: it then finds the same news worded differently
+FED = {"a": "Fed holds rates steady", "b": "Powell says no cut yet", "similarity": 0.93, "kind": "summary",
+       "link_a": "https://pub.example/fed", "link_b": "https://pub.example/powell"}
+
+
+def judged_messages(chat):
+    return [json.loads(call.request.content)["messages"] for call in chat.calls]
+
+
+@respx.mock
+async def test_the_judge_reads_both_articles_summaries_when_it_has_them(monkeypatch, mock_redis):
+    monkeypatch.setattr(settings, "TAGGER_URL", TAGGER)
+    for link, text in [(FED["link_a"], "The Federal Reserve kept rates unchanged."), (FED["link_b"], "Jerome Powell said no cut is coming yet.")]:
+        await mock_redis.set(summary_key(link), json.dumps({"text": text, "model": "m", "via": "direct"}))
+    respx.get(f"{TAGGER}/story-candidates").mock(side_effect=[httpx.Response(200, json={"pairs": [FED]}),
+                                                              httpx.Response(200, json={"pairs": []})])
+    chat = respx.post(f"{LLM}/api/chat").mock(return_value=llm_reply("yes"))
+    stored = respx.post(f"{TAGGER}/story-verdicts").mock(return_value=httpx.Response(200, json={"stored": 1}))
+    async with httpx.AsyncClient() as client:
+        assert await summarizer.judge_stories(client, mock_redis) == 1
+    [[system, user]] = judged_messages(chat)
+    assert system["content"] == get_site().prompts.same_story_articles
+    assert user["content"] == ("Article 1: Fed holds rates steady\nSummary: The Federal Reserve kept rates unchanged.\n\n"
+                               "Article 2: Powell says no cut yet\nSummary: Jerome Powell said no cut is coming yet.")
+    assert json.loads(stored.calls.last.request.content)["verdicts"][0]["same"] is True
+
+
+@respx.mock
+async def test_without_both_summaries_the_judge_reads_the_headlines(monkeypatch, mock_redis):
+    monkeypatch.setattr(settings, "TAGGER_URL", TAGGER)
+    await mock_redis.set(summary_key(FED["link_a"]), json.dumps({"text": "The Federal Reserve kept rates unchanged."}))
+    await mock_redis.set(summary_key(FED["link_b"]), json.dumps({"failed": "not the article"}))
+    respx.get(f"{TAGGER}/story-candidates").mock(side_effect=[httpx.Response(200, json={"pairs": [FED]}),
+                                                              httpx.Response(200, json={"pairs": []})])
+    chat = respx.post(f"{LLM}/api/chat").mock(return_value=llm_reply("no"))
+    respx.post(f"{TAGGER}/story-verdicts").mock(return_value=httpx.Response(200, json={"stored": 1}))
+    async with httpx.AsyncClient() as client:
+        await summarizer.judge_stories(client, mock_redis)
+    [[system, user]] = judged_messages(chat)
+    assert system["content"] == get_site().prompts.same_story
+    assert user["content"] == "Headline 1: Fed holds rates steady\nHeadline 2: Powell says no cut yet"
+
+
+@respx.mock
+async def test_new_summaries_are_sent_to_the_tagger(monkeypatch, mock_redis):
+    monkeypatch.setattr(settings, "TAGGER_URL", TAGGER)
+    monkeypatch.setattr(summarizer, "send_summaries", SEND_SUMMARIES)
+    await put_view(mock_redis, "all", [1])
+    respx.get("https://pub.example/1").mock(return_value=httpx.Response(200, html=ARTICLE))
+    llm_up("The council approved a new bridge.")
+    tagger = respx.post(f"{TAGGER}/summaries").mock(return_value=httpx.Response(200, json={"embedded": 1, "candidates": 0}))
+    async with httpx.AsyncClient() as client:
+        assert await summarize_new(client, mock_redis) == 1
+    assert json.loads(tagger.calls.last.request.content) == {
+        "items": [{"title": "Story 1", "source": "Pub", "summary": "The council approved a new bridge."}]}
+
+
+@respx.mock
+async def test_a_summary_is_kept_when_the_tagger_is_down(monkeypatch, mock_redis):
+    monkeypatch.setattr(settings, "TAGGER_URL", TAGGER)
+    monkeypatch.setattr(summarizer, "send_summaries", SEND_SUMMARIES)
+    await put_view(mock_redis, "all", [1])
+    respx.get("https://pub.example/1").mock(return_value=httpx.Response(200, html=ARTICLE))
+    llm_up("The council approved a new bridge.")
+    respx.post(f"{TAGGER}/summaries").mock(side_effect=httpx.ConnectError("unreachable"))
+    async with httpx.AsyncClient() as client:
+        assert await summarize_new(client, mock_redis) == 1
+    assert json.loads(await mock_redis.get(summary_key("https://pub.example/1")))["text"] == "The council approved a new bridge."
+
+
+@respx.mock
+async def test_at_start_the_tabs_summaries_are_sent_once(monkeypatch, mock_redis):
+    monkeypatch.setattr(settings, "TAGGER_URL", TAGGER)
+    monkeypatch.setattr(summarizer, "send_summaries", SEND_SUMMARIES)
+    await put_view(mock_redis, "all", [1, 2])
+    await mock_redis.set(summary_key("https://pub.example/1"), json.dumps({"text": "One happened."}))
+    await mock_redis.set(summary_key("https://pub.example/2"), json.dumps({"failed": "not the article"}))
+    tagger = respx.post(f"{TAGGER}/summaries").mock(return_value=httpx.Response(200, json={"embedded": 1, "candidates": 0}))
+    async with httpx.AsyncClient() as client:
+        await summarizer.send_tab_summaries(client, mock_redis)
+    assert json.loads(tagger.calls.last.request.content) == {"items": [{"title": "Story 1", "source": "Pub", "summary": "One happened."}]}

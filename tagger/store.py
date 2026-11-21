@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS headlines (
     embedding  BLOB NOT NULL,     -- float16[384]
     first_seen REAL NOT NULL,
     story_embedding BLOB,         -- float16[384], from the story model; made when first grouped
-    story      INTEGER            -- Its story: the rowid of the story's first headline; given when first grouped
+    story      INTEGER,           -- Its story: the rowid of the story's first headline; given when first grouped
+    summary_embedding BLOB        -- float16[384], the story model's embedding of its article's summary, once it has one
 );
 -- Pairs of (cleaned) titles that grouping was unsure of, a < b
 CREATE TABLE IF NOT EXISTS story_candidates (
@@ -41,6 +42,7 @@ CREATE TABLE IF NOT EXISTS story_candidates (
     similarity REAL NOT NULL,
     rank       INTEGER NOT NULL,  -- Its headline's position in the last grouping (lower: more important)
     seen       REAL NOT NULL,
+    kind       TEXT NOT NULL DEFAULT 'title',  -- What paired them: their titles, or their articles' summaries
     PRIMARY KEY (a, b)
 );
 -- A judge's decision on a pair: the same story or not; overrides their similarity
@@ -81,6 +83,10 @@ def connect(path: Path) -> sqlite3.Connection:
         db.execute("ALTER TABLE headlines ADD COLUMN story_embedding BLOB")  # Databases made before grouping
     if "story" not in columns:
         db.execute("ALTER TABLE headlines ADD COLUMN story INTEGER")  # ...or before lasting stories
+    if "summary_embedding" not in columns:
+        db.execute("ALTER TABLE headlines ADD COLUMN summary_embedding BLOB")  # ...or before summaries paired headlines
+    if "kind" not in {row[1] for row in db.execute("PRAGMA table_info(story_candidates)")}:
+        db.execute("ALTER TABLE story_candidates ADD COLUMN kind TEXT NOT NULL DEFAULT 'title'")
     db.executescript(INDEXES)
     return db
 

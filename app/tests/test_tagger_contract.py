@@ -69,7 +69,7 @@ async def test_the_archive_follows_stories_as_the_sample_says(tmp_path, monkeypa
 
 
 @respx.mock
-async def test_story_pairs_are_judged_as_the_sample_says(monkeypatch):
+async def test_story_pairs_are_judged_as_the_sample_says(monkeypatch, mock_redis):
     monkeypatch.setattr(settings, "SUMMARIZER_LLM_URL", "http://llm.example:11434")
     monkeypatch.setattr(settings, "SUMMARIZER_MODEL", API["story-verdicts"]["request"]["verdicts"][0]["model"])
     respx.get(f"{settings.TAGGER_URL}/story-candidates").mock(side_effect=[
@@ -78,5 +78,15 @@ async def test_story_pairs_are_judged_as_the_sample_says(monkeypatch):
         return_value=httpx.Response(200, json={"message": {"role": "assistant", "content": "Yes"}}))
     verdicts = route("story-verdicts")
     async with httpx.AsyncClient() as client:
-        assert await summarizer.judge_stories(client) == 1
+        assert await summarizer.judge_stories(client, mock_redis) == 1
     assert sent(verdicts) == API["story-verdicts"]["request"]
+
+
+@respx.mock
+async def test_summaries_are_sent_as_the_sample_says(mock_redis):
+    tagger = route("summaries")
+    [sample] = API["summaries"]["request"]["items"]
+    async with httpx.AsyncClient() as client:
+        await summarizer.send_summaries(client, [({"title": sample["title"], "source": sample["source"], "link": "https://example.com/0"},
+                                                  sample["summary"])])
+    assert sent(tagger) == API["summaries"]["request"]

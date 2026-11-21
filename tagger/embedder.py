@@ -11,8 +11,8 @@ import numpy as np
 
 logger = logging.getLogger("tagger")
 
-# NPUs need static input shapes; headlines fit in 48 tokens
-BATCH, MAX_TOKENS = 32, 48
+# NPUs need static input shapes; headlines fit in 48 tokens (summaries are embedded at 160: SUMMARY_TOKENS)
+BATCH, MAX_TOKENS, SUMMARY_TOKENS = 32, 48, 160
 
 
 class Embedder:
@@ -21,17 +21,18 @@ class Embedder:
     topics, multilingual-e5-small (mean pooling, "query: " prefix) for story grouping.
     """
 
-    def __init__(self, model_dir: Path, device: str, cache_dir: Path, pooling: str = "cls", prefix: str = "") -> None:
+    def __init__(self, model_dir: Path, device: str, cache_dir: Path, pooling: str = "cls", prefix: str = "",
+                 max_tokens: int = MAX_TOKENS) -> None:
         self.pooling, self.prefix = pooling, prefix
         import openvino as ov
         from tokenizers import Tokenizer
 
         self.tokenizer = Tokenizer.from_file(str(model_dir / "tokenizer.json"))
-        self.tokenizer.enable_truncation(MAX_TOKENS)
-        self.tokenizer.enable_padding(length=MAX_TOKENS)
+        self.tokenizer.enable_truncation(max_tokens)
+        self.tokenizer.enable_padding(length=max_tokens)
         core = ov.Core()
         model = core.read_model(model_dir / "model.onnx")
-        model.reshape({i.get_any_name(): [BATCH, MAX_TOKENS] for i in model.inputs})
+        model.reshape({i.get_any_name(): [BATCH, max_tokens] for i in model.inputs})
         # The NPU compile takes ~1 minute; CACHE_DIR makes later starts take seconds
         config = {"PERFORMANCE_HINT": "THROUGHPUT", "CACHE_DIR": str(cache_dir)}
         try:

@@ -15,6 +15,7 @@ from config import settings
 class Prompts(BaseModel):
     summary: str  # System prompt for an article's summary
     same_story: str  # System prompt for two headlines: same story or not (an answer starting with "yes")
+    same_story_articles: str  # The same, with both articles' summaries
     subject: str  # System prompt for what a headline is about, in a few words (services/subjects.py)
     # By topic: a yes/no question put to the LLM about a feed item the tagger's model doubts (min_feed_score)
     topic_checks: Dict[str, str] = {}

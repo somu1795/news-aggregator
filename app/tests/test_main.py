@@ -618,7 +618,7 @@ def test_sitemap_lists_the_page(client):
 
 def test_the_site_is_named_by_its_config(client, monkeypatch):
     monkeypatch.setattr(site_config, "_site", Site(name="local.txt", description="News of our town.",
-                                                   prompts=Prompts(summary="s", same_story="t", subject="u")))
+                                                   prompts=Prompts(summary="s", same_story="t", same_story_articles="t (articles)", subject="u")))
     page = client.get("/", headers={"Accept": "text/html"}).text
     assert "<title>local.txt</title>" in page and "LOCAL.TXT" in page and "News of our town." in page
     manifest = client.get("/manifest.webmanifest")

@@ -19,7 +19,7 @@ import numpy as np
 from store import clean_title, to_blob
 
 if TYPE_CHECKING:  # The API's request models, in tagger.py
-    from tagger import Item, Verdict
+    from tagger import Item, SummaryItem, Verdict
 
 logger = logging.getLogger("tagger")
 
@@ -36,6 +36,13 @@ STORY_LEADER_THRESHOLD = float(os.environ.get("STORY_LEADER_THRESHOLD", "0.88"))
 # (an LLM), whose verdict then overrides the similarity. Below it, headlines are different stories.
 STORY_CANDIDATE_THRESHOLD = float(os.environ.get("STORY_CANDIDATE_THRESHOLD", "0.84"))
 STORY_CANDIDATES_MAX = 2000  # Per grouping: the most important unsure pairs
+# Headlines in different stories whose articles' summaries are at least this close are also paired for the
+# judge, which then sees the summaries too: it finds the same news worded differently ("Fed holds rates" /
+# "Powell: no cut yet"), whose headlines are too unlike to be paired. On Nov 16-20, 2026, ~600 pairs a day
+# from 0.90 had headlines below STORY_CANDIDATE_THRESHOLD; on 80 hand-labelled ones the judge shown the
+# summaries found 33 of 42 same-story pairs (7 from headlines only), calling 8 of 38 others the same,
+# mostly coverage of one saga (a coach's ban and a match preview built on it).
+SUMMARY_CANDIDATE_THRESHOLD = float(os.environ.get("SUMMARY_CANDIDATE_THRESHOLD", "0.90"))
 CANDIDATE_TTL_SECONDS = 86400  # Not seen in a grouping for this long: no longer on the page, dropped
 VERDICT_TTL_SECONDS = 30 * 86400  # Headlines don't come back after a month
 # A headline joins a story through any of its headlines first seen up to this long before it...
@@ -268,12 +275,63 @@ class StoryGrouping:
         self.db.commit()
 
     def story_candidates(self, limit: int) -> List[dict]:
-        """Unsure pairs with no verdict yet, from the latest groupings, most important first."""
+        """
+        Unsure pairs with no verdict yet, with each headline's link (for its summary): those their summaries
+        paired first (few, and made once, so they wait until judged or a day old), then those the latest
+        groupings paired, most important first.
+        """
         rows = self.db.execute(
-            "SELECT a, b, similarity FROM story_candidates c WHERE seen >= ? "
+            "SELECT c.a, c.b, c.similarity, c.kind, ha.link, hb.link FROM story_candidates c "
+            "LEFT JOIN headlines ha ON ha.title = c.a LEFT JOIN headlines hb ON hb.title = c.b "
+            "WHERE (c.kind = 'summary' OR c.seen >= ?) "
             "AND NOT EXISTS (SELECT 1 FROM story_verdicts v WHERE v.a = c.a AND v.b = c.b) "
-            "ORDER BY rank, similarity DESC LIMIT ?", (time.time() - 3600, limit))
-        return [{"a": a, "b": b, "similarity": round(sim, 4)} for a, b, sim in rows]
+            "ORDER BY c.kind = 'summary' DESC, c.rank, c.similarity DESC LIMIT ?", (time.time() - 3600, limit))
+        return [{"a": a, "b": b, "similarity": round(sim, 4), "kind": kind, "link_a": link_a, "link_b": link_b}
+                for a, b, sim, kind, link_a, link_b in rows]
+
+    def add_summaries(self, items: List["SummaryItem"]) -> dict:
+        """
+        Embeds the summaries of headlines that are stored and grouped and have none yet, and pairs each
+        with the closest headline of every other story first seen in the last STORY_WINDOW_SECONDS whose
+        summary is at least SUMMARY_CANDIDATE_THRESHOLD close, unless judged already (see that).
+        Returns how many summaries were embedded and how many pairs they made.
+        """
+        summaries = {clean_title(item.title, item.source): item.summary for item in items}
+        titles = list(summaries)
+        rows = []
+        for start in range(0, len(titles), 500):
+            chunk = titles[start:start + 500]
+            rows += self.db.execute(
+                f"SELECT title, story FROM headlines WHERE title IN ({','.join('?' * len(chunk))}) "
+                "AND story IS NOT NULL AND summary_embedding IS NULL", chunk).fetchall()
+        if not rows:
+            return {"embedded": 0, "candidates": 0}
+        new_titles = [title for title, _ in rows]
+        X = self.summary_embedder.embed([summaries[t] for t in new_titles])
+        self.db.executemany("UPDATE headlines SET summary_embedding = ? WHERE title = ?",
+                            [(to_blob(v), t) for t, v in zip(new_titles, X)])
+        X = X / np.maximum(np.linalg.norm(X, axis=1, keepdims=True), 1e-9)
+        now = time.time()
+        others = self.db.execute(
+            "SELECT title, story, summary_embedding FROM headlines WHERE first_seen >= ? AND story IS NOT NULL "
+            "AND summary_embedding IS NOT NULL", (now - STORY_WINDOW_SECONDS,)).fetchall()
+        other_titles, other_story, M = [r[0] for r in others], np.array([r[1] for r in others]), _unit([r[2] for r in others])
+        judged = self._judged(new_titles)
+        pairs: dict = {}
+        sims = X @ M.T
+        for row, (title, story) in enumerate(rows):
+            closest: dict = {}  # other story -> (similarity, column)
+            for c in np.nonzero((sims[row] >= SUMMARY_CANDIDATE_THRESHOLD) & (other_story != story))[0].tolist():
+                if other_titles[c] not in judged.get(title, {}) and sims[row, c] > closest.get(int(other_story[c]), (-1, 0))[0]:
+                    closest[int(other_story[c])] = (float(sims[row, c]), c)
+            for sim, c in closest.values():
+                a, b = sorted((title, other_titles[c]))
+                pairs[a, b] = (a, b, sim, 0, now)
+        self.db.executemany(
+            "INSERT INTO story_candidates (a, b, similarity, rank, seen, kind) VALUES (?, ?, ?, ?, ?, 'summary') "
+            "ON CONFLICT (a, b) DO UPDATE SET seen = excluded.seen, kind = 'summary'", list(pairs.values()))
+        self.db.commit()
+        return {"embedded": len(new_titles), "candidates": len(pairs)}
 
     def store_verdicts(self, verdicts: List["Verdict"]) -> int:
         """

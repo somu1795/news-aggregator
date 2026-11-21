@@ -157,11 +157,43 @@ async def name_subjects(client: httpx.AsyncClient, redis_client: aioredis.Redis)
     return len(todo)
 
 
-async def judge_stories(client: httpx.AsyncClient) -> int:
+async def send_summaries(client: httpx.AsyncClient, summarized: List[tuple]) -> None:
+    """
+    Gives the tagger new summaries, [(item, summary)]: it pairs headlines whose articles' summaries are
+    close for the judge (its /summaries), so the same news worded differently can join one story. If the
+    tagger can't be reached they're not sent: such pairs are only lost, the summaries are kept.
+    """
+    if not summarized:
+        return
+    items = [{"title": item["title"], "source": item.get("source"), "summary": text} for item, text in summarized]
+    try:
+        for start in range(0, len(items), 200):
+            response = await client.post(f"{settings.TAGGER_URL}/summaries", json={"items": items[start:start + 200]}, timeout=60.0)
+            response.raise_for_status()
+    except httpx.HTTPError as e:
+        logger.warning("Summaries not sent to the tagger", error=str(e) or type(e).__name__)
+
+
+async def send_tab_summaries(client: httpx.AsyncClient, redis_client: aioredis.Redis) -> None:
+    """At start: the tabs' summaries made before, so the tagger can pair them (it skips those it has)."""
+    items = await top_items(redis_client)
+    if not items:
+        return
+    found = await redis_client.mget([summary_key(item["link"]) for item in items])
+    summarized = []
+    for item, raw in zip(items, found):
+        text = json.loads(raw).get("text") if raw else None
+        if text:
+            summarized.append((item, text))
+    await send_summaries(client, summarized)
+
+
+async def judge_stories(client: httpx.AsyncClient, redis_client: aioredis.Redis) -> int:
     """
     Judges the tagger's unsure pairs, most important first, for up to STORY_JUDGE_SECONDS or
-    until none are left. Returns how many were judged; raises LLMUnavailable. If the tagger
-    can't be reached, nothing is judged this time.
+    until none are left: with both articles' summaries when they have them, else the headlines.
+    Returns how many were judged; raises LLMUnavailable. If the tagger can't be reached, nothing
+    is judged this time.
     """
     loop, judged = asyncio.get_running_loop(), Tally()
     started = loop.time()
@@ -175,19 +207,28 @@ async def judge_stories(client: httpx.AsyncClient) -> int:
                 break
             verdicts = []
             for pair in pairs:
-                same = await same_story(client, pair["a"], pair["b"])
+                summaries = await _summaries_of(redis_client, pair.get("link_a"), pair.get("link_b"))
+                same = await same_story(client, pair["a"], pair["b"], *summaries)
                 verdicts.append({"a": pair["a"], "b": pair["b"], "same": same, "model": settings.SUMMARIZER_MODEL})
+                if all(summaries):
+                    judged["with_summaries"] += 1
             response = await client.post(f"{settings.TAGGER_URL}/story-verdicts", json={"verdicts": verdicts}, timeout=15.0)
             response.raise_for_status()
         except httpx.HTTPError as e:  # The tagger, not the LLM (that raises LLMUnavailable)
             logger.warning("Story pairs not judged: tagger unavailable", error=str(e) or type(e).__name__)
             break
         for verdict in verdicts:
-            label = "same" if verdict["same"] else "different"
-            judged[label] += 1
+            judged["same" if verdict["same"] else "different"] += 1
     if judged:
         logger.info("Judged story pairs", **judged)
-    return sum(judged.values())
+    return judged["same"] + judged["different"]
+
+
+async def _summaries_of(redis_client: aioredis.Redis, *links: Optional[str]) -> List[Optional[str]]:
+    """The summaries of these links' articles (None for one without, or no link)."""
+    known = [link for link in links if link]
+    found = dict(zip(known, await redis_client.mget([summary_key(link) for link in known]))) if known else {}
+    return [(json.loads(found[link]).get("text") if found.get(link) else None) if link else None for link in links]
 
 
 async def _unsummarized(redis_client: aioredis.Redis) -> List[tuple]:
@@ -242,7 +283,7 @@ async def summarize_ready(client: httpx.AsyncClient, redis_client: aioredis.Redi
     if not ready:
         return 0
     await check_llm(client)
-    done = 0
+    done, summarized = 0, []
     for item, read in ready:
         key = summary_key(item["link"])
         try:
@@ -264,9 +305,11 @@ async def summarize_ready(client: httpx.AsyncClient, redis_client: aioredis.Redi
         else:
             await redis_client.set(key, json.dumps({"text": summary, "model": settings.SUMMARIZER_MODEL, "via": read["via"]}),
                                    ex=settings.SUMMARY_TTL_SECONDS)
+            summarized.append((item, summary))
             done += 1
         await redis_client.delete(article_text_key(item["link"]))
     logger.info("Summarized articles", summarized=done, batch=len(ready))
+    await send_summaries(client, summarized)
     return done
 
 
@@ -290,7 +333,7 @@ async def summary_loop(client: httpx.AsyncClient, redis_client: aioredis.Redis) 
             if not done:
                 done = await name_subjects(client, redis_client)
             if not done:
-                done = await judge_stories(client)  # It may take minutes: articles read meanwhile are next
+                done = await judge_stories(client, redis_client)  # It may take minutes: articles read meanwhile are next
             if available is False:
                 logger.info("LLM server is back")
             available = True
@@ -317,6 +360,7 @@ async def run() -> None:
     async with public_client(services, timeout=15.0) as client:
         logger.info("Summarizer started", llm=settings.SUMMARIZER_LLM_URL, model=settings.SUMMARIZER_MODEL,
                     browser=settings.SUMMARIZER_BROWSER_URL or None, browser2=settings.SUMMARIZER_BROWSER2_URL or None)
+        await send_tab_summaries(client, redis_client)  # Those made before this start, for the tagger's pairs
         await asyncio.gather(read_loop(client, redis_client), summary_loop(client, redis_client))
 
 

@@ -5,6 +5,7 @@ the same story, what a headline is about, or whether it is about a topic.
 """
 
 import re
+from typing import Optional
 
 import httpx
 
@@ -54,16 +55,24 @@ async def summarize(client: httpx.AsyncClient, title: str, text: str) -> str:
     return summary
 
 
-async def same_story(client: httpx.AsyncClient, a: str, b: str) -> bool:
-    """The LLM's verdict on two headlines: the same story or not (anything but a yes counts as not)."""
+async def same_story(client: httpx.AsyncClient, a: str, b: str, summary_a: Optional[str] = None, summary_b: Optional[str] = None) -> bool:
+    """
+    The LLM's verdict on two headlines: the same story or not (anything but a yes counts as not). With both
+    articles' summaries it reads them too, and finds the same news worded differently.
+    """
+    prompts = get_site().prompts
+    if summary_a and summary_b:
+        system, question = prompts.same_story_articles, f"Article 1: {a}\nSummary: {summary_a}\n\nArticle 2: {b}\nSummary: {summary_b}"
+    else:
+        system, question = prompts.same_story, f"Headline 1: {a}\nHeadline 2: {b}"
     try:
         response = await client.post(
             f"{settings.SUMMARIZER_LLM_URL}/api/chat",
             json={
                 "model": settings.SUMMARIZER_MODEL,
                 "messages": [
-                    {"role": "system", "content": get_site().prompts.same_story},
-                    {"role": "user", "content": f"Headline 1: {a}\nHeadline 2: {b}"},
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": question},
                 ],
                 "stream": False,
                 "think": False,
