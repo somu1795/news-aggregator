@@ -221,8 +221,11 @@ async def judge_stories(client: httpx.AsyncClient, redis_client: aioredis.Redis)
         except httpx.HTTPError as e:  # The tagger, not the LLM (that raises LLMUnavailable)
             logger.warning("Story pairs not judged: tagger unavailable", error=str(e) or type(e).__name__)
             break
-        for verdict in verdicts:
-            judged["same" if verdict["same"] else "different"] += 1
+        for pair, verdict in zip(pairs, verdicts):
+            outcome = "same" if verdict["same"] else "different"
+            judged[outcome] += 1
+            if pair.get("kind") == "summary":  # Paired by their articles' summaries (the tagger's /summaries)
+                judged[f"summary_pairs_{outcome}"] += 1
     if judged:
         logger.info("Judged story pairs", **judged)
     return judged["same"] + judged["different"]

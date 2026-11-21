@@ -10,6 +10,7 @@ import json
 import httpx
 import pytest
 import respx
+from structlog.testing import capture_logs
 
 import catalog as catalog_module
 import services.safe_fetch as safe_fetch
@@ -789,3 +790,18 @@ async def test_at_start_the_tabs_summaries_are_sent_once(monkeypatch, mock_redis
     async with httpx.AsyncClient() as client:
         await summarizer.send_tab_summaries(client, mock_redis)
     assert json.loads(tagger.calls.last.request.content) == {"items": [{"title": "Story 1", "source": "Pub", "summary": "One happened."}]}
+
+
+@respx.mock
+async def test_the_log_counts_the_summaries_pairs_apart(monkeypatch, mock_redis):
+    monkeypatch.setattr(settings, "TAGGER_URL", TAGGER)
+    title_pair = {"a": "Big dogs age faster", "b": "Why small dogs live longer", "similarity": 0.9, "kind": "title"}
+    respx.get(f"{TAGGER}/story-candidates").mock(side_effect=[httpx.Response(200, json={"pairs": [FED, title_pair]}),
+                                                              httpx.Response(200, json={"pairs": []})])
+    respx.post(f"{LLM}/api/chat").mock(side_effect=[llm_reply("yes"), llm_reply("yes")])
+    respx.post(f"{TAGGER}/story-verdicts").mock(return_value=httpx.Response(200, json={"stored": 2}))
+    async with httpx.AsyncClient() as client:
+        with capture_logs() as logs:
+            await summarizer.judge_stories(client, mock_redis)
+    [judged] = [log for log in logs if log["event"] == "Judged story pairs"]
+    assert judged["same"] == 2 and judged["summary_pairs_same"] == 1 and "summary_pairs_different" not in judged
