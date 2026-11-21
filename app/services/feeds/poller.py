@@ -22,7 +22,7 @@ import structlog
 
 from catalog import Catalog, NewsSource, TopicSource
 from config import settings
-from keys import host_pause_key
+from keys import TOPIC_BATCH_KEY, feed_state_key, host_pause_key
 from services.feeds.parse import parse
 
 logger = structlog.get_logger(__name__)
@@ -175,12 +175,19 @@ class HostLimits:
 
 
 class FeedPoller(HostLimits):
-    """Every feed's last headlines and validators, and every host's pause, kept between cycles (pauses in Redis too)."""
+    """
+    Every feed's last headlines, validators and schedule, and every host's pause, kept between cycles; and in
+    Redis, so a restarted refresher takes them up (restore). Without them every feed was due at once after a
+    restart: ~100 Google feeds asked within minutes drew a 429 and a 10-minute pause on every restart. A feed's
+    state is saved after each round of fetches that asked it (save_feeds), without the articles' texts (the
+    summarizer's copy is kept apart); if Redis is unavailable, a restart starts afresh, as before.
+    """
 
     def __init__(self, redis_client: Optional[aioredis.Redis] = None):
         super().__init__("feeds")
         self.redis = redis_client
         self.feeds: Dict[str, _FeedState] = {}  # By feed URL
+        self.dirty: set = set()  # Feeds asked since their state was last saved
         # Last fetch of the topic feeds: {"at": monotonic time, "results": {source name: headlines},
         # "missed": names of those it left out for a paused host}
         self.topic_feeds: Dict = {"at": float("-inf"), "results": {}, "missed": set()}
@@ -206,6 +213,7 @@ class FeedPoller(HostLimits):
         host = urlparse(url).hostname or ""
         if self.paused(host) or time.monotonic() < state.next_fetch:
             return state.items
+        self.dirty.add(url)
         await asyncio.sleep(random.uniform(0, settings.FEED_JITTER_SECONDS))
         headers = dict(_FEED_HEADERS)
         if state.etag:
@@ -275,7 +283,47 @@ class FeedPoller(HostLimits):
                 results_by_source[source.name] = []
             else:
                 results_by_source[source.name] = result
+        await self.save_feeds()
         return results_by_source
+
+    async def save_feeds(self) -> None:
+        """Writes the state of the feeds asked since the last save to Redis (see the class)."""
+        if not self.redis or not self.dirty:
+            return
+        now, mono = time.time(), time.monotonic()
+        try:
+            async with self.redis.pipeline(transaction=False) as pipe:
+                for url in self.dirty:
+                    state = self.feeds[url]
+                    pipe.set(feed_state_key(url), json.dumps({
+                        "url": url, "etag": state.etag, "last_modified": state.last_modified, "interval": state.interval,
+                        "next_fetch": now + state.next_fetch - mono,
+                        "items": [{k: v for k, v in h.items() if k != "feed_text"} for h in state.items],
+                    }), ex=settings.FEED_STATE_TTL_SECONDS)
+                await pipe.execute()
+            self.dirty.clear()
+        except aioredis.RedisError as e:
+            logger.warning("Feed states not saved", error=str(e))
+
+    async def restore(self, redis_client: aioredis.Redis) -> None:
+        """Takes up the host pauses, feed states and topic batch time a previous run left in Redis (at a restart)."""
+        await super().restore(redis_client)
+        now, mono = time.time(), time.monotonic()
+        try:
+            async for key in redis_client.scan_iter(match="feed-state:*"):
+                value = await redis_client.get(key)
+                if not value:
+                    continue
+                saved = json.loads(value)
+                self.feeds[saved["url"]] = _FeedState(items=saved["items"], etag=saved["etag"], last_modified=saved["last_modified"],
+                                                      interval=saved["interval"], next_fetch=mono + saved["next_fetch"] - now)
+            batch = await redis_client.get(TOPIC_BATCH_KEY)
+            if batch:
+                self.topic_feeds["at"] = mono + float(batch) - now
+            if self.feeds:
+                logger.info("Feed states restored", feeds=len(self.feeds))
+        except (aioredis.RedisError, ValueError, KeyError, TypeError) as e:
+            logger.warning("Feed states not restored", error=str(e))
 
     async def fetch_topic_feeds(self, client: httpx.AsyncClient, catalog: Catalog) -> Dict[str, List[Dict]]:
         """
@@ -289,6 +337,13 @@ class FeedPoller(HostLimits):
             if any(results.values()):  # Otherwise keep the previous fetch and retry next cycle
                 self.topic_feeds.update(at=time.monotonic(), results=results,
                                         missed=self._missed(catalog.topic_feeds, results))
+                if self.redis:
+                    try:
+                        await self.redis.set(TOPIC_BATCH_KEY, str(time.time()), ex=settings.FEED_STATE_TTL_SECONDS)
+                    except aioredis.RedisError as e:
+                        logger.warning("Topic batch time not saved", error=str(e))
+        elif not self.topic_feeds["results"]:  # Restarted between batches: the feeds' restored headlines
+            self.topic_feeds["results"] = {s.name: self.feeds[s.url].items if s.url in self.feeds else [] for s in catalog.topic_feeds}
         elif self.topic_feeds["missed"]:
             sources = [s for s in catalog.topic_feeds if s.name in self.topic_feeds["missed"]]
             results = await self.fetch_all(client, sources)

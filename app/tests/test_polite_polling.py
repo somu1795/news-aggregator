@@ -254,3 +254,68 @@ async def test_a_topic_feed_that_answered_with_an_error_waits_for_the_next_batch
         advance(monkeypatch, 2 * settings.REFRESH_INTERVAL_SECONDS)  # Its own interval is over, the batch's isn't
         await poller.fetch_topic_feeds(client, TOPIC_FEEDS)
     assert gone.call_count == 1
+
+
+# A restarted refresher takes up each feed where it was: a restart left every feed due at once, and ~100
+# Google feeds asked within minutes drew a 429 and a 10-minute pause on every restart
+@respx.mock
+async def test_a_restart_takes_up_each_feeds_schedule_headlines_and_validators(mock_redis, monkeypatch):
+    route = respx.get(FEED).mock(side_effect=[
+        httpx.Response(200, content=rss("a", "b"), headers={"ETag": '"v1"'}),
+        httpx.Response(304),
+        httpx.Response(304),
+    ])
+    cycle = settings.REFRESH_INTERVAL_SECONDS
+    before = FeedPoller(mock_redis)
+    async with httpx.AsyncClient() as client:
+        await before.fetch_all(client, [SimpleNamespace(name="Outlet", url=FEED)])
+        advance(monkeypatch, cycle)
+        await before.fetch_all(client, [SimpleNamespace(name="Outlet", url=FEED)])  # Unchanged: next asked in 2 cycles
+        restarted = FeedPoller(mock_redis)
+        await restarted.restore(mock_redis)
+        results = await restarted.fetch_all(client, [SimpleNamespace(name="Outlet", url=FEED)])
+        assert [h["title"] for h in results["Outlet"]] == ["a", "b"] and route.call_count == 2  # Not due: not asked
+        advance(monkeypatch, 2 * cycle)
+        results = await restarted.fetch_all(client, [SimpleNamespace(name="Outlet", url=FEED)])
+    assert route.call_count == 3 and route.calls[2].request.headers["If-None-Match"] == '"v1"'
+    assert [h["title"] for h in results["Outlet"]] == ["a", "b"]
+
+
+@respx.mock
+async def test_a_feeds_saved_headlines_leave_out_the_article_texts(mock_redis):
+    feed = (b"<rss><channel><title>Outlet</title><item><title>a</title><link>https://outlet.example/a</link>"
+            b"<description>" + b"word " * 500 + b"</description></item></channel></rss>")
+    respx.get(FEED).mock(return_value=httpx.Response(200, content=feed))
+    async with httpx.AsyncClient() as client:
+        results = await FeedPoller(mock_redis).fetch_all(client, [SimpleNamespace(name="Outlet", url=FEED)])
+    assert results["Outlet"][0]["feed_text"]  # Still there for this cycle (the summarizer's copy is stored apart)
+    saved = [await mock_redis.get(key) for key in await mock_redis.keys("feed-state:*")]
+    assert len(saved) == 1 and b"word word" not in (saved[0] if isinstance(saved[0], bytes) else saved[0].encode())
+
+
+@respx.mock
+async def test_a_restart_keeps_the_topic_batchs_time_and_its_headlines(mock_redis):
+    paused = respx.get("https://paused.example/rss").mock(return_value=httpx.Response(200, content=rss("p")))
+    outlet = respx.get(FEED).mock(return_value=httpx.Response(200, content=rss("a")))
+    async with httpx.AsyncClient() as client:
+        await FeedPoller(mock_redis).fetch_topic_feeds(client, TOPIC_FEEDS)
+        restarted = FeedPoller(mock_redis)
+        await restarted.restore(mock_redis)
+        results = await restarted.fetch_topic_feeds(client, TOPIC_FEEDS)  # The batch isn't due: nothing asked
+    assert paused.call_count == outlet.call_count == 1
+    assert [h["title"] for h in results["Paused Sports"]] == ["p"] and [h["title"] for h in results["Outlet Sports"]] == ["a"]
+
+
+async def test_without_redis_feeds_start_afresh_as_before():
+    class Down:
+        def scan_iter(self, *args, **kwargs):
+            raise poller_module.aioredis.RedisError("down")
+        async def get(self, *args, **kwargs):
+            raise poller_module.aioredis.RedisError("down")
+        def pipeline(self, *args, **kwargs):
+            raise poller_module.aioredis.RedisError("down")
+    poller = FeedPoller(Down())
+    await poller.restore(poller.redis)  # Nothing restored, nothing raised
+    poller.dirty.add(FEED)
+    await poller.save_feeds()
+    assert poller.feeds == {}

@@ -62,6 +62,14 @@ def refresh_started_key() -> str:
     return "refresh:started"
 
 
+def feed_state_key(url: str) -> str:
+    """Redis key holding what the refresher remembers about a feed (headlines, validators, schedule), by its URL."""
+    return "feed-state:" + hashlib.sha256(url.encode()).hexdigest()[:32]
+
+
+TOPIC_BATCH_KEY = "feed-batch:topics"  # When the topic feeds were last fetched (Unix time)
+
+
 def host_pause_key(scope: str, host: str) -> str:
     """Redis key holding a host's pause and strikes ("feeds" or "links"), so they outlast a refresher restart."""
     return f"host-pause:{scope}:{host}"
