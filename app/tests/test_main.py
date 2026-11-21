@@ -120,7 +120,10 @@ def test_page_has_a_content_security_policy(client):
     nonce = csp.split("script-src 'nonce-")[1].split("'")[0]
     assert re.search(rf'<link rel="stylesheet" href="/static/retro\.css\?v=\w+" nonce="{nonce}">', response.text)
     assert re.search(rf'<script src="/static/retro\.js\?v=\w+" nonce="{nonce}" defer></script>', response.text)
-    assert "<style" not in response.text and "<script>" not in response.text  # Nothing inline but data
+    assert "<style" not in response.text and "<script>" not in response.text
+    # Inline: data, and the script that asks for the first tab's headlines early, which carries the nonce
+    for tag in re.findall(r"<script(?![^>]*\bsrc=)[^>]*>", response.text):
+        assert re.search(r'type="application/(ld\+)?json"', tag) or f'nonce="{nonce}"' in tag, tag
     assert "unsafe-inline" not in csp and "frame-ancestors 'none'" in csp
     assert client.get("/", headers={"Accept": "text/html"}).headers["content-security-policy"] != csp  # Fresh per response
 

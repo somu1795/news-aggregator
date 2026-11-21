@@ -1087,7 +1087,11 @@
     // --- Data ---
     // An API response's body, or an error with the API's message
     function getJson(url, signal) {
-        return fetch(url, { headers: { "Accept": "application/json" }, signal: signal }).then(function (response) {
+        // The first tab's headlines, asked for by the page before this script arrived (retro.html): taken once
+        var early = window.firstHeadlines;
+        var asked = early && early.url === url && !signal ? early.response : fetch(url, { headers: { "Accept": "application/json" }, signal: signal });
+        if (early && asked === early.response) window.firstHeadlines = null;
+        return asked.then(function (response) {
             return response.json().catch(function () { return {}; }).then(function (body) {
                 if (!response.ok) throw new Error(body.detail || body.error || "HTTP " + response.status);
                 return body;
@@ -1101,8 +1105,7 @@
         state.loading = true;
         function isCurrent() { return region === current && topic === currentTopic; }
         if (isCurrent()) { refreshBtn.disabled = true; updateStatus(); }
-        var url = "/api/headlines?region=" + encodeURIComponent(region) +
-            (topic === DEFAULT_TOPIC ? "" : "&topic=" + encodeURIComponent(topic));
+        var url = window.headlinesUrl(region, topic);
         var redraw = true;
         state.promise = getJson(url)
             .then(function (body) {
@@ -1408,11 +1411,10 @@
     renderBackAction();
     renderInstall();
     renderMoon();
-    // A view in the URL wins (shared links); otherwise reopen the last one viewed
-    var params = new URLSearchParams(location.search);
-    var linked = params.has("region") || params.has("topic");
-    var initialRegion = linked ? fromUrl("region", isView) || DEFAULT_VIEW : (isView(read("retroRegion")) ? read("retroRegion") : HOME_VIEW);
-    var initialTopic = linked ? fromUrl("topic", isTopic) || DEFAULT_TOPIC : (isTopic(read("retroTopic")) ? read("retroTopic") : DEFAULT_TOPIC);
+    // A view in the URL wins (shared links); otherwise reopen the last one viewed (the rule is retro.html's firstTab,
+    // which has already asked for that tab's headlines)
+    var first = window.firstTab();
+    var initialRegion = first.region, initialTopic = first.topic;
     history.replaceState({ region: initialRegion, topic: initialTopic }, "", location.href);  // The address stays as typed
     current = null;
     selectView(initialRegion, initialTopic, false);

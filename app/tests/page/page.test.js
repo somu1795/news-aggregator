@@ -447,3 +447,31 @@ test("the header moon is unchanged", async () => {
     if (process.env.WRITE_MOON_SNAPSHOT) require("fs").writeFileSync(SNAPSHOT, JSON.stringify(seen, null, 1));
     assert.deepEqual(seen, JSON.parse(require("fs").readFileSync(SNAPSHOT, "utf8")));
 });
+
+// The first tab's headlines are asked for by the page itself, before its scripts have even arrived (they download
+// alongside them), and the script takes that answer: one request, for the tab the script opens
+const headlineRequests = (page) => page.requests.filter((url) => url.startsWith("/api/headlines"));
+
+test("the first tab's headlines are asked for before the page's scripts run", async () => {
+    let skyLoaded = null;
+    const page = await open(VIEWS, { setup: (w) => {
+        const fetch = w.fetch;
+        w.fetch = (url, options) => { if (skyLoaded === null && String(url).startsWith("/api/headlines")) skyLoaded = typeof w.Sky !== "undefined"; return fetch(url, options); };
+    } });
+    assert.equal(skyLoaded, false);
+    assert.deepEqual(headlineRequests(page), ["/api/headlines?region=" + REGIONS[0]]);
+    assert.ok(page.titles().length > 0);
+});
+
+test("one request for the first tab, whichever it is", async () => {
+    const cases = [
+        [{}, "", "/api/headlines?region=" + REGIONS[0]],
+        [{ retroRegion: REGIONS[2], retroTopic: TOPICS[1] }, "", `/api/headlines?region=${REGIONS[2]}&topic=${TOPICS[1]}`],
+        [{ retroRegion: REGIONS[2] }, `?region=${REGIONS[1]}&topic=${TOPICS[2]}`, `/api/headlines?region=${REGIONS[1]}&topic=${TOPICS[2]}`],
+        [{ retroRegion: "atlantis", retroTopic: "astrology" }, "", "/api/headlines?region=" + REGIONS[0]],
+    ];
+    for (const [stored, query, expected] of cases) {
+        const page = await open(VIEWS, { stored: stored, query: query });
+        assert.deepEqual(headlineRequests(page), [expected], JSON.stringify(stored) + query);
+    }
+});
