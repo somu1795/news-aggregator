@@ -157,21 +157,24 @@ async def name_subjects(client: httpx.AsyncClient, redis_client: aioredis.Redis)
     return len(todo)
 
 
+_unsent: List[dict] = []  # Summaries the tagger didn't take (down, or still starting): they go with the next ones
+
+
 async def send_summaries(client: httpx.AsyncClient, summarized: List[tuple]) -> None:
     """
-    Gives the tagger new summaries, [(item, summary)]: it pairs headlines whose articles' summaries are
-    close for the judge (its /summaries), so the same news worded differently can join one story. If the
-    tagger can't be reached they're not sent: such pairs are only lost, the summaries are kept.
+    Gives the tagger new summaries, [(item, summary)], and any it missed before: it pairs headlines whose
+    articles' summaries are close for the judge (its /summaries), so the same news worded differently can
+    join one story. Those it can't take now wait for the next call.
     """
-    if not summarized:
-        return
-    items = [{"title": item["title"], "source": item.get("source"), "summary": text} for item, text in summarized]
+    _unsent.extend({"title": item["title"], "source": item.get("source"), "summary": text} for item, text in summarized)
     try:
-        for start in range(0, len(items), 200):
-            response = await client.post(f"{settings.TAGGER_URL}/summaries", json={"items": items[start:start + 200]}, timeout=60.0)
+        while _unsent:
+            chunk = _unsent[:200]
+            response = await client.post(f"{settings.TAGGER_URL}/summaries", json={"items": chunk}, timeout=60.0)
             response.raise_for_status()
+            del _unsent[:len(chunk)]
     except httpx.HTTPError as e:
-        logger.warning("Summaries not sent to the tagger", error=str(e) or type(e).__name__)
+        logger.warning("Summaries not sent to the tagger yet", waiting=len(_unsent), error=str(e) or type(e).__name__)
 
 
 async def send_tab_summaries(client: httpx.AsyncClient, redis_client: aioredis.Redis) -> None:
@@ -195,6 +198,7 @@ async def judge_stories(client: httpx.AsyncClient, redis_client: aioredis.Redis)
     Returns how many were judged; raises LLMUnavailable. If the tagger can't be reached, nothing
     is judged this time.
     """
+    await send_summaries(client, [])  # Any it missed first: their pairs are judged too
     loop, judged = asyncio.get_running_loop(), Tally()
     started = loop.time()
     while loop.time() - started < settings.STORY_JUDGE_SECONDS:

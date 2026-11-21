@@ -62,6 +62,7 @@ def summaries_stay_here(monkeypatch):
     async def keep(client, summarized):
         return None
     monkeypatch.setattr(summarizer, "send_summaries", keep)
+    monkeypatch.setattr(summarizer, "_unsent", [])
 
 
 @pytest.fixture(autouse=True)
@@ -737,6 +738,31 @@ async def test_new_summaries_are_sent_to_the_tagger(monkeypatch, mock_redis):
         assert await summarize_new(client, mock_redis) == 1
     assert json.loads(tagger.calls.last.request.content) == {
         "items": [{"title": "Story 1", "source": "Pub", "summary": "The council approved a new bridge."}]}
+
+
+@respx.mock
+async def test_summaries_the_tagger_missed_go_with_the_next_ones(monkeypatch):
+    monkeypatch.setattr(settings, "TAGGER_URL", TAGGER)
+    monkeypatch.setattr(summarizer, "send_summaries", SEND_SUMMARIES)
+    tagger = respx.post(f"{TAGGER}/summaries").mock(side_effect=[
+        httpx.ConnectError("still loading"), httpx.Response(200, json={"embedded": 2, "candidates": 0})])
+    async with httpx.AsyncClient() as client:
+        await summarizer.send_summaries(client, [(item(1), "One happened.")])
+        await summarizer.send_summaries(client, [(item(2), "Two happened.")])
+    assert [i["title"] for i in json.loads(tagger.calls.last.request.content)["items"]] == ["Story 1", "Story 2"]
+    assert summarizer._unsent == []
+
+
+@respx.mock
+async def test_waiting_summaries_go_to_the_tagger_before_pairs_are_judged(monkeypatch, mock_redis):
+    monkeypatch.setattr(settings, "TAGGER_URL", TAGGER)
+    monkeypatch.setattr(summarizer, "send_summaries", SEND_SUMMARIES)
+    summarizer._unsent.append({"title": "Story 1", "source": "Pub", "summary": "One happened."})
+    sent = respx.post(f"{TAGGER}/summaries").mock(return_value=httpx.Response(200, json={"embedded": 1, "candidates": 1}))
+    candidates = respx.get(f"{TAGGER}/story-candidates").mock(return_value=httpx.Response(200, json={"pairs": []}))
+    async with httpx.AsyncClient() as client:
+        await summarizer.judge_stories(client, mock_redis)
+    assert sent.called and candidates.called and respx.calls[0].request.url.path == "/summaries"
 
 
 @respx.mock
