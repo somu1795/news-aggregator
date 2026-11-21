@@ -15,6 +15,10 @@ GET  /story-moves?after=ID -> {"moves": [{"id", "old", "new", "title"}]}: story 
 GET  /story-candidates?limit=N -> {"pairs": [{"a", "b", "similarity"}]}: pairs grouping was unsure of,
               most important first, for a judge (the summarizer's LLM) to decide
 POST /story-verdicts {"verdicts": [{"a", "b", "same", "model"}]}: its decisions, used by every later grouping
+POST /summaries {"items": [{"title", "source", "summary"}]} -> {"embedded", "candidates"}: articles' summaries,
+              which pair headlines worded apart for the judge
+POST /embed   {"items": [{"title", "source"}]} -> {"vectors": [base64 of float16[384], ...]}: each headline's
+              story-model fingerprint, for the stats service (which then needs no model); nothing is stored
 GET  /health  device, model version, stored headline count
 
 Storage: every headline is stored once in SQLite (DATA_DIR/tagger.db) with its
@@ -34,6 +38,7 @@ which is never trained on.
 """
 
 import asyncio
+import base64
 import ctypes
 import json
 import logging
@@ -166,6 +171,12 @@ class Tagger(StoryGrouping):
                 rows[title] = (json.dumps(tags), classifier.version, None)
         return [json.loads(rows[title][0]) for title in titles]
 
+
+    def embed(self, items: List["Item"]) -> List[str]:
+        """Each headline's story-model fingerprint, as grouping makes it, of length 1: base64 of little-endian float16[384]."""
+        X = self.story_embedder.embed([clean_title(item.title, item.source) for item in items])
+        X = X / np.maximum(np.linalg.norm(X, axis=1, keepdims=True), 1e-9)
+        return [base64.b64encode(v.astype("<f2").tobytes()).decode() for v in X]
 
     def label_scores(self, items: List["Item"]) -> List[Optional[float]]:
         """
@@ -376,6 +387,11 @@ async def summaries(request: SummaryRequest):
     if result["embedded"]:
         logger.info("Summaries embedded: %d, pairs for the judge: %d", result["embedded"], result["candidates"])
     return result
+
+
+@app.post("/embed")
+async def embed(request: TagRequest):
+    return {"vectors": await on_worker(app.state.tagger.embed, request.items)}
 
 
 @app.get("/health")

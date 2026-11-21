@@ -13,7 +13,7 @@ import summarizer
 from catalog import Catalog
 from config import settings
 from refresher import sync_stories
-from services import archive
+from services import archive, stats_stream
 from services.story_groups import group_stories
 from services.views.topic_views import tag
 
@@ -90,3 +90,16 @@ async def test_summaries_are_sent_as_the_sample_says(mock_redis):
         await summarizer.send_summaries(client, [({"title": sample["title"], "source": sample["source"], "link": "https://example.com/0"},
                                                   sample["summary"])])
     assert sent(tagger) == API["summaries"]["request"]
+
+
+@respx.mock
+async def test_fingerprints_are_asked_for_as_the_sample_says(mock_redis, monkeypatch):
+    stats_stream._sent.clear()
+    monkeypatch.setattr(stats_stream, "get_catalog", lambda: CATALOG)
+    tagger = route("embed")
+    [sample] = API["embed"]["request"]["items"]
+    async with httpx.AsyncClient() as client:
+        await stats_stream.publish_new(client, mock_redis, {"Feed": [{**sample, "link": "https://example.com/0", "published": 1.0}]})
+    assert sent(tagger) == API["embed"]["request"]
+    [(_, fields)] = await mock_redis.xrange(stats_stream.STREAM)
+    assert fields["vector"] == API["embed"]["response"]["vectors"][0]

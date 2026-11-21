@@ -315,11 +315,18 @@ async def test_the_refresher_writes_the_search_index_for_the_app(tmp_path, monke
     await write_search_index()  # A failure is logged, not raised
 
 
+def embed_up():
+    """The tagger's /embed (for the stats stream): a fingerprint for every headline."""
+    respx.post(f"{settings.TAGGER_URL}/embed").mock(side_effect=lambda request: httpx.Response(
+        200, json={"vectors": ["AAAA"] * len(json.loads(request.content)["items"])}))
+
+
 @respx.mock
 async def test_every_fetched_item_reaches_the_stats_stream(mock_redis, poller, monkeypatch):
     monkeypatch.setattr(settings, "MAX_HEADLINES", 5)  # Far fewer than the feeds carry
     stats_stream._sent.clear()
     mock_feeds()
+    embed_up()
     await refresh(mock_redis, poller)
     links = {fields["link"] for _, fields in await mock_redis.xrange(stats_stream.STREAM)}
     assert len(links) > len((await read_view(mock_redis, ALL_VIEW))["data"]) == 5
@@ -338,10 +345,12 @@ async def raising_topic_views(*args):
     raise RuntimeError("no tagger")
 
 
+@respx.mock
 async def test_topic_feeds_reach_the_stream_when_the_topic_phase_fails(mock_redis, poller, monkeypatch):
     stats_stream._sent.clear()
     monkeypatch.setattr(refresher, "get_topic_views", raising_topic_views)
     poller.topic_feeds["results"] = {"Feed": [{"title": "T", "link": "https://t.example/1", "source": "S", "published": 1.0}]}
+    embed_up()
     async with httpx.AsyncClient() as http_client:
         assert await refresher.refresh_topics(http_client, mock_redis, poller, {}) == 0
     assert await mock_redis.xlen(stats_stream.STREAM) == 1

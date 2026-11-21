@@ -1,14 +1,19 @@
 """
 Every fetched headline, for the stats service (stats/): each new link is added
-once to a capped Redis stream, whether or not any tab shows it. A failure here
-is logged and never touches a refresh; the stats service drops repeats, so a
-restart here, which sends every link again, does no harm.
+once to a capped Redis stream, whether or not any tab shows it, with its
+fingerprint from the tagger (POST /embed: the story model's, so the stats
+service needs no model of its own). A link the tagger can't fingerprint now (it
+is down or starting, or this refresh's time for the stream is up) is sent with
+a later refresh. A failure here is logged and never touches a refresh; the
+stats service drops repeats, so a restart here, which sends every link again,
+does no harm.
 """
 
 import asyncio
 from collections import OrderedDict
 from typing import Dict, List
 
+import httpx
 import redis.asyncio as aioredis
 import structlog
 
@@ -19,6 +24,7 @@ logger = structlog.get_logger(__name__)
 
 STREAM = "stats:items"
 MAX_SENT_LINKS = 50_000  # Well over a cycle's links; a miss only sends one again, and the worker drops it
+EMBED_CHUNK = 500  # Links fingerprinted, then written, at a time: after a restart, a refresh sends those it has time for
 # The stream can't be evicted, so a feed's oversized fields stop here
 MAX_TITLE_CHARS, MAX_SOURCE_CHARS, MAX_LINK_CHARS = 300, 100, 2000
 
@@ -32,35 +38,39 @@ def _labels() -> Dict[str, str]:
     return {s.name: s.label or "" for s in feeds + catalog.extras + catalog.topic_extras}
 
 
-async def _send(redis_client: aioredis.Redis, results_by_source: Dict[str, List[Dict]]) -> None:
+async def _send(http_client: httpx.AsyncClient, redis_client: aioredis.Redis, results_by_source: Dict[str, List[Dict]]) -> None:
     labels = _labels()
-    new = {
+    new = list({
         item["link"]: (item, labels.get(name, ""))
         for name, items in results_by_source.items() for item in items
         if item["link"] not in _sent and len(item["link"]) <= MAX_LINK_CHARS
-    }
-    if not new:
-        return
-    pipe = redis_client.pipeline(transaction=False)
-    for item, label in new.values():
-        published = item.get("published")
-        pipe.xadd(
-            STREAM,
-            {"title": item["title"][:MAX_TITLE_CHARS], "link": item["link"], "source": item["source"][:MAX_SOURCE_CHARS],
-             "published": "" if published is None else str(published), "label": label},
-            maxlen=settings.STATS_STREAM_MAXLEN, approximate=True,
-        )
-    await pipe.execute()
-    _sent.update(dict.fromkeys(new))
-    while len(_sent) > MAX_SENT_LINKS:
-        _sent.popitem(last=False)
+    }.values())
+    for start in range(0, len(new), EMBED_CHUNK):
+        chunk = [(item["title"][:MAX_TITLE_CHARS], item["source"][:MAX_SOURCE_CHARS], item, label)
+                 for item, label in new[start:start + EMBED_CHUNK]]
+        response = await http_client.post(f"{settings.TAGGER_URL}/embed", timeout=settings.STATS_STREAM_TIMEOUT_SECONDS,
+                                          json={"items": [{"title": title, "source": source} for title, source, _, _ in chunk]})
+        response.raise_for_status()
+        pipe = redis_client.pipeline(transaction=False)
+        for (title, source, item, label), vector in zip(chunk, response.json()["vectors"]):
+            published = item.get("published")
+            pipe.xadd(
+                STREAM,
+                {"title": title, "link": item["link"], "source": source,
+                 "published": "" if published is None else str(published), "label": label, "vector": vector},
+                maxlen=settings.STATS_STREAM_MAXLEN, approximate=True,
+            )
+        await pipe.execute()
+        _sent.update(dict.fromkeys(item["link"] for _, _, item, _ in chunk))
+        while len(_sent) > MAX_SENT_LINKS:
+            _sent.popitem(last=False)
 
 
-async def publish_new(redis_client: aioredis.Redis, results_by_source: Dict[str, List[Dict]]) -> None:
-    """Adds the links not yet sent to the stream. Never raises."""
+async def publish_new(http_client: httpx.AsyncClient, redis_client: aioredis.Redis, results_by_source: Dict[str, List[Dict]]) -> None:
+    """Adds the links not yet sent to the stream, as many as there's time for. Never raises."""
     if not settings.STATS_STREAM_ENABLED:
         return
     try:
-        await asyncio.wait_for(_send(redis_client, results_by_source), settings.STATS_STREAM_TIMEOUT_SECONDS)
+        await asyncio.wait_for(_send(http_client, redis_client, results_by_source), settings.STATS_STREAM_TIMEOUT_SECONDS)
     except Exception as e:
         logger.warning("Stats stream not written", error=str(e) or type(e).__name__)

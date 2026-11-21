@@ -1,5 +1,6 @@
 """Tests for the worker: from stream entries to the published file."""
 
+import base64
 import json
 import sqlite3
 import zlib
@@ -11,7 +12,7 @@ import pytest
 
 import worker
 from models import LinearModel
-from places import Places
+from places import Places, clean_title
 from store import Store
 from stories import StoryIndex
 
@@ -62,8 +63,14 @@ def state(tmp_path):
                         public=tmp_path / "heatmap.json")
 
 
+def fingerprint(title, source=""):
+    """What the refresher sends with a headline: its fingerprint (as FakeEmbedder makes it), float16, in base64."""
+    return base64.b64encode(FakeEmbedder().embed([clean_title(title, source)])[0].astype("<f2").tobytes()).decode()
+
+
 def fields(title="Kenya votes", link="https://example.com/1", source="Paper", label="", published=""):
-    return {"title": title, "link": link, "source": source, "label": label, "published": published}
+    return {"title": title, "link": link, "source": source, "label": label, "published": published,
+            "vector": fingerprint(title, source)}
 
 
 def entry(n=1, **kwargs):
@@ -116,11 +123,6 @@ def test_an_old_item_makes_no_story(state):
     assert stories(state) == [] and state.store.headline_count() == 1
 
 
-def test_an_old_item_is_not_embedded(state):
-    state.embedder = None  # Would fail if used
-    worker.process([entry(published=str(NOW - 30 * DAY))], state)
-
-
 def test_parse_removes_googles_publisher_suffix():
     item = worker.parse_entry(*entry(title="Budget vote delayed - The Times of India", source="The Times of India"))
     assert item["title"] == "Budget vote delayed"
@@ -163,13 +165,6 @@ def test_irrelevant_headlines_are_dropped(state):
     state.relevant.reject_first = 1
     worker.process([entry()], state)
     assert stories(state) == []
-
-
-def test_dropped_headlines_are_not_embedded_twice(state):
-    state.relevant.reject_first = 1
-    worker.process([entry()], state)
-    state.embedder = None  # Would fail if used
-    worker.process([entry(2)], state)
 
 
 def test_unplaced_headlines_make_no_story(state):
@@ -457,3 +452,25 @@ def test_a_partly_bad_batch_is_only_a_warning(state, caplog):
 
 def test_the_database_caps_its_write_ahead_log(state):
     assert state.store.db.execute("PRAGMA journal_size_limit").fetchone()[0] == 64 * 2**20
+
+
+def test_stream_entries_bring_their_fingerprints(state):
+    state.embedder = None  # The worker has no model: it would fail if used
+    worker.process([entry(1), entry(2, link="https://example.com/2", title="Kenya votes again")], state)
+    [story] = stories(state)
+    assert story.title == "Kenya votes" and state.store.headline_count() == 2
+
+
+@pytest.mark.parametrize("vector", [None, "not base64!", base64.b64encode(bytes(10)).decode()])
+def test_an_entry_without_a_whole_fingerprint_is_skipped(vector):
+    data = fields()
+    if vector is None:
+        del data["vector"]
+    else:
+        data["vector"] = vector
+    assert worker.parse_entry("1800000000000-0", data) is None
+
+
+def test_a_fingerprint_is_read_at_length_one():
+    item = worker.parse_entry(*entry())
+    assert item["vector"].dtype == np.float32 and abs(float(np.linalg.norm(item["vector"])) - 1) < 1e-6

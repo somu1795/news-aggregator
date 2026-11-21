@@ -103,7 +103,7 @@ async def refresh_once(http_client: httpx.AsyncClient, redis_client: aioredis.Re
     topic views. Returns the number of main views published.
     """
     views, results_by_source = await get_fresh_views(http_client, redis_client, poller)
-    await publish_new(redis_client, results_by_source)
+    await publish_new(http_client, redis_client, results_by_source)
     fetched_at = time.time()
     published = {view: items for view, items in views.items() if items}
     if not published:
@@ -145,7 +145,7 @@ async def refresh_topics(
         logger.warning("Topic views not refreshed, keeping their previous snapshots", error=str(e) or type(e).__name__)
         return 0
     finally:  # Whether or not the tagger answered
-        await publish_new(redis_client, poller.topic_feeds["results"])
+        await publish_new(http_client, redis_client, poller.topic_feeds["results"])
     logger.info("Published topic snapshots", counts={view: len(items) for view, items in views.items()})
     return len(views)
 

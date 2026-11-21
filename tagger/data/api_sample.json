@@ -29,5 +29,9 @@
     "request": {"items": [{"title": "big dogs age faster study finds", "source": "Pub",
                            "summary": "Large dogs age faster than small ones, a study of 15,000 dogs found."}]},
     "response": {"embedded": 0, "candidates": 0}
+  },
+  "embed": {
+    "request": {"items": [{"title": "big dogs age faster study finds", "source": "Pub"}]},
+    "response": {"vectors": ["AAAA"]}
   }
 }

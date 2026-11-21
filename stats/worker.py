@@ -1,28 +1,33 @@
 """
 The stats service: reads the stream of fetched headlines (app/services/stats_stream.py),
+each with its fingerprint from the tagger (so it loads no model of its own; backfill.py does),
 scores and places each one, groups them into stories in its own SQLite file, and
 writes heatmap.json, which Caddy serves. Nothing calls it, and nothing waits for it:
 when it stops, the map keeps its last file and says how old it is, and it catches
 up from the stream when it starts again.
 """
 
+import base64
+import binascii
 import json
 import logging
 import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 import numpy as np
 import redis
 
-from embedder import Embedder
 from models import LinearModel, is_relevant
 from places import Places, clean_title
 from scoring import DAY, build_output, build_stories, red_dots
 from store import RETENTION_DAYS, Store
 from stories import StoryIndex
+
+if TYPE_CHECKING:  # Only backfill.py embeds titles here
+    from embedder import Embedder
 
 logger = logging.getLogger("stats")
 
@@ -34,14 +39,15 @@ MAX_STRESS = 3.0
 MAX_DATE_AGE = 7 * DAY  # A headline dated before this isn't news now: it's seen, and not counted
 DROPPED_LABELS = {"sport", "culture", "tech", "science", "nature"}
 WEB_LINK = ("https://", "http://")  # Nothing else is ever kept
-MODEL_DIR = Path(os.environ.get("STATS_MODEL_DIR", "/models/multilingual-e5-small"))
+MODEL_DIR = Path(os.environ.get("STATS_MODEL_DIR", "/models/multilingual-e5-small"))  # backfill.py's
+DIMENSIONS = 384
 
 
 @dataclass
 class State:
     store: Store
     places: Places
-    embedder: Optional[Embedder]
+    embedder: Optional["Embedder"]  # For backfill.py's headlines that have no fingerprint
     stress: LinearModel
     relevant: LinearModel
     index: StoryIndex
@@ -56,6 +62,12 @@ def parse_entry(entry_id: str, fields: Dict[str, str]) -> Optional[dict]:
     title = clean_title(fields.get("title", ""), source)
     if not title or not source or not link.startswith(WEB_LINK):
         return None
+    try:  # The tagger's fingerprint: base64 of little-endian float16[384]
+        vector = np.frombuffer(base64.b64decode(fields.get("vector", ""), validate=True), dtype="<f2").astype(np.float32)
+    except binascii.Error:
+        return None
+    if vector.shape != (DIMENSIONS,):
+        return None
     arrived = int(entry_id.split("-")[0]) / 1000
     try:
         published = float(fields.get("published", ""))
@@ -63,7 +75,7 @@ def parse_entry(entry_id: str, fields: Dict[str, str]) -> Optional[dict]:
         published = arrived
     when = published if arrived - MAX_DATE_AGE <= published <= arrived else arrived
     return {"title": title, "link": link, "source": source, "label": fields.get("label", ""), "when": when,
-            "stale": published < arrived - MAX_DATE_AGE}
+            "stale": published < arrived - MAX_DATE_AGE, "vector": vector / max(float(np.linalg.norm(vector)), 1e-9)}
 
 
 def _ingest(items: List[dict], vectors: np.ndarray, state: State) -> int:
@@ -120,7 +132,7 @@ def process(entries: List[Tuple[str, Dict[str, str]]], state: State) -> int:
             if item["stale"]:
                 state.store.add_headline(item["link"], None, item["when"])
         items = [item for item in items if not item["stale"]]
-        vectors = state.embedder.embed([item["title"] for item in items]) if items else None
+        vectors = np.stack([item["vector"] for item in items]) if items else None
         counted = _ingest(items, vectors, state)
         state.store.set_last_id(entries[-1][0])
         state.store.commit()
@@ -200,7 +212,7 @@ def tick(client: redis.Redis, state: State, now: float) -> None:
             raise
 
 
-def build_state(embedder: Optional[Embedder]) -> State:
+def build_state(embedder: Optional["Embedder"]) -> State:
     here = Path(__file__).parent
     state = State(
         store=Store(Path(os.environ.get("STATS_DB", "/data/stats.db"))),
@@ -219,7 +231,7 @@ def connect(url: str) -> redis.Redis:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    state = build_state(Embedder(MODEL_DIR))
+    state = build_state(None)
     client = connect(os.environ["REDIS_URL"])
     healthy = True
     logger.info("Stats worker started")

@@ -7,6 +7,7 @@ Run in the tagger image, or with requirements.txt + pytest installed:
 """
 
 import asyncio
+import base64
 import json
 import time
 import zlib
@@ -441,6 +442,7 @@ def test_the_routes_take_and_answer_what_the_shared_sample_says(tagger, monkeypa
         "story-verdicts": asyncio.run(tagger_module.story_verdicts(request("story-verdicts", tagger_module.VerdictRequest))),
         "story-moves": asyncio.run(tagger_module.story_moves()),
         "summaries": asyncio.run(tagger_module.summaries(request("summaries", tagger_module.SummaryRequest))),
+        "embed": asyncio.run(tagger_module.embed(request("embed", tagger_module.TagRequest))),
     }
     for route, answer in answers.items():
         assert fields(answer) == fields(API[route]["response"]), route
@@ -498,3 +500,14 @@ def test_a_database_from_before_summaries_gets_their_columns(tmp_path):
     db = store_module.connect(tmp_path / "old.db")
     assert "summary_embedding" in {row[1] for row in db.execute("PRAGMA table_info(headlines)")}
     assert db.execute("SELECT kind FROM story_candidates").fetchone() == ("title",)
+
+
+# Fingerprints for the stats service, which then needs no model of its own
+def test_each_headline_gets_its_story_fingerprint_as_float16(tagger):
+    count = lambda: tagger.db.execute("SELECT COUNT(*) FROM headlines").fetchone()
+    before = count()
+    vectors = tagger.embed([Item(title="Kenya  votes - Paper", source="Paper"), Item(title="Iran talks")])
+    decoded = np.stack([np.frombuffer(base64.b64decode(v), dtype="<f2") for v in vectors]).astype(np.float32)
+    expected = FakeEmbedder().embed(["Kenya votes", "Iran talks"])  # Cleaned as when grouped
+    assert decoded.shape == (2, 384) and np.allclose(decoded, expected, atol=1e-3)
+    assert count() == before  # Nothing is stored
