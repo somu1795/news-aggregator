@@ -73,6 +73,7 @@ async def root(request: Request):
         response = templates.TemplateResponse(
             request, "retro.html", {"views": views, "topics": topics, "site": get_site(), "csp_nonce": nonce,
              "assets": _ASSETS, "site_url": _site_url(request), "default_theme": settings.DEFAULT_THEME,
+             "share": _shared_tab(request),
              # Starting tab for visitors who haven't chosen one (country from Cloudflare)
              "home_region": region_for_country(request.headers.get("cf-ipcountry")),
              "moon": _moon_data(request)},
@@ -97,6 +98,18 @@ async def moon_page(request: Request):
                                "default_theme": settings.DEFAULT_THEME, "moon": _moon_data(request)})
     response.headers["Content-Security-Policy"] = _CSP.format(nonce=nonce)
     return response
+
+
+def _shared_tab(request: Request) -> dict:
+    """A link preview's title and address: the tab a shared link names (?region=, ?topic=), if it's a real one."""
+    catalog, site = get_catalog(), get_site()
+    region, topic = request.query_params.get("region"), request.query_params.get("topic")
+    region = region if region in catalog.view_ids else None
+    topic = topic if region and topic in {t.id for t in catalog.topics} else None
+    if not region:
+        return {"title": site.name, "url": _site_url(request)}
+    query = f"?region={region}" + (f"&topic={topic}" if topic else "")
+    return {"title": " · ".join(p for p in (site.name, region, topic) if p), "url": _site_url(request) + query}
 
 
 def _site_url(request: Request) -> str:

@@ -94,15 +94,20 @@ async def search_archive(request: Request, q: str = Query(min_length=1, max_leng
     )
 
 
-def _cached(snapshot: Snapshot, request: Request) -> Response:
-    """The snapshot, cached until it's due to be replaced, compressed if the client takes a copy that's ready."""
+def cache_headers(snapshot: Snapshot) -> dict:
+    """Browsers keep a snapshot until it's due to be replaced, the CDN at least EDGE_MIN_SECONDS (see the module)."""
     max_age = max(0, int(snapshot.expires_at - time.time()))
-    headers = {
+    return {
         "Cache-Control": f"public, max-age={max_age}",
         "CDN-Cache-Control": f"public, max-age={max(max_age, EDGE_MIN_SECONDS)}, "
                              "stale-while-revalidate=60, stale-if-error=86400",
-        "Vary": "Accept-Encoding",  # Also when sent as it is: a cache must not give that copy to everyone
     }
+
+
+def _cached(snapshot: Snapshot, request: Request) -> Response:
+    """The snapshot, cached until it's due to be replaced, compressed if the client takes a copy that's ready."""
+    headers = cache_headers(snapshot)
+    headers["Vary"] = "Accept-Encoding"  # Also when sent as it is: a cache must not give that copy to everyone
     encoded = dict(snapshot.encoded)  # Copies are added from another thread
     encoding = accepted_encoding(request.headers.get("accept-encoding", ""), encoded)
     if encoding:

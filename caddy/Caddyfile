@@ -54,7 +54,7 @@
 	respond @admin_from_outside "Forbidden" 403
 
 	# Site icons are static files baked into this image (caddy/static); the app serves the manifest (site.yaml)
-	@icons path /favicon.svg /favicon.ico /apple-touch-icon.png /icon-192.png /icon-512.png
+	@icons path /favicon.svg /favicon.ico /apple-touch-icon.png /icon-192.png /icon-512.png /og.png
 	handle @icons {
 		root * /srv/static
 		header Cache-Control "public, max-age=604800"
