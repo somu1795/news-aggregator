@@ -24,7 +24,7 @@ logger = structlog.get_logger(__name__)
 
 STREAM = "stats:items"
 MAX_SENT_LINKS = 50_000  # Well over a cycle's links; a miss only sends one again, and the worker drops it
-EMBED_CHUNK = 500  # Links fingerprinted, then written, at a time: after a restart, a refresh sends those it has time for
+EMBED_CHUNK = 100  # Links fingerprinted, then written, at a time: after a restart, a refresh sends those it has time for
 # The stream can't be evicted, so a feed's oversized fields stop here
 MAX_TITLE_CHARS, MAX_SOURCE_CHARS, MAX_LINK_CHARS = 300, 100, 2000
 

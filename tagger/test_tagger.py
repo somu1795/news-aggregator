@@ -511,3 +511,56 @@ def test_each_headline_gets_its_story_fingerprint_as_float16(tagger):
     expected = FakeEmbedder().embed(["Kenya votes", "Iran talks"])  # Cleaned as when grouped
     assert decoded.shape == (2, 384) and np.allclose(decoded, expected, atol=1e-3)
     assert count() == before  # Nothing is stored
+
+
+def decode(vectors):
+    return np.stack([np.frombuffer(base64.b64decode(v), dtype="<f2") for v in vectors]).astype(np.float32)
+
+
+# One story model compile serves headlines and summaries: 3.7x slower a headline on the NPU, so each is embedded once
+def test_a_headlines_stored_story_fingerprint_is_reused(tagger):
+    items = [Item(title="Kenya votes in tight race")]
+    tagger.group(items)
+    tagger.story_embedder.embedded.clear()
+    vectors = tagger.embed(items)
+    assert tagger.story_embedder.embedded == []
+    stored = tagger.db.execute("SELECT story_embedding FROM headlines WHERE title = 'Kenya votes in tight race'").fetchone()[0]
+    assert np.allclose(decode(vectors)[0], np.frombuffer(stored, dtype=np.float16).astype(np.float32), atol=1e-3)
+
+
+def test_a_new_fingerprint_is_kept_for_a_stored_headline_and_adds_no_headline(tagger):
+    tagger.tag([Item(title="Minister budget vote parliament", label="other")])  # Stored by tagging, with its label
+    count = lambda: tagger.db.execute("SELECT COUNT(*) FROM headlines").fetchone()[0]
+    before = count()
+    items = [Item(title="Minister budget vote parliament"), Item(title="Never tagged headline")]
+    first = tagger.embed(items)
+    tagger.story_embedder.embedded.clear()
+    second = tagger.embed(items)
+    assert tagger.story_embedder.embedded == ["Never tagged headline"]  # Not stored: its row is tagging's to make
+    assert first == second and count() == before
+    assert tagger.db.execute("SELECT label FROM headlines WHERE title = 'Minister budget vote parliament'").fetchone() == ("other",)
+
+
+def test_headlines_and_summaries_share_one_story_model_compile(tmp_path, monkeypatch):
+    made = []
+
+    class Recording(FakeEmbedder):
+        def __init__(self, model_dir, *args, **kwargs):
+            super().__init__()
+            made.append((model_dir, kwargs.get("max_tokens")))
+
+    bundled = tmp_path / "bundled"
+    bundled.mkdir()
+    (bundled / "seed.json").write_text(json.dumps(SEED))
+    (bundled / "eval.json").write_text(json.dumps(EVAL))
+    monkeypatch.setattr(tagger_module, "BUNDLED", bundled)
+    monkeypatch.setattr(tagger_module, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(tagger_module, "Embedder", Recording)
+
+    async def start():
+        async with tagger_module.lifespan(tagger_module.app):
+            return tagger_module.app.state.tagger
+
+    started = asyncio.run(start())
+    assert started.story_embedder is started.summary_embedder
+    assert [tokens for model_dir, tokens in made if model_dir == tagger_module.STORY_MODEL_DIR] == [tagger_module.SUMMARY_TOKENS]

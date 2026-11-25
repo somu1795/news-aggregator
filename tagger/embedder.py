@@ -11,7 +11,8 @@ import numpy as np
 
 logger = logging.getLogger("tagger")
 
-# NPUs need static input shapes; headlines fit in 48 tokens (summaries are embedded at 160: SUMMARY_TOKENS)
+# NPUs need static input shapes; headlines fit in 48 tokens. The story model is compiled once, at
+# summaries' 160 (SUMMARY_TOKENS), for headlines too (tagger.py)
 BATCH, MAX_TOKENS, SUMMARY_TOKENS = 32, 48, 160
 
 

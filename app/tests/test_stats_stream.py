@@ -212,3 +212,10 @@ async def test_chunks_written_before_the_time_runs_out_stay_sent(mock_redis, tag
     await publish(mock_redis, {"Feed": [item("https://a.example/1"), item("https://a.example/2")]})
     assert [e["link"] for e in await entries(mock_redis)] == ["https://a.example/1"]
     assert list(stats_stream._sent) == ["https://a.example/1"]  # The other goes next time
+
+
+def test_a_chunk_of_new_headlines_is_fingerprinted_well_within_the_time():
+    # The tagger embeds 64-84 new headlines a second (one story model compile, at summaries' length; measured
+    # Nov 25, 2026). A chunk that can't finish in time would be asked again every refresh, and nothing would
+    # reach the stream.
+    assert stats_stream.EMBED_CHUNK / 64 <= settings.STATS_STREAM_TIMEOUT_SECONDS / 2

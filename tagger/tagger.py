@@ -173,8 +173,31 @@ class Tagger(StoryGrouping):
 
 
     def embed(self, items: List["Item"]) -> List[str]:
-        """Each headline's story-model fingerprint, as grouping makes it, of length 1: base64 of little-endian float16[384]."""
-        X = self.story_embedder.embed([clean_title(item.title, item.source) for item in items])
+        """
+        Each headline's story-model fingerprint, as grouping makes it, of length 1: base64 of little-endian
+        float16[384]. A stored headline's is reused, or kept once made, so each is embedded once (the model is
+        compiled for summaries' length: ~84 headlines/s on the NPU). No headline is added: tagging stores
+        them, with their feed's label.
+        """
+        titles = [clean_title(item.title, item.source) for item in items]
+        if not titles:
+            return []
+        unique = list(dict.fromkeys(titles))
+        vectors = {}
+        for start in range(0, len(unique), 500):
+            chunk = unique[start:start + 500]
+            for title, blob in self.db.execute(
+                f"SELECT title, story_embedding FROM headlines WHERE title IN ({','.join('?' * len(chunk))}) "
+                "AND story_embedding IS NOT NULL", chunk,
+            ):
+                vectors[title] = np.frombuffer(blob, dtype=np.float16).astype(np.float32)
+        missing = [title for title in unique if title not in vectors]
+        if missing:
+            vectors.update(zip(missing, self.story_embedder.embed(missing)))
+            self.db.executemany("UPDATE headlines SET story_embedding = ? WHERE title = ? AND story_embedding IS NULL",
+                                [(to_blob(vectors[t]), t) for t in missing])
+            self.db.commit()
+        X = np.stack([vectors[t] for t in titles])
         X = X / np.maximum(np.linalg.norm(X, axis=1, keepdims=True), 1e-9)
         return [base64.b64encode(v.astype("<f2").tobytes()).decode() for v in X]
 
@@ -330,9 +353,10 @@ async def lifespan(app: FastAPI):
     started = time.monotonic()
 
     def setup():
-        story = Embedder(STORY_MODEL_DIR, DEVICE, DATA_DIR / "ov_cache", pooling="mean", prefix="query: ")
-        summary = Embedder(STORY_MODEL_DIR, DEVICE, DATA_DIR / "ov_cache", pooling="mean", prefix="query: ", max_tokens=SUMMARY_TOKENS)
-        tagger = Tagger(Embedder(MODEL_DIR, DEVICE, DATA_DIR / "ov_cache"), DATA_DIR, story, summary)
+        # One compile of the story model, at summaries' length, for headlines too: a second at 48 tokens took
+        # ~260 MB more of NPU memory. Headlines come out the same (a few long ones are no longer cut), 3.7x slower.
+        story = Embedder(STORY_MODEL_DIR, DEVICE, DATA_DIR / "ov_cache", pooling="mean", prefix="query: ", max_tokens=SUMMARY_TOKENS)
+        tagger = Tagger(Embedder(MODEL_DIR, DEVICE, DATA_DIR / "ov_cache"), DATA_DIR, story, story)
         tagger.start()
         # The first NPU compile and the training leave ~0.7 GB of freed heap; give it back
         ctypes.CDLL("libc.so.6").malloc_trim(0)
