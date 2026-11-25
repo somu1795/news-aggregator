@@ -331,7 +331,8 @@ services:
   # (no inbound port needed). In the tunnel's Public Hostname, point the site at
   # http://caddy:7001. Started only with COMPOSE_PROFILES=cloudflare in .env.
   cloudflared:
-    image: cloudflare/cloudflared:2026.10.7  # Pinned like the others (scripts/check-updates.py reports newer ones)
+    image: cloudflare/cloudflared:latest
+    pull_policy: always  # The one image not pinned: each `docker compose up` takes the newest release
     <<: *hardened
     profiles: [cloudflare]
     command: tunnel --no-autoupdate run
