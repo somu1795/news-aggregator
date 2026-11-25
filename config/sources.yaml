@@ -54,12 +54,9 @@ regions:
     - name: Al Jazeera
       url: https://www.aljazeera.com/xml/rss/all.xml
       weight: 0.06
-    - name: Kyodo News
-      url: https://english.kyodonews.net/list/feed/rss4kyodonews-fzone
-      weight: 0.05
-    - name: Japan Times
+    - name: Japan Times  # And Kyodo's 5%: its feed went with its redesign (Nov 2026)
       url: https://www.japantimes.co.jp/feed/
-      weight: 0.04
+      weight: 0.09
     - name: Yonhap
       url: https://en.yna.co.kr/RSS/news.xml
       weight: 0.05
