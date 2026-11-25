@@ -146,9 +146,57 @@ async def test_a_refused_feed_is_not_retried_and_is_asked_again_later(poller, mo
     route = respx.get(FEED).mock(return_value=httpx.Response(403))
     async with httpx.AsyncClient() as client:
         assert await poller.fetch(client, "Outlet", FEED) == []
-        assert route.call_count == 1  # A 403 won't change on the second asking
-        assert await poller.fetch(client, "Outlet", FEED) == [] and route.call_count == 1  # Not due again yet
+        assert route.call_count == 2  # Once as each client (below); a 403 won't change on a third asking
+        assert await poller.fetch(client, "Outlet", FEED) == [] and route.call_count == 2  # Not due again yet
     assert poller.feeds[FEED].interval >= 2 * settings.REFRESH_INTERVAL_SECONDS
+
+
+def as_browser(request):
+    return request.headers["User-Agent"] == settings.BROWSER_USER_AGENT
+
+
+def refusing_the_browser(refusal):
+    """A feed that refuses a client calling itself Chrome (the Guardian since Nov 23, 2026; Hacker News: 419)."""
+    def answer(request):
+        if as_browser(request):
+            if isinstance(refusal, Exception):
+                raise refusal
+            return httpx.Response(refusal)
+        return httpx.Response(200, content=rss("a"))
+    return answer
+
+
+# Over HTTP/2 the Guardian's refusal reached httpx as a protocol error, retried 3 times as a network error
+@pytest.mark.parametrize("refusal", [403, 419, httpx.LocalProtocolError("Invalid input ConnectionInputs.RECV_DATA in state ConnectionState.CLOSED")])
+@respx.mock
+async def test_a_feed_refusing_the_browser_identity_is_asked_at_once_as_a_plain_client(poller, monkeypatch, refusal):
+    monkeypatch.setattr(settings, "FETCH_RETRIES", 3)
+    route = respx.get(FEED).mock(side_effect=refusing_the_browser(refusal))
+    async with httpx.AsyncClient() as client:
+        assert [h["title"] for h in await poller.fetch(client, "Outlet", FEED)] == ["a"]
+        assert route.call_count == 2 and as_browser(route.calls[0].request) and not as_browser(route.calls[1].request)
+        poller.feeds[FEED].next_fetch = 0  # Due again: asked as the client that got an answer, first
+        assert [h["title"] for h in await poller.fetch(client, "Outlet", FEED)] == ["a"]
+    assert route.call_count == 3 and not as_browser(route.calls[2].request)
+
+
+@respx.mock
+async def test_a_feed_refusing_the_plain_client_goes_back_to_the_browser_identity(poller):
+    poller.feeds[FEED] = poller_module._FeedState(plain=True)
+    route = respx.get(FEED).mock(side_effect=lambda request: httpx.Response(200, content=rss("a")) if as_browser(request)
+                                 else httpx.Response(403))  # Balkan Insight, Colombia One
+    async with httpx.AsyncClient() as client:
+        assert [h["title"] for h in await poller.fetch(client, "Outlet", FEED)] == ["a"]
+    assert route.call_count == 2 and as_browser(route.calls[1].request) and not poller.feeds[FEED].plain
+
+
+@pytest.mark.parametrize("status", [404, 410])
+@respx.mock
+async def test_a_missing_feed_is_not_asked_again_as_another_client(poller, status):
+    route = respx.get(FEED).mock(return_value=httpx.Response(status))  # Kyodo's feed, gone in its redesign
+    async with httpx.AsyncClient() as client:
+        assert await poller.fetch(client, "Outlet", FEED) == []
+    assert route.call_count == 1 and not poller.feeds[FEED].plain
 
 
 @respx.mock
@@ -279,6 +327,18 @@ async def test_a_restart_takes_up_each_feeds_schedule_headlines_and_validators(m
         results = await restarted.fetch_all(client, [SimpleNamespace(name="Outlet", url=FEED)])
     assert route.call_count == 3 and route.calls[2].request.headers["If-None-Match"] == '"v1"'
     assert [h["title"] for h in results["Outlet"]] == ["a", "b"]
+
+
+@respx.mock
+async def test_a_restart_keeps_asking_a_feed_as_the_client_it_answered(mock_redis, monkeypatch):
+    route = respx.get(FEED).mock(side_effect=refusing_the_browser(403))
+    async with httpx.AsyncClient() as client:
+        await FeedPoller(mock_redis).fetch_all(client, [SimpleNamespace(name="Outlet", url=FEED)])
+        restarted = FeedPoller(mock_redis)
+        await restarted.restore(mock_redis)
+        advance(monkeypatch, settings.FEED_MAX_INTERVAL_SECONDS)
+        await restarted.fetch_all(client, [SimpleNamespace(name="Outlet", url=FEED)])
+    assert route.call_count == 3 and not as_browser(route.calls[2].request)
 
 
 @respx.mock

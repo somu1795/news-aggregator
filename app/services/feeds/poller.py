@@ -50,6 +50,7 @@ class _FeedState:
     last_modified: Optional[str] = None
     interval: float = 0.0  # Seconds until it's fetched again: 0 is every cycle
     next_fetch: float = 0.0  # time.monotonic()
+    plain: bool = False  # Asked as a plain HTTP client, not as a browser (_ask)
 
 
 
@@ -70,6 +71,11 @@ def _retry_after(response: httpx.Response) -> Optional[float]:
         return max(0.0, email.utils.parsedate_to_datetime(value).timestamp() - time.time())
     except (TypeError, ValueError, IndexError):
         return None
+
+
+def _refused(status: int) -> bool:
+    """An answer that may depend on who asks: a 4xx other than gone (404, 410) or slow down (429)."""
+    return 400 <= status < 500 and status not in (404, 410, 429)
 
 
 def _schedule(state: _FeedState, changed: bool) -> None:
@@ -205,6 +211,7 @@ class FeedPoller(HostLimits):
           backoff), with no retries, and stops those still waiting their turn; network
           errors and other 5xx are retried with backoff (each retry waits its turn too),
           other 4xx (403, 404: asking again won't help) and pages that aren't feeds aren't;
+        - a feed that refuses the browser identity is asked as a plain client, or the other way round (_ask);
         - a feed that can't be fetched is asked less often, like a quiet one.
         When a feed can't be fetched, its last headlines are reused (they still age
         out after MAX_HEADLINE_AGE_HOURS).
@@ -215,18 +222,14 @@ class FeedPoller(HostLimits):
             return state.items
         self.dirty.add(url)
         await asyncio.sleep(random.uniform(0, settings.FEED_JITTER_SECONDS))
-        headers = dict(_FEED_HEADERS)
-        if state.etag:
-            headers["If-None-Match"] = state.etag
-        if state.last_modified:
-            headers["If-Modified-Since"] = state.last_modified
         for attempt in range(settings.FETCH_RETRIES):
             await self.take_turn(host, settings.FEED_HOST_GAP_SECONDS)
             if self.paused(host):  # Told to slow down while waiting
                 return state.items
             try:
-                async with _OUTGOING_SEMAPHORE:
-                    response = await client.get(url, headers=headers, follow_redirects=True)
+                response = await self._ask(client, source_name, url, state, host)
+                if response is None:  # Told to slow down while waiting to ask again
+                    return state.items
                 if response.status_code in (429, 503):
                     seconds = self.back_off(host, response)
                     logger.warning("Feed host asked us to slow down, pausing it", source=source_name, host=host,
@@ -248,8 +251,9 @@ class FeedPoller(HostLimits):
                     "Feed fetch attempt failed",
                     source=source_name, attempt=attempt + 1, error=str(e),
                 )
-                # Other 4xx, or a page that isn't a feed (a bot check's): asking again at once won't help
-                if isinstance(e, ValueError) or isinstance(e, httpx.HTTPStatusError) and e.response.status_code < 500:
+                # Other 4xx, a refusal over HTTP/2 (_ask) or a page that isn't a feed (a bot check's): asking again at once won't help
+                if (isinstance(e, (ValueError, httpx.ProtocolError))
+                        or isinstance(e, httpx.HTTPStatusError) and e.response.status_code < 500):
                     _schedule(state, changed=False)
                     return state.items
                 if attempt < settings.FETCH_RETRIES - 1:
@@ -270,6 +274,39 @@ class FeedPoller(HostLimits):
         _schedule(state, changed)
         logger.info("Fetched headlines from source", count=len(headlines), source=source_name)
         return headlines
+
+    async def _ask(self, client: httpx.AsyncClient, source_name: str, url: str, state: _FeedState,
+                   host: str) -> Optional[httpx.Response]:
+        """
+        Asks for a feed as the client it last answered: a browser (BROWSER_USER_AGENT), or a plain HTTP
+        client (httpx's own User-Agent). Refused (_refused), it asks once more at once as the other, and
+        keeps to that one. Sites' bot rules differ and change: since Nov 23, 2026 the Guardian refuses a
+        client calling itself Chrome without being one (403; over HTTP/2 an error httpx reports as a
+        protocol error) and Hacker News answers it 419, while Balkan Insight and Colombia One refuse a
+        plain client. None if the host is paused while this waits its turn to ask again.
+        """
+        try:
+            response = await self._get(client, url, state)
+            if not _refused(response.status_code):
+                return response
+        except httpx.ProtocolError:
+            pass
+        state.plain = not state.plain
+        logger.info("Feed asked as another client", source=source_name, plain=state.plain)
+        await self.take_turn(host, settings.FEED_HOST_GAP_SECONDS)
+        if self.paused(host):
+            return None
+        return await self._get(client, url, state)
+
+    @staticmethod
+    async def _get(client: httpx.AsyncClient, url: str, state: _FeedState) -> httpx.Response:
+        headers = {k: v for k, v in _FEED_HEADERS.items() if not (state.plain and k == "User-Agent")}
+        if state.etag:
+            headers["If-None-Match"] = state.etag
+        if state.last_modified:
+            headers["If-Modified-Since"] = state.last_modified
+        async with _OUTGOING_SEMAPHORE:
+            return await client.get(url, headers=headers, follow_redirects=True)
 
     async def fetch_all(self, client: httpx.AsyncClient, sources: List[NewsSource | TopicSource]) -> Dict[str, List[Dict]]:
         """Fetches every feed concurrently; a feed that errors contributes nothing."""
@@ -297,7 +334,7 @@ class FeedPoller(HostLimits):
                     state = self.feeds[url]
                     pipe.set(feed_state_key(url), json.dumps({
                         "url": url, "etag": state.etag, "last_modified": state.last_modified, "interval": state.interval,
-                        "next_fetch": now + state.next_fetch - mono,
+                        "plain": state.plain, "next_fetch": now + state.next_fetch - mono,
                         "items": [{k: v for k, v in h.items() if k != "feed_text"} for h in state.items],
                     }), ex=settings.FEED_STATE_TTL_SECONDS)
                 await pipe.execute()
@@ -316,7 +353,8 @@ class FeedPoller(HostLimits):
                     continue
                 saved = json.loads(value)
                 self.feeds[saved["url"]] = _FeedState(items=saved["items"], etag=saved["etag"], last_modified=saved["last_modified"],
-                                                      interval=saved["interval"], next_fetch=mono + saved["next_fetch"] - now)
+                                                      interval=saved["interval"], next_fetch=mono + saved["next_fetch"] - now,
+                                                      plain=saved.get("plain", False))
             batch = await redis_client.get(TOPIC_BATCH_KEY)
             if batch:
                 self.topic_feeds["at"] = mono + float(batch) - now
