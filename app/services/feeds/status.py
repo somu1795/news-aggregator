@@ -34,7 +34,7 @@ async def report(redis_client: aioredis.Redis, catalog: Catalog) -> str:
 
 async def main() -> None:
     from services.redis_client import create_redis_client
-    redis_client = create_redis_client()
+    redis_client = create_redis_client(socket_timeout=5, retries=1)
     print(await report(redis_client, get_catalog()), end="")
     await redis_client.aclose()
 

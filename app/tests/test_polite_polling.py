@@ -498,3 +498,18 @@ async def test_the_review_lists_the_feeds_not_working_now(mock_redis, monkeypatc
     poller.dirty.add(FEED)
     await poller.save_feeds()
     assert await status.report(mock_redis, SimpleNamespace(feeds=sources)) == "Every feed is working.\n"
+
+
+async def test_the_review_command_connects_as_the_services_do(mock_redis, monkeypatch, capsys):
+    import inspect
+    from services import redis_client
+    real = redis_client.create_redis_client
+
+    def checked(*args, **kwargs):
+        inspect.signature(real).bind(*args, **kwargs)  # Called as the real one must be
+        return mock_redis
+
+    monkeypatch.setattr(redis_client, "create_redis_client", checked)
+    monkeypatch.setattr(status, "get_catalog", lambda: SimpleNamespace(feeds=[]))
+    await status.main()
+    assert capsys.readouterr().out == "Every feed is working.\n"
