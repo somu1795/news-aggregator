@@ -265,8 +265,8 @@ async def run() -> None:
     # Socket timeout must outlast the BLPOP wait in wait_for_next_cycle()
     redis_client = create_redis_client(socket_timeout=settings.REFRESH_INTERVAL_SECONDS + 10, retries=3)
     limits = httpx.Limits(max_connections=50, max_keepalive_connections=20)
-    # Feeds, publishers and icons are other people's servers: public addresses only, but for the tagger
-    async with public_client([settings.TAGGER_URL], limits=limits, timeout=settings.REQUEST_TIMEOUT) as http_client:
+    # Feeds, publishers and icons are other people's servers: public addresses only, but for the tagger and the feed alerts
+    async with public_client([settings.TAGGER_URL, settings.FEED_ALERT_URL], limits=limits, timeout=settings.REQUEST_TIMEOUT) as http_client:
         logger.info("Refresher started", interval=settings.REFRESH_INTERVAL_SECONDS)
         poller = FeedPoller(redis_client)  # What it remembers about each feed and host, for the refresher's whole life
         await poller.restore(redis_client)  # Pauses hosts asked for before a restart

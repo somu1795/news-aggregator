@@ -1,5 +1,6 @@
 """Tests for polite feed polling: conditional requests, per-feed intervals, host backoff."""
 
+import json
 import time
 from types import SimpleNamespace
 
@@ -379,3 +380,128 @@ async def test_without_redis_feeds_start_afresh_as_before():
     poller.dirty.add(FEED)
     await poller.save_feeds()
     assert poller.feeds == {}
+
+
+# --- A feed that stops working is reported (Hacker News refused us for a week before anyone noticed, Nov 2026) ---
+
+ALERT = "http://alerts.lan/webhook"
+DAY = 86400
+
+
+def later(monkeypatch, seconds):
+    """Moves both of the poller's clocks forward: its schedule's and the wall clock its health uses."""
+    mono, wall = poller_module.time.monotonic() + seconds, poller_module.time.time() + seconds
+    monkeypatch.setattr(poller_module, "time", SimpleNamespace(monotonic=lambda: mono, time=lambda: wall))
+
+
+async def cycle(poller, client):
+    for state in poller.feeds.values():
+        state.next_fetch = 0  # Due
+    return await poller.fetch_all(client, [SimpleNamespace(name="Outlet", url=FEED)])
+
+
+def alerts_sent(route):
+    return [json.loads(call.request.content) for call in route.calls]
+
+
+@respx.mock
+async def test_a_feed_with_no_usable_answer_for_a_day_is_reported_once(poller, monkeypatch):
+    monkeypatch.setattr(settings, "FEED_ALERT_URL", ALERT)
+    alert = respx.post(ALERT).mock(return_value=httpx.Response(200))
+    respx.get(FEED).mock(return_value=httpx.Response(404))  # Kyodo's feed, gone in its redesign
+    async with httpx.AsyncClient() as client:
+        await cycle(poller, client)
+        later(monkeypatch, DAY - 60)
+        await cycle(poller, client)
+        assert alert.call_count == 0  # Not a day yet
+        later(monkeypatch, 120)
+        await cycle(poller, client)
+        later(monkeypatch, 3600)
+        await cycle(poller, client)
+    sent = alerts_sent(alert)
+    assert len(sent) == 1 and sent[0]["title"] == "Feed not working: Outlet"
+    assert "404" in sent[0]["message"]
+
+
+@respx.mock
+async def test_a_reported_feed_that_answers_again_is_reported_working(poller, monkeypatch):
+    monkeypatch.setattr(settings, "FEED_ALERT_URL", ALERT)
+    monkeypatch.setattr(settings, "FETCH_RETRIES", 1)
+    alert = respx.post(ALERT).mock(return_value=httpx.Response(200))
+    feed = respx.get(FEED).mock(return_value=httpx.Response(500))
+    async with httpx.AsyncClient() as client:
+        await cycle(poller, client)
+        later(monkeypatch, DAY + 60)
+        await cycle(poller, client)
+        feed.mock(return_value=httpx.Response(200, content=rss("a")))
+        later(monkeypatch, 600)
+        await cycle(poller, client)
+    assert [a["title"] for a in alerts_sent(alert)] == ["Feed not working: Outlet", "Feed working again: Outlet"]
+
+
+@respx.mock
+async def test_a_feed_with_no_headlines_counts_as_not_working(poller, monkeypatch):
+    monkeypatch.setattr(settings, "FEED_ALERT_URL", ALERT)
+    alert = respx.post(ALERT).mock(return_value=httpx.Response(200))
+    respx.get(FEED).mock(return_value=httpx.Response(200, content=rss()))
+    async with httpx.AsyncClient() as client:
+        await cycle(poller, client)
+        later(monkeypatch, DAY + 60)
+        await cycle(poller, client)
+    assert [a["title"] for a in alerts_sent(alert)] == ["Feed not working: Outlet"]
+
+
+@respx.mock
+async def test_a_quiet_feed_answering_304_is_working(poller, monkeypatch):
+    monkeypatch.setattr(settings, "FEED_ALERT_URL", ALERT)
+    alert = respx.post(ALERT).mock(return_value=httpx.Response(200))
+    respx.get(FEED).mock(side_effect=[httpx.Response(200, content=rss("a"), headers={"ETag": '"v1"'})] + [httpx.Response(304)] * 10)
+    async with httpx.AsyncClient() as client:
+        for _ in range(5):
+            await cycle(poller, client)
+            later(monkeypatch, DAY / 2)
+    assert alert.call_count == 0
+
+
+@respx.mock
+async def test_without_an_alert_address_it_is_only_logged(poller, monkeypatch):
+    monkeypatch.setattr(settings, "FEED_ALERT_URL", "")
+    respx.get(FEED).mock(return_value=httpx.Response(404))  # respx fails any other request
+    async with httpx.AsyncClient() as client:
+        await cycle(poller, client)
+        later(monkeypatch, DAY + 60)
+        await cycle(poller, client)
+    assert poller.feeds[FEED].reported
+
+
+@respx.mock
+async def test_an_alert_that_cant_be_sent_never_stops_a_refresh(poller, monkeypatch):
+    monkeypatch.setattr(settings, "FEED_ALERT_URL", ALERT)
+    respx.post(ALERT).mock(side_effect=httpx.ConnectError("Home Assistant is restarting"))
+    respx.get(FEED).mock(return_value=httpx.Response(404))
+    async with httpx.AsyncClient() as client:
+        await cycle(poller, client)
+        later(monkeypatch, DAY + 60)
+        results = await cycle(poller, client)
+    assert results == {"Outlet": []}
+
+
+@respx.mock
+async def test_a_restart_neither_reports_a_feed_again_nor_forgets_how_long_it_failed(mock_redis, monkeypatch):
+    monkeypatch.setattr(settings, "FEED_ALERT_URL", ALERT)
+    alert = respx.post(ALERT).mock(return_value=httpx.Response(200))
+    respx.get(FEED).mock(return_value=httpx.Response(404))
+    async with httpx.AsyncClient() as client:
+        before = FeedPoller(mock_redis)
+        await cycle(before, client)
+        later(monkeypatch, DAY - 600)
+        await cycle(before, client)
+        restarted = FeedPoller(mock_redis)
+        await restarted.restore(mock_redis)
+        later(monkeypatch, 1200)
+        await cycle(restarted, client)  # A day since its last usable answer, across the restart
+        again = FeedPoller(mock_redis)
+        await again.restore(mock_redis)
+        later(monkeypatch, 600)
+        await cycle(again, client)
+    assert alert.call_count == 1

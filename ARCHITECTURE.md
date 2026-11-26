@@ -512,6 +512,7 @@ There are no metrics: each service says what it does in its log (JSON lines, `do
 - `Refresh produced no headlines, keeping previous snapshots`, `Refresh timed out, keeping previous snapshot`, `Refresh failed, keeping previous snapshot` (errors): a cycle that didn't.
 - `Topic views not refreshed, keeping their previous snapshots` (warning): the topic phase failed.
 - `Feed fetch exhausted all retries` (error, with `source`): a feed that failed; `Feed host asked us to slow down, pausing it` (warning).
+- `Feed not working` (error, once) and `Feed working again`: a feed with no usable answer (a 304, or a feed with headlines) for `FEED_DOWN_SECONDS` (**a day**), and its recovery (`FeedPoller.check_health`). Kept with the feed's state in Redis, so a restart neither reports it again nor forgets how long it failed. Each is also POSTed as `{"title", "message"}` to `FEED_ALERT_URL` if set (a Home Assistant webhook, which can show it as a phone notification); a failure to send is logged and never stops a refresh. A broken feed doesn't show on the page, its share of a tab taken by the others: in Nov 2026 Hacker News answered 419 for a week, the Guardian refused us for three days and Kyodo's feed was gone before anyone noticed. Only failing to answer counts: feeds that publish weekly (Anthropocene Magazine went 12 days without a new headline) are fine.
 - The link resolver's warnings (Step 3): `falling back` when the custom resolver gives up, `Custom and fallback link resolution both failed` when both do.
 
 **Summarizer** — `Read articles` (counts per method, and failed) and `Summarized articles` every pass; `Judged story pairs`.
@@ -550,6 +551,7 @@ There are no metrics: each service says what it does in its log (JSON lines, `do
 | `SUMMARY_RETRY_SECONDS` | 3 hours | When an article no step could read is tried again. |
 | `SUMMARIZER_BROWSER_URL` / `SUMMARIZER_BROWSER_PROXY` / `SUMMARIZER_BROWSER2_URL` | set in `docker-compose.yml` | The headless browser, the public-only proxy it must use, and the second browser; empty disables a browser step. |
 | `BROWSER_HOST_TTL_SECONDS` | 7 days | How long a site that blocked a plain request goes straight to the browser. |
+| `FEED_DOWN_SECONDS` / `FEED_ALERT_URL` | 1 day / empty | A feed with no usable answer this long is reported; where the report is also POSTed (`{"title", "message"}`, e.g. a Home Assistant webhook; empty: logged only). |
 | `FEED_TEXT_TTL_SECONDS` | 2 days | How long the feed's own text of a published item is kept. |
 | `ICON_SOURCE_URL` / `ICON_FALLBACK_URL` | DuckDuckGo / Google (`sz=64`) | The icon service, and where a website's icon is looked for when neither the service nor the website has one (redrawn as pixel art; empty disables it). |
 | `ARCHIVE_PATH` / `ARCHIVE_SNAPSHOT_SECONDS` | empty (`/archive/archive.db` in `docker-compose.yml`, for the refresher and the app) / 3600 | The headline archive's SQLite file (empty disables it, and the search of older headlines), and how often each view's order is recorded in it. |

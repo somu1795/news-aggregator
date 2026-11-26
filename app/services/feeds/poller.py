@@ -51,6 +51,13 @@ class _FeedState:
     interval: float = 0.0  # Seconds until it's fetched again: 0 is every cycle
     next_fetch: float = 0.0  # time.monotonic()
     plain: bool = False  # Asked as a plain HTTP client, not as a browser (_ask)
+    # Its health (check_health), by the wall clock, which a restart keeps: when it last gave a usable
+    # answer (a 304, or a feed with headlines), since when it's been watched, its last error, and
+    # whether it's been reported as not working
+    answered_at: Optional[float] = None
+    watched_since: float = field(default_factory=lambda: time.time())
+    error: Optional[str] = None
+    reported: bool = False
 
 
 
@@ -241,12 +248,14 @@ class FeedPoller(HostLimits):
                 if self.redis:
                     await self.remember(self.redis, host)  # Only writes if that forgot a pause
                 if response.status_code == 304:
+                    state.answered_at, state.error = time.time(), None
                     _schedule(state, changed=False)
                     return state.items
                 response.raise_for_status()
                 headlines = parse(response.content, source_name)
                 break
             except Exception as e:
+                state.error = str(e).splitlines()[0] if str(e) else type(e).__name__
                 logger.warning(
                     "Feed fetch attempt failed",
                     source=source_name, attempt=attempt + 1, error=str(e),
@@ -271,6 +280,10 @@ class FeedPoller(HostLimits):
         state.items = headlines
         state.etag = response.headers.get("etag")
         state.last_modified = response.headers.get("last-modified")
+        if headlines:
+            state.answered_at, state.error = time.time(), None
+        else:
+            state.error = "the feed had no headlines"
         _schedule(state, changed)
         logger.info("Fetched headlines from source", count=len(headlines), source=source_name)
         return headlines
@@ -320,8 +333,47 @@ class FeedPoller(HostLimits):
                 results_by_source[source.name] = []
             else:
                 results_by_source[source.name] = result
+        await self.check_health(client, sources)
         await self.save_feeds()
         return results_by_source
+
+    async def check_health(self, client: httpx.AsyncClient, sources: List[NewsSource | TopicSource]) -> None:
+        """
+        Reports a feed that has given no usable answer (a 304, or a feed with headlines) for
+        FEED_DOWN_SECONDS, once, and again when it works: logged, and sent to FEED_ALERT_URL if set.
+        Otherwise a broken feed goes unnoticed, its share of a tab taken by the others: Hacker News
+        answered 419 for a week, the Guardian refused us for three days, Kyodo's feed was gone (Nov 2026).
+        """
+        now = time.time()
+        for source in sources:
+            state = self.feeds.get(source.url)
+            if state is None:
+                continue
+            silent = now - (state.answered_at or state.watched_since)
+            if silent >= settings.FEED_DOWN_SECONDS and not state.reported:
+                state.reported = True
+                hours = round(silent / 3600)
+                logger.error("Feed not working", source=source.name, hours=hours, error=state.error)
+                await self._alert(client, f"Feed not working: {source.name}",
+                                  f"No usable answer for {hours} hours. Last error: {state.error}. {source.url}")
+            elif silent < settings.FEED_DOWN_SECONDS and state.reported:
+                state.reported = False
+                logger.info("Feed working again", source=source.name)
+                await self._alert(client, f"Feed working again: {source.name}", source.url)
+            else:
+                continue
+            self.dirty.add(source.url)
+
+    @staticmethod
+    async def _alert(client: httpx.AsyncClient, title: str, message: str) -> None:
+        """POSTs {"title", "message"} to FEED_ALERT_URL (a Home Assistant webhook, say). Never raises."""
+        if not settings.FEED_ALERT_URL:
+            return
+        try:
+            response = await client.post(settings.FEED_ALERT_URL, json={"title": title, "message": message}, timeout=10)
+            response.raise_for_status()
+        except httpx.HTTPError as e:
+            logger.warning("Feed alert not sent", title=title, error=str(e) or type(e).__name__)
 
     async def save_feeds(self) -> None:
         """Writes the state of the feeds asked since the last save to Redis (see the class)."""
@@ -334,7 +386,8 @@ class FeedPoller(HostLimits):
                     state = self.feeds[url]
                     pipe.set(feed_state_key(url), json.dumps({
                         "url": url, "etag": state.etag, "last_modified": state.last_modified, "interval": state.interval,
-                        "plain": state.plain, "next_fetch": now + state.next_fetch - mono,
+                        "plain": state.plain, "answered_at": state.answered_at, "watched_since": state.watched_since,
+                        "error": state.error, "reported": state.reported, "next_fetch": now + state.next_fetch - mono,
                         "items": [{k: v for k, v in h.items() if k != "feed_text"} for h in state.items],
                     }), ex=settings.FEED_STATE_TTL_SECONDS)
                 await pipe.execute()
@@ -354,7 +407,9 @@ class FeedPoller(HostLimits):
                 saved = json.loads(value)
                 self.feeds[saved["url"]] = _FeedState(items=saved["items"], etag=saved["etag"], last_modified=saved["last_modified"],
                                                       interval=saved["interval"], next_fetch=mono + saved["next_fetch"] - now,
-                                                      plain=saved.get("plain", False))
+                                                      plain=saved.get("plain", False), answered_at=saved.get("answered_at"),
+                                                      watched_since=saved.get("watched_since", now), error=saved.get("error"),
+                                                      reported=saved.get("reported", False))
             batch = await redis_client.get(TOPIC_BATCH_KEY)
             if batch:
                 self.topic_feeds["at"] = mono + float(batch) - now
