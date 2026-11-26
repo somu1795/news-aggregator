@@ -86,7 +86,6 @@ services:
       - STATS_STREAM_ENABLED
       - STATS_STREAM_MAXLEN
       - TOPIC_FEEDS_INTERVAL_SECONDS
-      - FEED_ALERT_URL  # Where a feed that stops working is reported (a Home Assistant webhook); empty: logged only
     volumes:
       # The site's config folder (regions, topics, sources, name, prompts): edit it and
       # `docker compose restart app refresher summarizer`, no rebuild. CONFIG_DIR in .env

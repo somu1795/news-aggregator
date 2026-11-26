@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 import catalog as catalog_module
-from catalog import ALL_VIEW, Catalog, load_catalog
+from catalog import ALL_VIEW, Catalog, get_catalog, load_catalog
 from config import settings
 from services.geo import region_for_country
 
@@ -45,3 +45,9 @@ def test_the_starting_tab_comes_from_the_regions_countries(monkeypatch):
         {"id": "south", "label": "South", "countries": "IN LK", "sources": [{"name": "A", "url": "https://a", "weight": 1.0}]},
     ], extras=[]))
     assert region_for_country("lk") == "south" and region_for_country("US") == "all" and region_for_country(None) == "all"
+
+
+def test_every_feed_is_listed_once():
+    catalog = get_catalog()
+    names = [s.name for s in catalog.feeds]
+    assert len(names) == len(set(names)) and {"Hacker News", "Guardian Environment", "Japan Times"} <= set(names)

@@ -9,7 +9,7 @@ What in this project is written by hand and ages, how often to look at it, and a
 
 1. Read `logs/updates.txt`. For each `>>` line older than two weeks, bump the pin (the file is named in brackets), test (`docker compose -p na-test …`, see README "Running Tests"), deploy, commit. Python packages: update `app/requirements.in` / regenerate `app/requirements.txt` with `pip-compile`, or `tagger/requirements.txt` from the tagger image.
 2. Check the backup ran: `cat /mnt/media/app_bkp/news_aggregator/last-success` (today's date), no `FAILED` or `Warning` in `backup.log`, and the latest one restores: `/mnt/media/app_bkp/news_aggregator/restore.sh --check` (changes nothing, ~15 s).
-3. Look for failing feeds: `docker compose logs --since 168h refresher | grep 'exhausted all retries'`. Fix or remove them in `config/sources.yaml` (quarterly review below).
+3. Look for feeds not working: `docker compose exec refresher python -m services.feeds.status` lists each feed with no usable answer for a day or more, for how long and its last error (from the state the refresher keeps, which outlasts deploys; the logs don't). A broken feed doesn't show on the page: its share of a tab goes to the others. Fix its address, replace it or remove it in `config/sources.yaml` (quarterly review below). Refusals of the browser identity fix themselves (ARCHITECTURE.md, Step 1).
 4. Glance at the site's tabs for anything odd (empty tabs, the same story many times, a region showing another region's news).
 
 ## Deploying a change

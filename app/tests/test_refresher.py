@@ -508,18 +508,3 @@ async def test_extras_are_spread_over_a_tab_s_first_headlines(mock_redis, poller
         assert not any(a and b for a, b in zip(extra, extra[1:]))
         assert sum(extra) == settings.TOP_MAX_EXTRAS
 
-
-async def test_the_feed_alert_address_may_be_on_the_lan(monkeypatch):
-    # Other people's servers must be public addresses (public_client); a Home Assistant webhook is on the LAN
-    monkeypatch.setattr(settings, "FEED_ALERT_URL", "http://192.168.1.5:8123/api/webhook/feeds")
-    asked = []
-
-    def public_client(internal, **kwargs):
-        asked.extend(internal)
-        raise RuntimeError("stop")
-
-    monkeypatch.setattr(refresher, "public_client", public_client)
-    monkeypatch.setattr(refresher, "create_redis_client", lambda **kwargs: None)
-    with pytest.raises(RuntimeError):
-        await refresher.run()
-    assert "http://192.168.1.5:8123/api/webhook/feeds" in asked

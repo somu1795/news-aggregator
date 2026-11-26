@@ -86,6 +86,11 @@ class Catalog(BaseModel):
         return [s for region in self.regions for s in region.topic_sources] + self.topic_extras
 
     @property
+    def feeds(self) -> List[NewsSource | TopicSource]:
+        """Every feed: each region's news and topic feeds, the extras and the topic extras."""
+        return [s for region in self.regions for s in region.sources] + self.extras + self.topic_feeds
+
+    @property
     def labelled_sources(self) -> List[NewsSource | TopicSource]:
         """Every source whose items carry a label (a topic or "other") for the tagger."""
         news = [s for region in self.regions for s in region.sources] + self.extras

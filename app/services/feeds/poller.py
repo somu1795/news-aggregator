@@ -333,16 +333,17 @@ class FeedPoller(HostLimits):
                 results_by_source[source.name] = []
             else:
                 results_by_source[source.name] = result
-        await self.check_health(client, sources)
+        self.check_health(sources)
         await self.save_feeds()
         return results_by_source
 
-    async def check_health(self, client: httpx.AsyncClient, sources: List[NewsSource | TopicSource]) -> None:
+    def check_health(self, sources: List[NewsSource | TopicSource]) -> None:
         """
-        Reports a feed that has given no usable answer (a 304, or a feed with headlines) for
-        FEED_DOWN_SECONDS, once, and again when it works: logged, and sent to FEED_ALERT_URL if set.
-        Otherwise a broken feed goes unnoticed, its share of a tab taken by the others: Hacker News
-        answered 419 for a week, the Guardian refused us for three days, Kyodo's feed was gone (Nov 2026).
+        Notes a feed that has given no usable answer (a 304, or a feed with headlines) for
+        FEED_DOWN_SECONDS, once in the log and in its state (which the monthly review reads:
+        services/feeds/status.py), and again when it works. Otherwise a broken feed goes unnoticed,
+        its share of a tab taken by the others: Hacker News answered 419 for a week, the Guardian
+        refused us for three days, Kyodo's feed was gone (Nov 2026).
         """
         now = time.time()
         for source in sources:
@@ -351,29 +352,13 @@ class FeedPoller(HostLimits):
                 continue
             silent = now - (state.answered_at or state.watched_since)
             if silent >= settings.FEED_DOWN_SECONDS and not state.reported:
-                state.reported = True
-                hours = round(silent / 3600)
-                logger.error("Feed not working", source=source.name, hours=hours, error=state.error)
-                await self._alert(client, f"Feed not working: {source.name}",
-                                  f"No usable answer for {hours} hours. Last error: {state.error}. {source.url}")
+                logger.error("Feed not working", source=source.name, hours=round(silent / 3600), error=state.error)
             elif silent < settings.FEED_DOWN_SECONDS and state.reported:
-                state.reported = False
                 logger.info("Feed working again", source=source.name)
-                await self._alert(client, f"Feed working again: {source.name}", source.url)
             else:
                 continue
+            state.reported = not state.reported
             self.dirty.add(source.url)
-
-    @staticmethod
-    async def _alert(client: httpx.AsyncClient, title: str, message: str) -> None:
-        """POSTs {"title", "message"} to FEED_ALERT_URL (a Home Assistant webhook, say). Never raises."""
-        if not settings.FEED_ALERT_URL:
-            return
-        try:
-            response = await client.post(settings.FEED_ALERT_URL, json={"title": title, "message": message}, timeout=10)
-            response.raise_for_status()
-        except httpx.HTTPError as e:
-            logger.warning("Feed alert not sent", title=title, error=str(e) or type(e).__name__)
 
     async def save_feeds(self) -> None:
         """Writes the state of the feeds asked since the last save to Redis (see the class)."""
